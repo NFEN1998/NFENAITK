@@ -50,7 +50,7 @@
 
   var titles = {
     dashboard: "概览", questions: "题库", folders: "文件夹", pending: "待修正",
-    models: "模型配置", settings: "系统设置", logs: "请求日志",
+    models: "模型配置", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
   };
 
   function switchView(view) {
@@ -67,6 +67,7 @@
     if (view === "folders") loadFolders();
     if (view === "pending") loadPending();
     if (view === "models") loadModelConfig();
+    if (view === "ocs") loadOCS();
     if (view === "settings") loadSettings();
     if (view === "logs") loadLogs();
   }
@@ -406,6 +407,9 @@
 
   function modelLabel(m) { return m.displayName || m.name || m.id || "(未命名模型)"; }
 
+  var CATEGORY_LABELS = { text: "文本", vision: "视觉", summary: "总结", reasoning: "推理" };
+  function categoryLabel(c) { return CATEGORY_LABELS[c] || c || "文本"; }
+
   function renderModelSelectors() {
     var models = allModels();
 
@@ -413,7 +417,7 @@
     textSel.innerHTML = models.map(function (e) {
       var sel = (modelConfig.selectedTextModels || []).indexOf(e.model.id) >= 0 ? " selected" : "";
       return '<option value="' + esc(e.model.id) + '"' + sel + ">" + esc(modelLabel(e.model)) +
-        " (" + esc(e.model.category || "text") + ")</option>";
+        " (" + esc(categoryLabel(e.model.category || "text")) + ")</option>";
     }).join("");
 
     function singleSelect(el, current) {
@@ -482,7 +486,7 @@
   function modelRowHTML(p, m, pi, mi) {
     var prefix = 'data-p="' + pi + '" data-m="' + mi + '"';
     var catOptions = ["text", "vision", "summary", "reasoning"].map(function (c) {
-      return '<option value="' + c + '"' + (m.category === c ? " selected" : "") + ">" + c + "</option>";
+      return '<option value="' + c + '"' + (m.category === c ? " selected" : "") + ">" + categoryLabel(c) + "</option>";
     }).join("");
     return '<div class="model-row">' +
       '<div class="row-head">' +
@@ -625,7 +629,7 @@
     var textSel = qs("m-text-models");
     Array.prototype.forEach.call(textSel.options, function (opt) {
       var found = models.filter(function (e) { return e.model.id === opt.value; })[0];
-      if (found) opt.textContent = modelLabel(found.model) + " (" + (found.model.category || "text") + ")";
+      if (found) opt.textContent = modelLabel(found.model) + " (" + categoryLabel(found.model.category || "text") + ")";
     });
   }
 
@@ -811,6 +815,66 @@
       qs("s-status").textContent = "已保存" + (payload.network && payload.network.serverPort ? "（端口与监听地址需重启服务生效）" : "");
       loadSettings();
     });
+  });
+
+  // ------------------------------------------------------------------------ ocs
+
+  function copyText(text, okMessage) {
+    function done() { toast(okMessage || "已复制"); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { fallbackCopy(text, done); });
+      return;
+    }
+    fallbackCopy(text, done);
+  }
+
+  function fallbackCopy(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+    done();
+  }
+
+  function ocsConfigObject(baseURL) {
+    var base = String(baseURL || window.location.origin).replace(/\/+$/, "");
+    return [{
+      name: "NFENAI题库",
+      homepage: base,
+      url: base + "/query",
+      method: "get",
+      type: "GM_xmlhttpRequest",
+      contentType: "json",
+      data: {
+        title: "${title}",
+        options: "${options}",
+        type: "${type}",
+      },
+      handler: "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]",
+    }];
+  }
+
+  function renderOCS() {
+    var base = qs("ocs-url-base").value.trim() || window.location.origin;
+    qs("ocs-json").value = JSON.stringify(ocsConfigObject(base), null, 2);
+  }
+
+  function loadOCS() {
+    if (!qs("ocs-url-base").value) qs("ocs-url-base").value = window.location.origin;
+    renderOCS();
+  }
+
+  qs("ocs-url-base").addEventListener("input", renderOCS);
+  qs("ocs-reset").addEventListener("click", function () {
+    qs("ocs-url-base").value = window.location.origin;
+    renderOCS();
+  });
+  qs("ocs-copy").addEventListener("click", function () {
+    copyText(qs("ocs-json").value, "OCS 配置已复制");
   });
 
   // ----------------------------------------------------------------------- logs

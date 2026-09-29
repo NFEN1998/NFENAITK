@@ -22,6 +22,7 @@
       <button class="nav-item" data-view="folders">文件夹</button>
       <button class="nav-item" data-view="pending">待修正</button>
       <button class="nav-item" data-view="models">模型配置</button>
+      <button class="nav-item" data-view="ocs">OCS 配置</button>
       <button class="nav-item" data-view="settings">系统设置</button>
       <button class="nav-item" data-view="logs">请求日志</button>
     </nav>
@@ -226,6 +227,26 @@
       </div>
 
       <textarea id="s-editor" class="editor hidden" spellcheck="false"></textarea>
+    </section>
+
+    <section id="view-ocs" class="view">
+      <div class="toolbar">
+        <span class="muted">把下面的配置复制到 OCS 用户脚本的题库配置中即可连接本服务。</span>
+        <span class="spacer"></span>
+        <button id="ocs-copy" class="btn primary">复制配置</button>
+      </div>
+      <div class="card">
+        <h2>题库地址</h2>
+        <p class="muted small">OCS 运行在浏览器中，需填一个它可访问到的地址（默认取当前控制台地址）。</p>
+        <div class="toolbar">
+          <input id="ocs-url-base" type="text" placeholder="http://localhost:3000">
+          <button id="ocs-reset" class="btn ghost">使用当前地址</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>配置内容</h2>
+        <textarea id="ocs-json" class="editor" spellcheck="false" style="min-height:320px;white-space:pre;"></textarea>
+      </div>
     </section>
 
     <section id="view-logs" class="view">
