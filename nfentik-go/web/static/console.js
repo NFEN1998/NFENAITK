@@ -147,6 +147,7 @@
         "<td>" + item.id + "</td>" +
         '<td class="clamp">' + esc(item.question) + "</td>" +
         '<td class="clamp">' + esc(item.answer) + "</td>" +
+        "<td>" + esc(questionTypeLabel(item.question_type)) + "</td>" +
         "<td>" + source + "</td>" +
         "<td>" + status + "</td>" +
         '<td class="row-actions">' +
@@ -172,7 +173,7 @@
         { name: "question", label: "题目", type: "textarea", value: item.question },
         { name: "options", label: "选项", type: "textarea", value: item.options || "" },
         { name: "answer", label: "答案", type: "textarea", value: item.answer || "" },
-        { name: "question_type", label: "题型", type: "text", value: item.question_type || "" },
+        { name: "question_type", label: "题型", options: [{ value: "", label: "未指定" }].concat(QUESTION_TYPE_OPTIONS), value: questionTypeSelectValue(item.question_type) },
       ], function (values) {
         api("/questions/" + id, {
           method: "PUT",
@@ -409,6 +410,32 @@
 
   var CATEGORY_LABELS = { text: "文本", vision: "视觉", summary: "总结", reasoning: "推理" };
   function categoryLabel(c) { return CATEGORY_LABELS[c] || c || "文本"; }
+
+  var QUESTION_TYPE_OPTIONS = [
+    { value: "single_choice", label: "单选题" },
+    { value: "multiple_choice", label: "多选题" },
+    { value: "judgement", label: "判断题" },
+    { value: "completion", label: "填空题" },
+  ];
+  function questionTypeLabel(t) {
+    var v = (t || "").trim();
+    if (!v) return "";
+    var low = v.toLowerCase();
+    if (low.indexOf("single") >= 0 || v.indexOf("单选") >= 0 || v.indexOf("单项选择") >= 0) return "单选题";
+    if (low.indexOf("multiple") >= 0 || v.indexOf("多选") >= 0 || v.indexOf("多项选择") >= 0) return "多选题";
+    if (low.indexOf("judgement") >= 0 || low.indexOf("judgment") >= 0 || v.indexOf("判断") >= 0) return "判断题";
+    if (low.indexOf("completion") >= 0 || low.indexOf("fill") >= 0 || v.indexOf("填空") >= 0) return "填空题";
+    return v;
+  }
+  function questionTypeSelectValue(t) {
+    var v = (t || "").trim();
+    var low = v.toLowerCase();
+    if (low.indexOf("single") >= 0 || v.indexOf("单选") >= 0 || v.indexOf("单项选择") >= 0) return "single_choice";
+    if (low.indexOf("multiple") >= 0 || v.indexOf("多选") >= 0 || v.indexOf("多项选择") >= 0) return "multiple_choice";
+    if (low.indexOf("judgement") >= 0 || low.indexOf("judgment") >= 0 || v.indexOf("判断") >= 0) return "judgement";
+    if (low.indexOf("completion") >= 0 || low.indexOf("fill") >= 0 || v.indexOf("填空") >= 0) return "completion";
+    return "";
+  }
 
   function renderModelSelectors() {
     var models = allModels();
@@ -1067,9 +1094,17 @@
   function openModal(title, fields, onSubmit) {
     qs("modal-title").textContent = title;
     qs("modal-content").innerHTML = fields.map(function (f) {
-      var control = f.type === "textarea"
-        ? '<textarea name="' + f.name + '" rows="3"></textarea>'
-        : '<input name="' + f.name + '" type="' + f.type + '">';
+      var control;
+      if (f.options) {
+        control = '<select name="' + f.name + '">' +
+          f.options.map(function (o) {
+            return '<option value="' + esc(o.value) + '">' + esc(o.label) + "</option>";
+          }).join("") + "</select>";
+      } else if (f.type === "textarea") {
+        control = '<textarea name="' + f.name + '" rows="3"></textarea>';
+      } else {
+        control = '<input name="' + f.name + '" type="' + f.type + '">';
+      }
       return '<div class="field"><label>' + esc(f.label) + "</label>" + control + "</div>";
     }).join("");
     fields.forEach(function (f) {
