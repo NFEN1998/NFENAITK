@@ -196,6 +196,43 @@ func (s *Store) Query(title string, options *string, scorer func(q, c string) (f
 	return out, nil
 }
 
+// FindByNormalizedQuestion returns an existing hit whose question is equivalent
+// to title after normalization (case, whitespace and punctuation removed). Used
+// at insert time to avoid storing a duplicate of a question that was just added.
+func (s *Store) FindByNormalizedQuestion(title string) (*QueryHit, error) {
+	target := match.NormalizeQuestion(title)
+	if target == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE) FROM AIResponses`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id               int64
+			question, answer string
+			dbOptions        sql.NullString
+			isAI, isPending  bool
+		)
+		if err := rows.Scan(&id, &question, &dbOptions, &answer, &isAI, &isPending); err != nil {
+			return nil, err
+		}
+		if match.NormalizeQuestion(question) != target {
+			continue
+		}
+		return &QueryHit{
+			ID:                  id,
+			Question:            question,
+			Answer:              answer,
+			IsAI:                isAI,
+			IsPendingCorrection: isPending,
+		}, nil
+	}
+	return nil, rows.Err()
+}
+
 // Folders returns every folder ordered by name.
 func (s *Store) Folders() ([]Folder, error) {
 	rows, err := s.db.Query(`SELECT Id, Name, ParentId, CreateTime FROM Folders ORDER BY Name`)

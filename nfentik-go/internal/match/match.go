@@ -62,6 +62,22 @@ func normalizeURLs(text string) string {
 	return urlRe.ReplaceAllString(text, "__URL__")
 }
 
+// NormalizeQuestion reduces a question to lowercase letters and digits, dropping
+// whitespace and punctuation, so questions that differ only in formatting
+// compare as equal.
+func NormalizeQuestion(text string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(normalizeURLs(text)) {
+		if r >= 0xFF01 && r <= 0xFF5E {
+			r -= 0xFEE0
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // RequireOptionMatch reports whether the title asks about the listed options.
 func RequireOptionMatch(title string) bool {
 	for _, kw := range optionMatchKeywords {

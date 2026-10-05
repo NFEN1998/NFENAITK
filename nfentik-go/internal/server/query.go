@@ -238,6 +238,30 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	if answer == "" {
 		return http.StatusOK, errorResponse("AI未能给出有效答案")
 	}
+	// Refusals, "unable to determine" replies and low-information placeholders
+	// are refused so they never pollute the bank.
+	if reason, bad := ai.IsUnreliableAnswer(answer); bad {
+		return http.StatusOK, errorResponse("AI未能给出有效答案：" + reason)
+	}
+
+	// Avoid storing a duplicate of a question that already exists in the bank,
+	// even when the similarity lookup above missed it (e.g. formatting-only
+	// differences or a concurrent insert).
+	if existing, err := s.store.FindByNormalizedQuestion(req.Title); err != nil {
+		s.PublishError("find duplicate question: %v", err)
+	} else if existing != nil {
+		entry := bankAnswer{
+			ID:                  existing.ID,
+			Question:            existing.Question,
+			Answer:              existing.Answer,
+			IsAI:                existing.IsAI,
+			IsPendingCorrection: existing.IsPendingCorrection,
+		}
+		if s.cache != nil && !hasURL {
+			s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
+		}
+		return http.StatusOK, entry.render(origin, req.Raw)
+	}
 
 	id, err := s.store.InsertAIResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID())
 	if err != nil {
