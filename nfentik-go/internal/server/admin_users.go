@@ -25,6 +25,10 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, rest []strin
 		return
 	}
 	// Sub-resources that are not user ids.
+	if rest[0] == "batch" && r.Method == http.MethodPost {
+		s.adminBatchCreateUsers(w, r)
+		return
+	}
 	if rest[0] == "stats" && r.Method == http.MethodGet {
 		s.adminUserStats(w, r)
 		return
@@ -73,7 +77,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, rest []strin
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 			return
 		}
-		s.audit("delete", id, u.Name, `{}`)
+		s.audit("delete", id, u.Token, `{}`)
 		writeJSON(w, http.StatusOK, map[string]any{"success": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -98,7 +102,6 @@ func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type userPlanRequest struct {
-	Name          string `json:"name"`
 	PlanCode      string `json:"plan_code"`
 	Days          int    `json:"days"`
 	TotalCount    int64  `json:"total_count"`
@@ -157,21 +160,12 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "用户名不能为空"})
-		return
-	}
-	p, expireAt, total, remain, err := s.buildPlan(req)
+	tmpl, err := s.userTemplate(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	u, err := s.store.CreateUser(store.User{
-		Name: name, PlanType: string(p.Kind), PlanCode: p.Code, PlanLabel: p.Label,
-		StartAt: time.Now().Format("2006-01-02 15:04:05"), ExpireAt: expireAt,
-		TotalCount: total, RemainCount: remain, Note: req.Note, Enabled: true,
-	})
+	u, err := s.store.CreateUser(tmpl)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrUserExists) {
@@ -180,13 +174,63 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	s.audit("create", u.ID, u.Name, `{"plan_code":"`+u.PlanCode+`"}`)
+	s.audit("create", u.ID, u.Token, `{"plan_code":"`+u.PlanCode+`"}`)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
+}
+
+// userTemplate validates a plan request and returns a user row template.
+func (s *Server) userTemplate(req userPlanRequest) (store.User, error) {
+	p, expireAt, total, remain, err := s.buildPlan(req)
+	if err != nil {
+		return store.User{}, err
+	}
+	return store.User{
+		PlanType: string(p.Kind), PlanCode: p.Code, PlanLabel: p.Label,
+		StartAt: time.Now().Format("2006-01-02 15:04:05"), ExpireAt: expireAt,
+		TotalCount: total, RemainCount: remain, Note: req.Note, Enabled: true,
+	}, nil
+}
+
+type batchCreateRequest struct {
+	Count int `json:"count"`
+	userPlanRequest
+}
+
+// adminBatchCreateUsers generates several users sharing one plan setup.
+func (s *Server) adminBatchCreateUsers(w http.ResponseWriter, r *http.Request) {
+	var req batchCreateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	if req.Count < 1 || req.Count > 500 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "生成数量需在 1 到 500 之间"})
+		return
+	}
+	tmpl, err := s.userTemplate(req.userPlanRequest)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	users, err := s.store.CreateUsers(tmpl, req.Count)
+	if err != nil {
+		if errors.Is(err, store.ErrUserExists) {
+			writeJSON(w, http.StatusConflict, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	tokens := make([]string, 0, len(users))
+	for _, u := range users {
+		tokens = append(tokens, u.Token)
+	}
+	s.audit("batch_create", 0, "", `{"count":`+strconv.Itoa(req.Count)+`,"plan_code":"`+tmpl.PlanCode+`"}`)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "count": len(users), "tokens": tokens})
 }
 
 func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, id int64) {
 	var req struct {
-		Name    *string `json:"name"`
 		Note    *string `json:"note"`
 		Enabled *bool   `json:"enabled"`
 	}
@@ -194,18 +238,18 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, id int6
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	if err := s.store.UpdateUser(id, req.Name, req.Note, req.Enabled); err != nil {
+	if err := s.store.UpdateUser(id, req.Note, req.Enabled); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrUserExists) {
 			status = http.StatusConflict
-		} else if strings.Contains(err.Error(), "不能为空") || strings.Contains(err.Error(), "过长") {
+		} else if strings.Contains(err.Error(), "过长") {
 			status = http.StatusBadRequest
 		}
 		writeJSON(w, status, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
 	u, _ := s.store.GetUserByID(id)
-	s.audit("update", id, u.Name, `{}`)
+	s.audit("update", id, u.Token, `{}`)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
 }
 
@@ -234,7 +278,7 @@ func (s *Server) adminRenewUser(w http.ResponseWriter, r *http.Request, id int64
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	s.audit(action, id, u.Name, `{"from":"`+before.PlanCode+`","to":"`+p.Code+`"}`)
+	s.audit(action, id, u.Token, `{"from":"`+before.PlanCode+`","to":"`+p.Code+`"}`)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
 }
 
@@ -249,7 +293,7 @@ func (s *Server) adminResetUserToken(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	s.audit("reset_token", id, u.Name, `{}`)
+	s.audit("reset_token", id, u.Token, `{}`)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "token": token})
 }
 

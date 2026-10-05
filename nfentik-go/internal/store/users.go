@@ -9,13 +9,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nfentik/nfentik-go/internal/plan"
 )
 
-// User is an end user that authenticates with a usertoken.
+// isUniqueViolation reports whether err is a PostgreSQL unique-constraint error.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// User is an end user that authenticates with a usertoken. The token is the
+// only identity: there is no separate display name.
 type User struct {
 	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
 	Token       string  `json:"token"`
 	PlanType    string  `json:"plan_type"`  // duration | count
 	PlanCode    string  `json:"plan_code"`  // monthly|quarterly|half_year|yearly|unlimited|duration_custom|count
@@ -47,7 +54,7 @@ type UserAuditLog struct {
 	AuditID   int64  `json:"audit_id"`
 	Action    string `json:"action"`
 	UserID    int64  `json:"user_id"`
-	UserName  string `json:"user_name"`
+	UserToken string `json:"user_token"`
 	Detail    string `json:"detail"`
 	Actor     string `json:"actor"`
 	CreatedAt string `json:"created_at"`
@@ -56,7 +63,7 @@ type UserAuditLog struct {
 // UserUsageRow is one entry of the per-user usage report.
 type UserUsageRow struct {
 	ID         int64  `json:"id"`
-	Name       string `json:"name"`
+	Token      string `json:"token"`
 	TotalCalls int64  `json:"total_calls"`
 	Remain     *int64 `json:"remain"`
 	Status     string `json:"status"`
@@ -84,8 +91,8 @@ type UsageSummary struct {
 	ExhaustedUsers int64 `json:"exhausted_users"`
 }
 
-// ErrUserExists is returned when a user name is already taken.
-var ErrUserExists = errors.New("用户名已存在")
+// ErrUserExists is returned when a user token is already taken.
+var ErrUserExists = errors.New("用户令牌已存在")
 
 // ErrUserNotFound is returned when no user matches the lookup.
 var ErrUserNotFound = errors.New("用户不存在")
@@ -99,7 +106,7 @@ func NewUserToken() (string, error) {
 	return "nf_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-const userColumns = `Id, Name, Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt,
+const userColumns = `Id, Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt,
 	TotalCount, UsedCount, RemainCount, Note, Enabled,
 	to_char(CreatedAt, 'YYYY-MM-DD HH24:MI:SS'), to_char(UpdatedAt, 'YYYY-MM-DD HH24:MI:SS')`
 
@@ -112,7 +119,7 @@ func scanUser(scan func(dest ...any) error) (User, error) {
 		createdAt sql.NullString
 		updatedAt sql.NullString
 	)
-	err := scan(&u.ID, &u.Name, &u.Token, &u.PlanType, &u.PlanCode, &u.PlanLabel,
+	err := scan(&u.ID, &u.Token, &u.PlanType, &u.PlanCode, &u.PlanLabel,
 		&u.StartAt, &expireAt, &total, &u.UsedCount, &remain, &u.Note, &u.Enabled,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -136,44 +143,95 @@ func scanUser(scan func(dest ...any) error) (User, error) {
 	return u, nil
 }
 
-// CreateUser inserts a new user, generating a unique token.
+// CreateUser inserts a new user, generating a unique token when none is set.
 func (s *Store) CreateUser(u User) (User, error) {
-	u.Name = strings.TrimSpace(u.Name)
-	if u.Name == "" {
-		return User{}, errors.New("用户名不能为空")
-	}
 	if len([]rune(u.Note)) > 200 {
 		return User{}, errors.New("备注过长")
 	}
-	var exists bool
-	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM Users WHERE Name = $1)`, u.Name).Scan(&exists); err != nil {
+	id, token, err := s.insertUser(u)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return User{}, ErrUserExists
+		}
 		return User{}, err
 	}
-	if exists {
-		return User{}, ErrUserExists
-	}
-	token := u.Token
+	u.ID = id
+	u.Token = token
+	return s.GetUserByID(id)
+}
+
+// insertUser writes a single user row and returns its id and token.
+func (s *Store) insertUser(u User) (int64, string, error) {
+	token := strings.TrimSpace(u.Token)
 	if token == "" {
 		var err error
 		token, err = NewUserToken()
 		if err != nil {
-			return User{}, err
+			return 0, "", err
 		}
 	}
-	now := time.Now()
-	if u.StartAt == "" {
-		u.StartAt = now.Format("2006-01-02 15:04:05")
+	startAt := u.StartAt
+	if startAt == "" {
+		startAt = time.Now().Format("2006-01-02 15:04:05")
 	}
 	var id int64
 	err := s.db.QueryRow(`INSERT INTO Users
-		(Name, Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW()) RETURNING Id`,
-		u.Name, token, u.PlanType, u.PlanCode, u.PlanLabel, u.StartAt,
+		(Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW()) RETURNING Id`,
+		token, u.PlanType, u.PlanCode, u.PlanLabel, startAt,
 		u.ExpireAt, u.TotalCount, u.UsedCount, u.RemainCount, u.Note, u.Enabled).Scan(&id)
 	if err != nil {
-		return User{}, err
+		return 0, "", err
 	}
-	return s.GetUserByID(id)
+	return id, token, nil
+}
+
+// CreateUsers inserts up to n users with the same template in one transaction
+// and returns the created rows. It is used by the batch-generation endpoint.
+func (s *Store) CreateUsers(template User, n int) ([]User, error) {
+	if n <= 0 {
+		return nil, errors.New("生成数量必须大于 0")
+	}
+	if len([]rune(template.Note)) > 200 {
+		return nil, errors.New("备注过长")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	created := make([]User, 0, n)
+	for i := 0; i < n; i++ {
+		token, err := NewUserToken()
+		if err != nil {
+			return nil, err
+		}
+		startAt := template.StartAt
+		if startAt == "" {
+			startAt = time.Now().Format("2006-01-02 15:04:05")
+		}
+		var id int64
+		err = tx.QueryRow(`INSERT INTO Users
+			(Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW()) RETURNING Id`,
+			token, template.PlanType, template.PlanCode, template.PlanLabel, startAt,
+			template.ExpireAt, template.TotalCount, template.UsedCount, template.RemainCount,
+			template.Note, template.Enabled).Scan(&id)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, User{
+			ID: id, Token: token, PlanType: template.PlanType, PlanCode: template.PlanCode,
+			PlanLabel: template.PlanLabel, StartAt: startAt, ExpireAt: template.ExpireAt,
+			TotalCount: template.TotalCount, UsedCount: template.UsedCount,
+			RemainCount: template.RemainCount, Note: template.Note, Enabled: template.Enabled,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 // GetUserByToken loads a user by token.
@@ -222,26 +280,12 @@ func (s *Store) ListUsers() ([]User, error) {
 }
 
 // UpdateUser patches the mutable profile fields.
-func (s *Store) UpdateUser(id int64, name, note *string, enabled *bool) error {
+func (s *Store) UpdateUser(id int64, note *string, enabled *bool) error {
 	sets := []string{}
 	args := []any{}
 	add := func(col string, val any) {
 		args = append(args, val)
 		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
-	}
-	if name != nil {
-		n := strings.TrimSpace(*name)
-		if n == "" {
-			return errors.New("用户名不能为空")
-		}
-		var exists bool
-		if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM Users WHERE Name = $1 AND Id <> $2)`, n, id).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			return ErrUserExists
-		}
-		add("Name", n)
 	}
 	if note != nil {
 		if len([]rune(*note)) > 200 {
@@ -498,9 +542,9 @@ func (s *Store) PruneUserLogs(perUserLimit, retentionDays, globalLimit int) erro
 // ---------------------------------------------------------------------------
 
 // InsertAudit records a token/plan change.
-func (s *Store) InsertAudit(action string, userID int64, userName, detail, actor string) error {
-	_, err := s.db.Exec(`INSERT INTO UserAuditLogs (Action, UserId, UserName, Detail, Actor, CreatedAt)
-		VALUES ($1,$2,$3,$4,$5,NOW())`, action, userID, userName, detail, actor)
+func (s *Store) InsertAudit(action string, userID int64, userToken, detail, actor string) error {
+	_, err := s.db.Exec(`INSERT INTO UserAuditLogs (Action, UserId, UserToken, Detail, Actor, CreatedAt)
+		VALUES ($1,$2,$3,$4,$5,NOW())`, action, userID, userToken, detail, actor)
 	return err
 }
 
@@ -516,7 +560,7 @@ func (s *Store) ListAudits(page, pageSize int) ([]UserAuditLog, int64, error) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM UserAuditLogs`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT AuditId, Action, COALESCE(UserId,0), UserName, Detail, Actor,
+	rows, err := s.db.Query(`SELECT AuditId, Action, COALESCE(UserId,0), UserToken, Detail, Actor,
 		to_char(CreatedAt, 'YYYY-MM-DD HH24:MI:SS')
 		FROM UserAuditLogs ORDER BY AuditId DESC LIMIT $1 OFFSET $2`, pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -526,7 +570,7 @@ func (s *Store) ListAudits(page, pageSize int) ([]UserAuditLog, int64, error) {
 	out := []UserAuditLog{}
 	for rows.Next() {
 		var a UserAuditLog
-		if err := rows.Scan(&a.AuditID, &a.Action, &a.UserID, &a.UserName, &a.Detail, &a.Actor, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.AuditID, &a.Action, &a.UserID, &a.UserToken, &a.Detail, &a.Actor, &a.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, a)
@@ -578,7 +622,7 @@ func (s *Store) UsageReport(windowDays int) (UsageReport, error) {
 
 	now := time.Now()
 	for _, u := range users {
-		row := UserUsageRow{ID: u.ID, Name: u.Name, TotalCalls: counts[u.ID], Remain: u.RemainCount}
+		row := UserUsageRow{ID: u.ID, Token: u.Token, TotalCalls: counts[u.ID], Remain: u.RemainCount}
 		row.Status = userStatus(u, now)
 		report.Users = append(report.Users, row)
 		report.Summary.TotalCalls += row.TotalCalls

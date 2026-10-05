@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -132,11 +133,10 @@ func TestAdminCreateUserValidation(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{"no name", map[string]any{"plan_code": "count", "total_count": 5}},
-		{"no plan", map[string]any{"name": "x"}},
-		{"bad plan", map[string]any{"name": "x", "plan_code": "nope"}},
-		{"zero count", map[string]any{"name": "x", "plan_code": "count", "total_count": 0}},
-		{"custom no days", map[string]any{"name": "x", "plan_code": "duration_custom", "days": 0}},
+		{"no plan", map[string]any{"note": "x"}},
+		{"bad plan", map[string]any{"plan_code": "nope"}},
+		{"zero count", map[string]any{"plan_code": "count", "total_count": 0}},
+		{"custom no days", map[string]any{"plan_code": "duration_custom", "days": 0}},
 	}
 	for _, tc := range cases {
 		req := newJSONRequest(http.MethodPost, "/api/admin/users", tc.body)
@@ -148,13 +148,46 @@ func TestAdminCreateUserValidation(t *testing.T) {
 	}
 }
 
-func TestAdminCreateDuplicateUser(t *testing.T) {
+func TestAdminBatchCreateUsers(t *testing.T) {
 	srv, _ := testServer(t)
-	srv.createTestUser(t, "dup", "count", 5, 0)
-	req := newJSONRequest(http.MethodPost, "/api/admin/users", map[string]any{"name": "dup", "plan_code": "count", "total_count": 5})
+	req := newJSONRequest(http.MethodPost, "/api/admin/users/batch",
+		map[string]any{"count": 3, "plan_code": "count", "total_count": 5})
 	rec := newRecorder()
-	srv.adminCreateUser(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("duplicate code = %d, want 409", rec.Code)
+	srv.adminBatchCreateUsers(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("batch code = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Count  int      `json:"count"`
+		Tokens []string `json:"tokens"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Count != 3 || len(out.Tokens) != 3 {
+		t.Fatalf("count=%d tokens=%d, want 3/3", out.Count, len(out.Tokens))
+	}
+	seen := map[string]bool{}
+	for _, tk := range out.Tokens {
+		if tk == "" || seen[tk] {
+			t.Fatalf("token invalid or duplicate: %q", tk)
+		}
+		seen[tk] = true
+	}
+}
+
+func TestAdminBatchCreateValidation(t *testing.T) {
+	srv, _ := testServer(t)
+	for _, body := range []map[string]any{
+		{"count": 0, "plan_code": "count", "total_count": 5},
+		{"count": 501, "plan_code": "count", "total_count": 5},
+		{"count": 2, "plan_code": "nope"},
+	} {
+		req := newJSONRequest(http.MethodPost, "/api/admin/users/batch", body)
+		rec := newRecorder()
+		srv.adminBatchCreateUsers(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %v: code = %d, want 400 (%s)", body, rec.Code, rec.Body.String())
+		}
 	}
 }

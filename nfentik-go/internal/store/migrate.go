@@ -95,7 +95,6 @@ var migrations = []migration{
 		Statements: []string{
 			`CREATE TABLE IF NOT EXISTS Users (
 				Id BIGSERIAL PRIMARY KEY,
-				Name TEXT NOT NULL,
 				Token TEXT NOT NULL,
 				PlanType TEXT NOT NULL DEFAULT 'duration',
 				PlanCode TEXT NOT NULL DEFAULT 'monthly',
@@ -111,7 +110,6 @@ var migrations = []migration{
 				UpdatedAt TIMESTAMP DEFAULT NOW()
 			)`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON Users(Token)`,
-			`CREATE INDEX IF NOT EXISTS idx_users_name ON Users(Name)`,
 			`CREATE TABLE IF NOT EXISTS UserRequestLogs (
 				LogId BIGSERIAL PRIMARY KEY,
 				UserId BIGINT NOT NULL,
@@ -127,12 +125,30 @@ var migrations = []migration{
 				AuditId BIGSERIAL PRIMARY KEY,
 				Action TEXT NOT NULL,
 				UserId BIGINT,
-				UserName TEXT NOT NULL DEFAULT '',
+				UserToken TEXT NOT NULL DEFAULT '',
 				Detail TEXT NOT NULL DEFAULT '',
 				Actor TEXT NOT NULL DEFAULT 'admin',
 				CreatedAt TIMESTAMP DEFAULT NOW()
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_user_audits_created ON UserAuditLogs(CreatedAt DESC)`,
+		},
+	},
+	{
+		Version: 3,
+		Name:    "user_token_identity",
+		Statements: []string{
+			// The user token is now the only identity: drop the separate name.
+			`DROP INDEX IF EXISTS idx_users_name`,
+			`ALTER TABLE Users DROP COLUMN IF EXISTS Name`,
+			// Audit rows keep identifying the user, now by token. Only rename
+			// when the legacy column is present so fresh databases are unaffected.
+			`DO $$
+			BEGIN
+				IF EXISTS (SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'userauditlogs' AND column_name = 'username') THEN
+					ALTER TABLE UserAuditLogs RENAME COLUMN UserName TO UserToken;
+				END IF;
+			END $$`,
 		},
 	},
 }

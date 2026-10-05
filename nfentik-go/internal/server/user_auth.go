@@ -135,7 +135,7 @@ func (s *Server) handleUserResetToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	if err := s.store.InsertAudit("self_reset_token", u.ID, u.Name, `{}`, "user"); err != nil {
+	if err := s.store.InsertAudit("self_reset_token", u.ID, newToken, `{}`, "user"); err != nil {
 		s.PublishError("audit self reset token: %v", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "token": newToken})
@@ -163,7 +163,7 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "缺少备注"})
 		return
 	}
-	if err := s.store.UpdateUser(u.ID, nil, req.Note, nil); err != nil {
+	if err := s.store.UpdateUser(u.ID, req.Note, nil); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}

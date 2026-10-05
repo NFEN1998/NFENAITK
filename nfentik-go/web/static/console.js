@@ -1160,6 +1160,11 @@
     return u.remain_count + " / " + (u.total_count == null ? "-" : u.total_count);
   }
 
+  function shortToken(t) {
+    if (!t) return "(未知)";
+    return t.length > 14 ? t.slice(0, 10) + "…" : t;
+  }
+
   function loadUsers() {
     api("/users").then(function (data) {
       if (!data.success) { toast(data.message); return; }
@@ -1176,7 +1181,7 @@
     users.forEach(function (u) { userMap[String(u.id)] = u; });
     var body = qs("u-table").querySelector("tbody");
     if (!users.length) {
-      body.innerHTML = '<tr><td colspan="9" class="muted">暂无用户，点击「新建用户」创建。</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="muted">暂无用户，点击「新建用户」或「批量生成」创建。</td></tr>';
       return;
     }
     body.innerHTML = users.map(function (u) {
@@ -1185,13 +1190,12 @@
         : '<button data-act="enable" data-id="' + u.id + '" class="btn ghost small">启用</button>';
       return "<tr>" +
         "<td>" + u.id + "</td>" +
-        "<td>" + esc(u.name) + "</td>" +
+        '<td><span class="mono small clamp">' + esc(u.token) + "</span></td>" +
         '<td class="clamp">' + esc(u.note || "") + "</td>" +
         "<td>" + esc(planLabel(u.plan_code)) + "</td>" +
         "<td>" + userStatusPill(u.status) + "</td>" +
         "<td>" + esc(userRemainText(u)) + "</td>" +
         "<td>" + esc(u.expire_at || "不限") + "</td>" +
-        '<td><span class="mono small clamp">' + esc(u.token) + "</span></td>" +
         '<td class="row-actions">' +
           '<button data-act="copy" data-id="' + u.id + '" class="btn ghost small">复制令牌</button>' +
           '<button data-act="renew" data-id="' + u.id + '" class="btn ghost small">续费</button>' +
@@ -1219,49 +1223,61 @@
     });
   }
 
-  function openCreateUser() {
-    var planOptions = userState.plans.map(function (p) {
-      return '<option value="' + esc(p.Code) + '">' + esc(p.Label) + "</option>";
+  function planOptionsHtml(selected) {
+    return userState.plans.map(function (p) {
+      var sel = p.Code === selected ? " selected" : "";
+      return '<option value="' + esc(p.Code) + '"' + sel + ">" + esc(p.Label) + "</option>";
     }).join("");
-    qs("modal-title").textContent = "新建用户";
-    qs("modal-content").innerHTML =
-      '<div class="field"><label>用户名</label><input id="cu-name" type="text" placeholder="用于辨识的名称"></div>' +
-      '<div class="field"><label>套餐</label><select id="cu-plan">' + planOptions + "</select></div>" +
-      '<div class="field" id="cu-count-wrap"><label>总次数</label><input id="cu-count" type="number" min="1" value="100"></div>' +
-      '<div class="field" id="cu-days-wrap" style="display:none;"><label>自定义天数</label><input id="cu-days" type="number" min="1" value="30"></div>' +
-      '<div class="field"><label>备注（可选）</label><input id="cu-note" type="text"></div>' +
-      '<label class="checkbox" id="cu-expiry-wrap"><input type="checkbox" id="cu-expiry"> 次数套餐设置有效期</label>' +
-      '<div class="field" id="cu-expiry-days-wrap" style="display:none;"><label>有效期天数</label><input id="cu-expiry-days" type="number" min="1" value="30"></div>';
+  }
+
+  // planFields renders the shared plan controls and returns a sync function.
+  function planFields(prefix) {
+    qs("modal-content").insertAdjacentHTML("beforeend",
+      '<div class="field"><label>套餐</label><select id="' + prefix + '-plan">' + planOptionsHtml("") + "</select></div>" +
+      '<div class="field" id="' + prefix + '-count-wrap"><label>总次数</label><input id="' + prefix + '-count" type="number" min="1" value="100"></div>' +
+      '<div class="field" id="' + prefix + '-days-wrap" style="display:none;"><label>自定义天数</label><input id="' + prefix + '-days" type="number" min="1" value="30"></div>' +
+      '<div class="field"><label>备注（可选）</label><input id="' + prefix + '-note" type="text"></div>' +
+      '<label class="checkbox" id="' + prefix + '-expiry-wrap"><input type="checkbox" id="' + prefix + '-expiry"> 次数套餐设置有效期</label>' +
+      '<div class="field" id="' + prefix + '-expiry-days-wrap" style="display:none;"><label>有效期天数</label><input id="' + prefix + '-expiry-days" type="number" min="1" value="30"></div>');
 
     function syncFields() {
-      var code = qs("cu-plan").value;
+      var code = qs(prefix + "-plan").value;
       var kind = planKind(code);
       var custom = userState.planMap[code] && userState.planMap[code].Custom;
-      qs("cu-count-wrap").style.display = kind === "count" ? "" : "none";
-      qs("cu-expiry-wrap").style.display = kind === "count" ? "" : "none";
-      qs("cu-expiry-days-wrap").style.display = kind === "count" && qs("cu-expiry").checked ? "" : "none";
-      qs("cu-days-wrap").style.display = kind === "duration" && custom ? "" : "none";
+      qs(prefix + "-count-wrap").style.display = kind === "count" ? "" : "none";
+      qs(prefix + "-expiry-wrap").style.display = kind === "count" ? "" : "none";
+      qs(prefix + "-expiry-days-wrap").style.display = kind === "count" && qs(prefix + "-expiry").checked ? "" : "none";
+      qs(prefix + "-days-wrap").style.display = kind === "duration" && custom ? "" : "none";
     }
-    qs("cu-plan").addEventListener("change", syncFields);
-    qs("cu-expiry").addEventListener("change", syncFields);
+    qs(prefix + "-plan").addEventListener("change", syncFields);
+    qs(prefix + "-expiry").addEventListener("change", syncFields);
     var def = qs("s-default-plan") ? qs("s-default-plan").value : "";
-    if (def && userState.planMap[def]) qs("cu-plan").value = def;
+    if (def && userState.planMap[def]) qs(prefix + "-plan").value = def;
     syncFields();
 
-    modalSubmit = function () {
+    return function () {
       var payload = {
-        name: qs("cu-name").value.trim(),
-        plan_code: qs("cu-plan").value,
-        note: qs("cu-note").value.trim(),
+        plan_code: qs(prefix + "-plan").value,
+        note: qs(prefix + "-note").value.trim(),
       };
       if (planKind(payload.plan_code) === "count") {
-        payload.total_count = Number(qs("cu-count").value) || 0;
-        payload.enforce_expiry = qs("cu-expiry").checked;
-        payload.expiry_days = Number(qs("cu-expiry-days").value) || 0;
+        payload.total_count = Number(qs(prefix + "-count").value) || 0;
+        payload.enforce_expiry = qs(prefix + "-expiry").checked;
+        payload.expiry_days = Number(qs(prefix + "-expiry-days").value) || 0;
       } else if (userState.planMap[payload.plan_code] && userState.planMap[payload.plan_code].Custom) {
-        payload.days = Number(qs("cu-days").value) || 0;
+        payload.days = Number(qs(prefix + "-days").value) || 0;
       }
-      api("/users", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
+      return payload;
+    };
+  }
+
+  function openCreateUser() {
+    qs("modal-title").textContent = "新建用户";
+    qs("modal-content").innerHTML = "";
+    var collect = planFields("cu");
+
+    modalSubmit = function () {
+      api("/users", { method: "POST", body: JSON.stringify(collect()) }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
         closeModal();
         loadUsers();
@@ -1270,12 +1286,45 @@
     qs("modal").classList.remove("hidden");
   }
 
+  function openBatchUser() {
+    qs("modal-title").textContent = "批量生成用户";
+    qs("modal-content").innerHTML =
+      '<div class="field"><label>生成数量（1-500）</label><input id="bu-count" type="number" min="1" max="500" value="10"></div>';
+    var collect = planFields("bu");
+
+    modalSubmit = function () {
+      var payload = collect();
+      payload.count = Number(qs("bu-count").value) || 0;
+      api("/users/batch", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
+        if (!res.success) { toast(res.message); return; }
+        showBatchResult(res.tokens || []);
+        loadUsers();
+      });
+    };
+    qs("modal").classList.remove("hidden");
+  }
+
+  function showBatchResult(tokens) {
+    var text = tokens.join("\n");
+    qs("modal-title").textContent = "已生成 " + tokens.length + " 个令牌";
+    qs("modal-content").innerHTML =
+      '<p class="muted small">请复制并妥善保存，令牌仅在此处完整展示。</p>' +
+      '<div class="field"><textarea id="bu-result" rows="10" class="mono" readonly>' + esc(text) + "</textarea></div>";
+    modalSubmit = function () {
+      copyText(text, "已复制全部令牌");
+    };
+    qs("modal-ok").textContent = "批量复制";
+    qs("modal-ok").classList.remove("hidden");
+    qs("modal-cancel").textContent = "关闭";
+    qs("modal").classList.remove("hidden");
+  }
+
   function openRenewUser(u) {
     var planOptions = userState.plans.map(function (p) {
       var sel = p.Code === u.plan_code ? " selected" : "";
       return '<option value="' + esc(p.Code) + '"' + sel + ">" + esc(p.Label) + "</option>";
     }).join("");
-    qs("modal-title").textContent = "续费 / 切换套餐 - " + u.name;
+    qs("modal-title").textContent = "续费 / 切换套餐 - " + shortToken(u.token);
     qs("modal-content").innerHTML =
       '<div class="field"><label>套餐</label><select id="ru-plan">' + planOptions + "</select></div>" +
       '<div class="field" id="ru-count-wrap"><label>新增次数</label><input id="ru-count" type="number" min="1" value="100"></div>' +
@@ -1315,7 +1364,7 @@
   }
 
   function openNoteUser(u) {
-    qs("modal-title").textContent = "编辑备注 - " + u.name;
+    qs("modal-title").textContent = "编辑备注 - " + shortToken(u.token);
     qs("modal-content").innerHTML =
       '<div class="field"><label>备注（最多 200 字）</label><textarea id="nu-note" rows="3">' + esc(u.note || "") + "</textarea></div>";
     modalSubmit = function () {
@@ -1339,7 +1388,7 @@
     if (act === "renew") { openRenewUser(u); return; }
     if (act === "note") { openNoteUser(u); return; }
     if (act === "reset") {
-      if (!window.confirm("重置「" + u.name + "」的令牌？旧令牌将立即失效。")) return;
+      if (!window.confirm("重置「" + shortToken(u.token) + "」的令牌？旧令牌将立即失效。")) return;
       api("/users/" + id + "/reset-token", { method: "POST" }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
         openDetail("新令牌", '<p class="muted small">请立即复制并告知用户，旧令牌已失效。</p><pre class="editor">' + esc(res.token) + "</pre>");
@@ -1355,7 +1404,7 @@
       return;
     }
     if (act === "delete") {
-      if (!window.confirm("删除用户「" + u.name + "」及其调用记录？此操作不可恢复。")) return;
+      if (!window.confirm("删除用户「" + shortToken(u.token) + "」及其调用记录？此操作不可恢复。")) return;
       api("/users/" + id, { method: "DELETE" }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
         loadUsers();
@@ -1367,6 +1416,10 @@
     if (!userState.plans.length) { toast("套餐列表加载中，请稍后重试"); return; }
     openCreateUser();
   });
+  qs("u-batch-btn").addEventListener("click", function () {
+    if (!userState.plans.length) { toast("套餐列表加载中，请稍后重试"); return; }
+    openBatchUser();
+  });
   qs("u-refresh").addEventListener("click", loadUsers);
   qs("u-range").addEventListener("change", loadUserStats);
   qs("u-audit-btn").addEventListener("click", function () {
@@ -1374,7 +1427,7 @@
       if (!data.success) { toast(data.message); return; }
       var rows = (data.audits || []).map(function (a) {
         return '<tr><td class="small">' + esc(a.created_at) + "</td><td>" + esc(a.action) +
-          "</td><td>" + esc(a.user_name || a.user_id) + "</td><td>" + esc(a.actor) + "</td></tr>";
+          "</td><td>" + esc(a.user_token || a.user_id) + "</td><td>" + esc(a.actor) + "</td></tr>";
       }).join("");
       if (!rows) rows = '<tr><td colspan="4" class="muted">暂无审计记录</td></tr>';
       openDetail("审计日志（最近 50 条）",
@@ -1429,6 +1482,7 @@
     qs("modal").classList.add("hidden");
     modalSubmit = null;
     qs("modal-ok").classList.remove("hidden");
+    qs("modal-ok").textContent = "确定";
     qs("modal-cancel").textContent = "取消";
   }
 

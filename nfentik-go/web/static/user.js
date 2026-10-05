@@ -101,7 +101,7 @@
 
   function renderProfile() {
     var u = state.user || {};
-    qs("user-name").textContent = u.name || "-";
+    qs("user-name").textContent = u.token || "-";
     qs("user-plan-label").textContent = planLabel(u.plan_code);
     qs("user-start").textContent = u.start_at || "-";
     qs("user-expire").textContent = u.expire_at || "不限";

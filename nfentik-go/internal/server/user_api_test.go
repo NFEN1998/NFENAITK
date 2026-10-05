@@ -111,9 +111,9 @@ func (s *Server) setTokenForQuery(t *testing.T, required bool) {
 	}
 }
 
-func (s *Server) createTestUser(t *testing.T, name, planCode string, total int64, days int) store.User {
+func (s *Server) createTestUser(t *testing.T, label, planCode string, total int64, days int) store.User {
 	t.Helper()
-	body := map[string]any{"name": name, "plan_code": planCode}
+	body := map[string]any{"plan_code": planCode}
 	if total > 0 {
 		body["total_count"] = total
 	}
@@ -125,7 +125,7 @@ func (s *Server) createTestUser(t *testing.T, name, planCode string, total int64
 	rec := httptest.NewRecorder()
 	s.adminCreateUser(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("create user %s: %d %s", name, rec.Code, rec.Body.String())
+		t.Fatalf("create user %s: %d %s", label, rec.Code, rec.Body.String())
 	}
 	var out struct {
 		User store.User `json:"user"`

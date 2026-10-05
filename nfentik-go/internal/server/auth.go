@@ -35,7 +35,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		for _, u := range settings.MultiUser.Users {
 			if u.Token == token {
 				writeJSON(w, http.StatusOK, map[string]any{
-					"success": true, "role": "user", "name": u.Name, "id": u.ID, "token": token,
+					"success": true, "role": "user", "id": u.ID, "token": token,
 				})
 				return
 			}

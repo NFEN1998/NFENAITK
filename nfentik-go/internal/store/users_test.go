@@ -35,7 +35,7 @@ func boolptr(v bool) *bool    { return &v }
 func TestCreateUserRejectsDuplicate(t *testing.T) {
 	s := testStore(t)
 	remain := int64(10)
-	base := User{Name: "alice", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true}
+	base := User{Token: "nf_dup_token", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true}
 	if _, err := s.CreateUser(base); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestCreateUserRejectsDuplicate(t *testing.T) {
 
 func TestGetUserByTokenAndReset(t *testing.T) {
 	s := testStore(t)
-	u, err := s.CreateUser(User{Name: "bob", PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
+	u, err := s.CreateUser(User{PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestResetUserTokenUnknown(t *testing.T) {
 func TestConsumeQuota(t *testing.T) {
 	s := testStore(t)
 	remain := int64(2)
-	u, err := s.CreateUser(User{Name: "carol", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
+	u, err := s.CreateUser(User{PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestConsumeQuota(t *testing.T) {
 func TestConsumeQuotaDurationPlan(t *testing.T) {
 	s := testStore(t)
 	exp := time.Now().AddDate(0, 0, 30).Format("2006-01-02 15:04:05")
-	u, err := s.CreateUser(User{Name: "dave", PlanType: "duration", PlanCode: "monthly", PlanLabel: "包月", ExpireAt: &exp, Enabled: true})
+	u, err := s.CreateUser(User{PlanType: "duration", PlanCode: "monthly", PlanLabel: "包月", ExpireAt: &exp, Enabled: true})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestConsumeQuotaDurationPlan(t *testing.T) {
 func TestAddCountTopUp(t *testing.T) {
 	s := testStore(t)
 	remain := int64(5)
-	u, _ := s.CreateUser(User{Name: "erin", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
 	if err := s.AddCountTopUp(u.ID, 3); err != nil {
 		t.Fatalf("topup: %v", err)
 	}
@@ -133,8 +133,8 @@ func TestAddCountTopUp(t *testing.T) {
 
 func TestUpdateUserNoteAndBool(t *testing.T) {
 	s := testStore(t)
-	u, _ := s.CreateUser(User{Name: "frank", PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
-	if err := s.UpdateUser(u.ID, nil, strptr("重点客户"), boolptr(false)); err != nil {
+	u, _ := s.CreateUser(User{PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
+	if err := s.UpdateUser(u.ID, strptr("重点客户"), boolptr(false)); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, _ := s.GetUserByID(u.ID)
@@ -145,14 +145,14 @@ func TestUpdateUserNoteAndBool(t *testing.T) {
 	for i := range long {
 		long[i] = 'x'
 	}
-	if err := s.UpdateUser(u.ID, nil, strptr(string(long)), nil); err == nil {
+	if err := s.UpdateUser(u.ID, strptr(string(long)), nil); err == nil {
 		t.Fatalf("expected note too long error")
 	}
 }
 
 func TestUserLogsAndPrune(t *testing.T) {
 	s := testStore(t)
-	u, _ := s.CreateUser(User{Name: "gina", PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "duration", PlanCode: "unlimited", PlanLabel: "无限", Enabled: true})
 	for i := 0; i < 5; i++ {
 		if err := s.InsertUserLog(UserRequestLog{UserID: u.ID, Timestamp: time.Now().Format("2006-01-02 15:04:05"), Question: "q", Source: "ai", Status: "ok"}); err != nil {
 			t.Fatalf("insert log: %v", err)
@@ -191,7 +191,7 @@ func TestAuditInsertListPrune(t *testing.T) {
 func TestRenewCountPlan(t *testing.T) {
 	s := testStore(t)
 	remain := int64(5)
-	u, _ := s.CreateUser(User{Name: "ivan", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
 	p, _ := plan.Lookup("count")
 	got, err := s.RenewUser(u.ID, p, 0, 10, false, 0)
 	if err != nil {
@@ -205,7 +205,7 @@ func TestRenewCountPlan(t *testing.T) {
 func TestRenewDurationExtendsFromExpiry(t *testing.T) {
 	s := testStore(t)
 	exp := time.Now().AddDate(0, 0, 10).Format("2006-01-02 15:04:05")
-	u, _ := s.CreateUser(User{Name: "jill", PlanType: "duration", PlanCode: "monthly", PlanLabel: "包月", ExpireAt: &exp, Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "duration", PlanCode: "monthly", PlanLabel: "包月", ExpireAt: &exp, Enabled: true})
 	p, _ := plan.Lookup("monthly")
 	got, err := s.RenewUser(u.ID, p, 0, 0, false, 0)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestRenewDurationExtendsFromExpiry(t *testing.T) {
 func TestSwitchPlanDropsOldQuota(t *testing.T) {
 	s := testStore(t)
 	remain := int64(50)
-	u, _ := s.CreateUser(User{Name: "kyle", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
 	_, _ = s.ConsumeQuota(u.ID)
 	p, _ := plan.Lookup("yearly")
 	got, err := s.SwitchPlan(u.ID, p, 0, 0, false, 0)
@@ -242,7 +242,7 @@ func TestSwitchPlanDropsOldQuota(t *testing.T) {
 func TestUsageReport(t *testing.T) {
 	s := testStore(t)
 	remain := int64(10)
-	u, _ := s.CreateUser(User{Name: "hank", PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
+	u, _ := s.CreateUser(User{PlanType: "count", PlanCode: "count", PlanLabel: "按次", RemainCount: &remain, TotalCount: &remain, Enabled: true})
 	_ = s.InsertUserLog(UserRequestLog{UserID: u.ID, Timestamp: time.Now().Format("2006-01-02 15:04:05"), Source: "bank", Status: "ok"})
 	_ = s.InsertUserLog(UserRequestLog{UserID: u.ID, Timestamp: time.Now().Format("2006-01-02 15:04:05"), Source: "ai", Status: "ok"})
 	rep, err := s.UsageReport(14)
