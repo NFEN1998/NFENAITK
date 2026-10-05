@@ -879,30 +879,140 @@
 
   // ----------------------------------------------------------------------- logs
 
+  var logState = { page: 1, pageSize: 50, total: 0 };
+  var logCache = {};
+  var logSeq = 0;
+
+  function cacheLog(log) {
+    var key = "log" + (++logSeq);
+    logCache[key] = log;
+    return key;
+  }
+
+  function logQuery() {
+    var params = ["page=" + logState.page, "page_size=" + logState.pageSize];
+    var kw = qs("l-keyword").value.trim();
+    if (kw) params.push("keyword=" + encodeURIComponent(kw));
+    var method = qs("l-method").value;
+    if (method) params.push("method=" + encodeURIComponent(method));
+    var status = qs("l-status").value;
+    if (status) params.push("status=" + encodeURIComponent(status));
+    var path = qs("l-path").value.trim();
+    if (path) params.push("path=" + encodeURIComponent(path));
+    return params.join("&");
+  }
+
+  function statusClass(status) {
+    if (status == null) return "";
+    if (status >= 500) return "s5";
+    if (status >= 400) return "s4";
+    if (status >= 300) return "s3";
+    if (status >= 200) return "s2";
+    return "";
+  }
+
+  function shortUA(ua) {
+    if (!ua) return "-";
+    return ua.length > 40 ? ua.slice(0, 40) + "…" : ua;
+  }
+
+  function logRowInner(log, key) {
+    var st = log.status != null ? '<span class="pill ' + statusClass(log.status) + '">' + log.status + "</span>" : "-";
+    return '<td class="mono small">' + esc(log.timestamp) + "</td>" +
+      "<td>" + esc(log.method) + "</td>" +
+      '<td class="mono small">' + esc(log.path) + "</td>" +
+      "<td>" + st + "</td>" +
+      "<td>" + (log.response_time != null ? log.response_time + "ms" : "-") + "</td>" +
+      '<td class="mono small">' + esc(log.ip || "-") + "</td>" +
+      '<td class="small">' + esc(shortUA(log.user_agent)) + "</td>" +
+      '<td><button class="icon-btn" data-log-key="' + key + '">详情</button></td>';
+  }
+
+  function renderLogsTable(logs) {
+    var body = qs("l-table").querySelector("tbody");
+    body.innerHTML = logs.length
+      ? logs.map(function (log) {
+          return '<tr class="log-tr" data-log-key="' + cacheLog(log) + '">' + logRowInner(log) + "</tr>";
+        }).join("")
+      : '<tr><td colspan="8" class="muted">暂无日志</td></tr>';
+    var totalPages = Math.max(1, Math.ceil(logState.total / logState.pageSize));
+    qs("l-pageinfo").textContent = "第 " + logState.page + " / " + totalPages + " 页 · 共 " + logState.total + " 条";
+    qs("l-prev").disabled = logState.page <= 1;
+    qs("l-next").disabled = logState.page >= totalPages;
+  }
+
   function loadLogs() {
-    api("/logs?limit=200").then(function (data) {
+    api("/logs?" + logQuery()).then(function (data) {
       if (!data.success) { toast(data.message); return; }
-      var el = qs("log-stream");
-      el.innerHTML = data.logs.map(function (log) {
-        return '<div class="log-row ' + esc(log.stage) + '">' +
-          '<span class="t">' + esc(log.timestamp) + "</span>" +
-          '<span class="m">' + esc(log.method) + " " + esc(log.path) + "</span> " +
-          (log.status != null ? "[" + log.status + "] " : "") +
-          (log.response_time != null ? log.response_time + "ms" : "") +
-        "</div>";
-      }).join("") || '<p class="muted">暂无日志</p>';
+      logState.total = data.total || 0;
+      renderLogsTable(data.logs || []);
     });
   }
 
+  qs("l-search").addEventListener("click", function () { logState.page = 1; loadLogs(); });
   qs("l-refresh").addEventListener("click", loadLogs);
+  qs("l-prev").addEventListener("click", function () {
+    if (logState.page > 1) { logState.page--; loadLogs(); }
+  });
+  qs("l-next").addEventListener("click", function () {
+    logState.page++; loadLogs();
+  });
+  qs("l-keyword").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { logState.page = 1; loadLogs(); }
+  });
+  qs("l-path").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { logState.page = 1; loadLogs(); }
+  });
   qs("l-live").addEventListener("change", function () {
     state.live = this.checked;
     if (state.live) startStream();
   });
   qs("l-clear").addEventListener("click", function () {
     if (!window.confirm("清空全部请求日志？")) return;
-    api("/logs/clear", { method: "DELETE" }).then(function () { loadLogs(); });
+    api("/logs/clear", { method: "DELETE" }).then(function () { logState.page = 1; loadLogs(); });
   });
+
+  // Detail modal for a single log entry.
+  qs("l-table").addEventListener("click", function (e) {
+    var target = e.target.closest("[data-log-key]");
+    if (!target) return;
+    var log = logCache[target.getAttribute("data-log-key")];
+    if (log) openLogDetail(log);
+  });
+
+  function prettyJSON(text) {
+    if (text == null || text === "") return "";
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return text; }
+  }
+
+  function detailBlock(label, value) {
+    if (value == null || value === "") return "";
+    return '<div class="detail-block"><div class="detail-label">' + esc(label) +
+      '</div><pre class="detail-pre">' + esc(value) + "</pre></div>";
+  }
+
+  function headerBlock(headers) {
+    var keys = Object.keys(headers || {});
+    if (!keys.length) return "";
+    var lines = keys.sort().map(function (k) { return k + ": " + headers[k]; }).join("\n");
+    return detailBlock("请求头", lines);
+  }
+
+  function openLogDetail(log) {
+    var meta = [
+      ["请求 ID", log.id], ["时间", log.timestamp], ["方法", log.method], ["路径", log.path],
+      ["状态码", log.status != null ? String(log.status) : "-"],
+      ["耗时", log.response_time != null ? log.response_time + " ms" : "-"],
+      ["来源 IP", log.ip || "-"], ["User-Agent", log.user_agent || "-"],
+    ].map(function (kv) {
+      return '<div class="kv"><span class="k">' + esc(kv[0]) + '</span><span class="v">' + esc(kv[1] || "-") + "</span></div>";
+    }).join("");
+    var html = '<div class="detail-meta">' + meta + "</div>" +
+      headerBlock(log.headers) +
+      detailBlock("请求体", prettyJSON(log.request_body)) +
+      detailBlock("响应体", prettyJSON(log.response_body));
+    openDetail((log.method || "") + " " + (log.path || ""), html);
+  }
 
   // ------------------------------------------------------------------------- SSE
 
@@ -915,8 +1025,7 @@
       src.addEventListener(name, function (e) {
         markConnected();
         if (!state.live || state.view !== "logs") return;
-        var evt = JSON.parse(e.data);
-        appendLog(evt);
+        appendLog(JSON.parse(e.data));
       });
     });
     src.onerror = function () { markDisconnected(); };
@@ -934,16 +1043,21 @@
   }
 
   function appendLog(evt) {
-    var el = qs("log-stream");
-    var row = document.createElement("div");
-    row.className = "log-row " + esc(evt.stage || "");
-    var time = new Date(evt.timestamp).toLocaleTimeString();
-    var msg = evt.method ? evt.method + " " + evt.path : (evt.type || "");
-    row.innerHTML = '<span class="t">' + esc(time) + '</span><span class="m">' + esc(msg) +
-      "</span> " + (evt.status != null ? "[" + evt.status + "] " : "") +
-      (evt.response_time != null ? evt.response_time + "ms" : "");
-    el.prepend(row);
-    while (el.childElementCount > 400) el.removeChild(el.lastChild);
+    if (evt.type && evt.type !== "request_log") return;
+    if (evt.stage && evt.stage !== "completed") return;
+    var body = qs("l-table").querySelector("tbody");
+    var key = cacheLog(evt);
+    var row = document.createElement("tr");
+    row.className = "log-tr";
+    row.setAttribute("data-log-key", key);
+    row.innerHTML = logRowInner({
+      timestamp: evt.timestamp ? new Date(evt.timestamp).toLocaleString() : "",
+      method: evt.method || "", path: evt.path || "", status: evt.status,
+      response_time: evt.response_time, ip: evt.ip, user_agent: evt.user_agent,
+    }, key);
+    body.insertBefore(row, body.firstChild);
+    while (body.childElementCount > 400) body.removeChild(body.lastChild);
+    if (logSeq > 2000) { logCache = {}; logSeq = 0; }
   }
 
   // ---------------------------------------------------------------------- modal
@@ -971,7 +1085,21 @@
     qs("modal").classList.remove("hidden");
   }
 
-  function closeModal() { qs("modal").classList.add("hidden"); modalSubmit = null; }
+  function openDetail(title, html) {
+    qs("modal-title").textContent = title;
+    qs("modal-content").innerHTML = html;
+    modalSubmit = null;
+    qs("modal-ok").classList.add("hidden");
+    qs("modal-cancel").textContent = "关闭";
+    qs("modal").classList.remove("hidden");
+  }
+
+  function closeModal() {
+    qs("modal").classList.add("hidden");
+    modalSubmit = null;
+    qs("modal-ok").classList.remove("hidden");
+    qs("modal-cancel").textContent = "取消";
+  }
 
   qs("modal-cancel").addEventListener("click", closeModal);
   qs("modal-ok").addEventListener("click", function () { if (modalSubmit) modalSubmit(); });

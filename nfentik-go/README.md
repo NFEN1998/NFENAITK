@@ -212,6 +212,8 @@ curl "http://127.0.0.1:3000/query?title=题目内容"
 | POST | `/api/model/call` | 单模型调用，返回完整结果 |
 | POST | `/api/model/stream` | 单模型调用，SSE 逐 token 返回 |
 | GET | `/api/logs/stream` | 请求日志 SSE 流 |
+| GET | `/api/admin/logs` | 请求日志查询（过滤 + 分页） |
+| DELETE | `/api/admin/logs/clear` | 清空请求日志 |
 | POST | `/api/login` | 管理令牌校验 |
 | GET | `/console` | 管理控制台页面 |
 
@@ -222,6 +224,17 @@ Authorization: Bearer <adminToken>
 ```
 
 当数据库中的 `adminToken` 为空时，管理接口不校验令牌。
+
+## 请求日志
+
+控制台的「请求日志」视图提供详细的请求审计：每次请求记录**一行**，包含时间、方法、路径、状态码、耗时、来源 IP、User-Agent、请求头、请求体与响应体，点击「详情」可查看完整内容。
+
+- **全量记录**：除静态资源、SSE 流与日志接口本身外，`/query` 和所有管理接口都会被记录，`/query` 记入每日请求量。
+- **敏感信息脱敏**：请求/响应体（JSON）中 `apiKey`、`token`、`password`、`secret`、`adminToken` 等字段，以及 `Authorization`、`Cookie`、`X-Admin-Token` 等请求头，写入日志前统一替换为 `***`；`/api/login` 的请求体不记录。
+- **体积保护**：单次请求/响应体最多保存 16 KB，超出部分截断并标注。
+- **检索**：支持关键字（题目/答案/路径/IP/User-Agent）、方法、状态码（精确值或 `2xx`/`4xx`/`5xx`）、路径模糊匹配，配合分页浏览。
+
+查询参数（`GET /api/admin/logs`）：`page`、`page_size`（默认 50，最大 500）、`keyword`、`method`、`status`、`path`。
 
 ## 模型配置
 

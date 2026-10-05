@@ -152,10 +152,6 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		Type: EventRequestLog, ID: requestID, Method: r.Method, Path: "/query",
 		RequestBody: bodyStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "started",
 	})
-	s.logRequest(store.RequestLog{
-		ID: requestID, Timestamp: time.Now().Format(time.RFC3339), Method: r.Method,
-		Path: "/query", RequestBody: bodyStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "started",
-	})
 	s.bumpDailyRequest()
 
 	status, resp := s.resolveQuery(r.Context(), req, origin)
@@ -167,9 +163,11 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		Type: EventRequestLog, ID: requestID, Method: r.Method, Path: "/query",
 		Status: &status, ResponseTime: &elapsed, ResponseBody: &respStr, Stage: "completed",
 	})
+	// Persist a single combined row carrying the request and its response.
 	s.logRequest(store.RequestLog{
 		ID: requestID, Timestamp: time.Now().Format(time.RFC3339), Method: r.Method,
-		Path: "/query", Status: &status, ResponseTime: &elapsed, ResponseBody: &respStr, Stage: "completed",
+		Path: "/query", Status: &status, ResponseTime: &elapsed, RequestBody: bodyStr,
+		ResponseBody: &respStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "completed",
 	})
 
 	writeJSON(w, status, resp)

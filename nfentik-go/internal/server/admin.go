@@ -336,14 +336,23 @@ func (s *Server) adminLogs(w http.ResponseWriter, r *http.Request, rest []string
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	limit := int(parseIntDefault(r.URL.Query().Get("limit"), 200))
-	logs, err := s.store.RequestLogs(limit)
+	filter := store.RequestLogFilter{
+		Keyword:  r.URL.Query().Get("keyword"),
+		Method:   strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("method"))),
+		Path:     strings.TrimSpace(r.URL.Query().Get("path")),
+		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
+		Page:     int(parseIntDefault(r.URL.Query().Get("page"), 1)),
+		PageSize: int(parseIntDefault(r.URL.Query().Get("page_size"), 50)),
+	}
+	logs, total, err := s.store.RequestLogsFiltered(filter)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	counts, _ := s.store.DailyRequestCounts()
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "logs": logs, "daily": counts})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "logs": logs, "total": total,
+		"page": filter.Page, "page_size": filter.PageSize,
+	})
 }
 
 func (s *Server) adminModelConfig(w http.ResponseWriter, r *http.Request) {

@@ -137,6 +137,26 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 .log-row.completed .m { color: #4ade80; }
 .log-row.error .m { color: #f87171; }
 
+/* ---- request log table & detail ---- */
+.log-tr { cursor: pointer; }
+.log-tr:hover { background: #f8fafc; }
+.pill.s2 { background: #dcfce7; color: #15803d; }
+.pill.s3 { background: #dbeafe; color: #1d4ed8; }
+.pill.s4 { background: #fef3c7; color: #b45309; }
+.pill.s5 { background: #fee2e2; color: #b91c1c; }
+.detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; margin-bottom: 14px; }
+.detail-meta .kv { display: flex; gap: 8px; font-size: 13px; }
+.detail-meta .k { color: var(--muted); min-width: 72px; flex: 0 0 auto; }
+.detail-meta .v { flex: 1; word-break: break-all; }
+.detail-block { margin-bottom: 14px; }
+.detail-label { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.detail-pre {
+  background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  max-height: 320px; overflow: auto; margin: 0;
+}
+
 .chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
 .chart .bar { flex: 1; background: linear-gradient(180deg, #3b82f6, #2563eb); border-radius: 4px 4px 0 0; position: relative; min-height: 3px; }
 .chart .bar span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }

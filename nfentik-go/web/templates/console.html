@@ -251,11 +251,38 @@
 
     <section id="view-logs" class="view">
       <div class="toolbar">
-        <label class="checkbox"><input type="checkbox" id="l-live" checked> 实时日志</label>
+        <input id="l-keyword" placeholder="关键字（题目/答案/路径/IP）">
+        <select id="l-method">
+          <option value="">全部方法</option>
+          <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>HEAD</option>
+        </select>
+        <select id="l-status">
+          <option value="">全部状态</option>
+          <option value="2xx">2xx 成功</option>
+          <option value="3xx">3xx 重定向</option>
+          <option value="4xx">4xx 客户端错误</option>
+          <option value="5xx">5xx 服务端错误</option>
+        </select>
+        <input id="l-path" placeholder="路径包含…">
+        <button id="l-search" class="btn primary">查询</button>
+        <span class="spacer"></span>
+        <label class="checkbox"><input type="checkbox" id="l-live" checked> 实时</label>
         <button id="l-refresh" class="btn ghost">刷新</button>
         <button id="l-clear" class="btn danger">清空</button>
       </div>
-      <div id="log-stream" class="log-stream"></div>
+      <div class="table-wrap">
+        <table id="l-table">
+          <thead><tr>
+            <th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>IP</th><th>User-Agent</th><th>操作</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="l-prev" class="btn ghost">上一页</button>
+        <span id="l-pageinfo">第 1 页</span>
+        <button id="l-next" class="btn ghost">下一页</button>
+      </div>
     </section>
   </main>
 </div>
