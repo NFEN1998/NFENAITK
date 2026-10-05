@@ -1,0 +1,152 @@
+# 用户令牌与套餐体系 实施计划
+
+- [ ] 1. 数据库迁移与用户/日志/审计表结构
+  - [ ] 1.1 在 `internal/store/migrate.go` 的 `migrations` 追加 Version 2 迁移项
+    - 新增 `Users` 表（Id/Name/Token 唯一/PlanType/PlanCode/PlanLabel/StartAt/ExpireAt/TotalCount/UsedCount/RemainCount/Note/Enabled/CreatedAt/UpdatedAt）
+    - 新增 `UserRequestLogs` 表（LogId 主键/UserId/Token/Timestamp/Question/Source/Status/ResponseTime）
+    - 新增 `UserAuditLogs` 表（AuditId/Action/UserId/UserName/Detail/Actor/CreatedAt）
+    - 新增索引 `idx_users_token`、`idx_users_name`、`idx_user_logs_user(UserId, LogId DESC)`、`idx_user_audits_created`
+    - 覆盖需求 1.3、7.5-7.8、10.1、13.1-13.5
+  - [ ] 1.2 为迁移编写测试
+    - 验证全新库升级到 Version 2 后表与索引存在
+    - 验证旧库（已应用 Version 1）可增量升级且数据不丢失
+
+- [ ] 2. 套餐定义包 `internal/plan`
+  - [ ] 2.1 实现套餐元数据与计算
+    - 定义 `Kind`（duration/count）、`Plan{Code,Label,Kind,Days,Unlimited}`
+    - 预置 monthly(30)/quarterly(90)/half_year(180)/yearly(365)/unlimited/duration_custom/count
+    - 实现 `ExpireAt(start, plan) *time.Time` 与 `ComputeCustomDays`
+    - 实现 `Status(user, now) string`（active/expiring/expired/exhausted/disabled）
+    - 支持次数套餐可选有效期（有无 ExpireAt 均计算状态）
+    - 覆盖需求 2.1-2.12、5.2-5.4
+  - [ ] 2.2 为套餐计算编写单元测试
+    - 各固定套餐到期时间计算
+    - 自定义时长天数边界（0/负数/正常值）
+    - 无限套餐 ExpireAt 为空
+    - 次数套餐带/不带有效期两种状态判定
+    - 各状态判定临界值（剩余 7 天、剩余 20%）
+
+- [ ] 3. 用户存储层 `internal/store/users.go`
+  - [ ] 3.1 定义 `User` 结构与令牌生成
+    - 使用 `crypto/rand` 生成 URL 安全令牌，保证唯一
+    - 覆盖需求 10.1
+  - [ ] 3.2 实现用户仓储方法
+    - `CreateUser`（用户名查重、令牌唯一、套餐初始值计算、备注校验）
+    - `GetUserByToken` / `GetUserByID` / `ListUsers`
+    - `UpdateUser`（用户名/备注/启用状态）
+    - `DeleteUser` / `ResetUserToken`
+    - `ConsumeQuota`（次数套餐条件更新，原子扣减）
+    - `RenewUser`（顺延到期时间或累加次数，支持次数套餐可选有效期）
+    - `SwitchPlan`（切换套餐并重置配额）
+    - 覆盖需求 1.1-1.7、2.5-2.12、4.3、9.1-9.5、11.1-11.4
+  - [ ] 3.3 实现用户调用记录存储
+    - `InsertUserLog` 与 `UserLogs(userID, page, pageSize)`
+    - `PruneUserLogs`（三重上限：每用户 200/30 天/全局 50000）
+    - 覆盖需求 7.1-7.8
+  - [ ] 3.4 实现审计日志存储
+    - `InsertAudit(action, userID, userName, detail, actor)` 与 `ListAudits(page, pageSize)`
+    - `PruneAudits(days)`（默认保留 90 天）
+    - 覆盖需求 13.1-13.5
+  - [ ] 3.5 实现统计报表查询
+    - `UserUsageStats(rangeDays)` 返回每用户累计调用、剩余配额、按天调用序列与汇总
+    - 覆盖需求 12.1-12.4
+  - [ ] 3.6 为用户存储编写单元测试
+    - 创建/查重/唯一令牌
+    - 按令牌查询与重置后旧令牌失效
+    - `ConsumeQuota` 余额边界与并发
+    - 保留策略裁剪结果（用户日志与审计日志）
+    - 统计报表聚合结果
+
+- [ ] 4. 鉴权与用户端接口 `internal/server/auth.go`
+  - [ ] 4.1 实现用户令牌解析与鉴权
+    - `userFromRequest(r)`（Bearer 优先，回退 `?token=`）
+    - `requireUser` 中间件与错误响应（缺少/无效/过期/用尽/停用/无权）
+    - 覆盖需求 3.1-3.5、10.2-10.3
+  - [ ] 4.2 实现用户端路由处理器
+    - `POST /api/user/login`、`GET /api/user/me`
+    - `GET /api/user/logs`
+    - `POST /api/user/reset-token`
+    - `PUT /api/user/profile`（更新自己的备注）
+    - `GET /user` 页面
+    - 覆盖需求 3.1、5.1、6.1、7.1-7.4、8.1-8.4、11.2-11.4
+  - [ ] 4.3 在 `server.go` 注册用户路由并加日志跳过名单
+    - 注册 `/user`、`/api/user/`、`/user/static/`
+    - 路由顺序避免与 `/` 冲突
+  - [ ] 4.4 为用户端接口编写集成测试
+    - 登录、`/me`、`/logs` 仅返回本人数据
+    - 非本人令牌访问返回 403
+    - 用户重置令牌后写审计日志
+
+- [ ] 5. 管理员用户管理接口 `internal/server/admin.go`
+  - [ ] 5.1 在 `handleAdmin` 增加 `case "users":`
+    - `GET /api/admin/users`（列表含令牌、状态、剩余配额、备注）
+    - `POST /api/admin/users`（创建，校验套餐/总次数/天数/可选有效期/备注）
+    - `PUT /api/admin/users/{id}`（用户名/备注/启用状态）
+    - `DELETE /api/admin/users/{id}`
+    - `POST /api/admin/users/{id}/renew`、`/reset-token`
+    - `POST /api/admin/users/logs/prune`
+    - 覆盖需求 1.1-1.7、9.1-9.5、10.4、11.1
+  - [ ] 5.2 实现用户统计与审计接口
+    - `GET /api/admin/users/stats?range=7|14|30|90`
+    - `GET /api/admin/users/audits?page=&page_size=`
+    - 覆盖需求 12.1-12.4、13.5
+  - [ ] 5.3 为管理员用户接口编写集成测试
+    - 创建非法输入（未选套餐/总次数 0/天数 0/启用有效期未填天数/备注过长）返回错误
+    - 续费与切换套餐后配额正确
+    - 重置令牌后旧令牌失效且写入审计
+    - 统计与审计接口返回正确
+
+- [ ] 6. `/query` 鉴权与扣减接入 `internal/server/query.go`
+  - [ ] 6.1 在 `handleQuery` 前置鉴权
+    - 解析用户令牌；按 `requireTokenForQuery` 决定是否强制
+    - 校验套餐状态（先判过期再判次数），过期/用尽/停用则拒绝
+    - 覆盖需求 4.1-4.8、2.10-2.12
+  - [ ] 6.2 查询后扣减与写用户日志
+    - 次数套餐 `ConsumeQuota` 扣 1；时长/无限不改变配额
+    - 写入 `UserRequestLogs` 并记录来源 `bank`/`cache`/`ai`
+    - 低频率触发 `PruneUserLogs` 与 `PruneAudits`
+    - 覆盖需求 4.1-4.3、4.9、7.1-7.8
+  - [ ] 6.3 `AppSettings` 增加用户体系配置项
+    - `usersEnabled`/`requireTokenForQuery`/`userLogRetentionDays`/`userLogPerUserLimit`/`userLogGlobalLimit`/`userAuditRetentionDays`/`defaultPlanCode`
+    - 覆盖设计「AppSettings 增加配置项」
+  - [ ] 6.4 为 `/query` 鉴权编写集成测试
+    - 缺令牌/无效/过期/用尽/有效时长/有效次数/次数带有效期/无限各一条
+    - 验证扣减仅次数套餐生效
+
+- [ ] 7. 检查点 - 确保所有测试通过,如有疑问请询问用户
+
+- [ ] 8. 管理员控制台「用户管理」视图
+  - [ ] 8.1 在 `console.html` 增加用户管理视图与导航项
+    - 用户列表表格（用户名/备注/套餐类型/状态/剩余配额/令牌/操作）
+    - 创建弹窗（套餐下拉含时长与次数、自定义天数、总次数、可选有效期天数）
+    - 续费/重置令牌/编辑备注/删除操作
+    - 统计报表卡片（汇总 + 每用户 + 按天图表）
+    - 审计日志列表
+    - 覆盖需求 9.5、10.4、12.1-12.4、13.5
+  - [ ] 8.2 在 `console.js` 实现用户管理交互
+    - `loadUsers`/`createUser`/`renewUser`/`resetUserToken`/`deleteUser`/`updateUser`
+    - `loadUserStats`/`loadUserAudits`
+    - 展示令牌与一键复制
+    - 覆盖需求 1.4、10.4、12.1-12.4、13.5
+  - [ ] 8.3 控制台用户管理手工验证
+    - 创建各套餐用户、续费、切换、重置、编辑备注、删除
+    - 统计报表与审计列表展示正确
+
+- [ ] 9. 普通用户页 `web/templates/user.html` 与 `web/static/user.{css,js}`
+  - [ ] 9.1 实现用户页模板与样式
+    - 品牌条、提醒条（expiring/expired/exhausted/disabled 着色）
+    - 套餐卡片（含次数进度条）、备注展示/编辑、OCS 配置预览、调用记录表、登录遮罩
+    - 复用控制台设计变量与移动端适配
+    - 覆盖需求 5.1-5.4、6.1-6.4、11.2-11.4
+  - [ ] 9.2 实现用户页脚本
+    - 登录/登出、`/api/user/me` 加载、提醒文案计算
+    - 复制 OCS 配置（含个人令牌，失败回退文本框）
+    - 调用记录分页加载、重置令牌、更新备注
+    - 覆盖需求 5.1-5.4、6.2-6.4、7.1-7.4、8.1-8.4、11.3
+  - [ ] 9.3 在 `console.go`/`pages.go` 增加用户页模板渲染
+    - `handleUserPage` 渲染 `user.html`
+    - 覆盖需求 3.1、6.1
+  - [ ] 9.4 用户页手工验证
+    - 提醒临界值、OCS 复制含令牌、重置后旧令牌失效、备注更新、移动端
+
+- [ ] 10. 检查点 - 确保所有测试通过,如有疑问请询问用户

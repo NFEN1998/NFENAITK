@@ -153,6 +153,7 @@ erDiagram
         bigint TotalCount
         bigint UsedCount
         bigint RemainCount
+        text Note
         boolean Enabled
         timestamp CreatedAt
         timestamp UpdatedAt
@@ -166,6 +167,15 @@ erDiagram
         text Source
         text Status
         bigint ResponseTime
+    }
+    UserAuditLogs {
+        bigserial AuditId PK
+        text Action
+        bigint UserId
+        text UserName
+        text Detail
+        text Actor
+        timestamp CreatedAt
     }
 ```
 
@@ -283,6 +293,40 @@ WHERE LogId IN (
 **配置项归属**：`userLogPerUserLimit`、`userLogRetentionDays`、`userLogGlobalLimit` 均加入 `AppSettings`，在控制台「系统设置」中可编辑，未设置时使用默认值。
 
 **调用记录接口**：`GET /api/user/logs?page=&page_size=`（`page_size` 默认 20，最大 100），返回 `{success, items, total, page, page_size}`，仅返回当前令牌对应用户的记录；普通用户不提供按关键字跨用户检索能力。
+
+### D. 用户备注与资料
+
+- `Users` 表新增 `Note TEXT`（长度上限 200），管理员可编辑，用户页只读展示。
+- 接口：`PUT /api/admin/users/{id}` 支持 `note` 字段；`PUT /api/user/profile` 支持用户更新自己的备注。
+- 校验：`len([]rune(note)) > 200` 返回「备注过长」。
+- 覆盖需求 11.1-11.4。
+
+### E. 次数套餐可选有效期
+
+- `Users` 表复用 `ExpireAt`：次数套餐启用有效期时写入，未启用时为空。
+- 创建/续费参数：`enforce_expiry bool` 与 `days int`（启用时必填，`days > 0`）。
+- 鉴权顺序：先判 `ExpireAt` 是否过期，再判 `RemainCount` 是否耗尽。
+- 覆盖需求 2.10-2.12。
+
+### F. 统计报表
+
+- 接口 `GET /api/admin/users/stats?range=7|14|30|90`：
+  - `users`：`[{id, name, total_calls, remain}]`
+  - `summary`：`{total_calls, active_users, expired_users, exhausted_users}`
+  - `daily`：`[{day, count}]`（按 `UserRequestLogs` 聚合）
+- 数据来源：`UserRequestLogs` 按 `UserId` 与日期分组统计；因日志有保留上限，报表为「保留期内」的统计，页面标注数据窗口。
+- 覆盖需求 12.1-12.4。
+
+### G. 审计日志
+
+- 新增表 `UserAuditLogs`（`AuditId BIGSERIAL PK, Action TEXT, UserId BIGINT, UserName TEXT, Detail TEXT, Actor TEXT, CreatedAt TIMESTAMP DEFAULT NOW()`）。
+  - `Action`：`create`/`reset_token`/`self_reset_token`/`renew`/`switch_plan`/`delete`/`update`。
+  - `Actor`：`admin` 或 `user`。
+  - `Detail`：JSON 文本，记录原套餐/新套餐、原令牌脱敏前后等。
+- 接口：`GET /api/admin/users/audits?page=&page_size=`（时间倒序）。
+- 覆盖需求 13.1-13.5。
+
+**配置项补充**：`userAuditRetentionDays`（默认 90 天），审计日志同样按天裁剪。
 
 ## Test Strategy
 

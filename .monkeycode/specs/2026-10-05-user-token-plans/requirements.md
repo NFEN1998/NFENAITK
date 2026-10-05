@@ -54,6 +54,9 @@
 7. IF 管理员为次数套餐指定的总次数小于等于 0, THE System SHALL 拒绝创建并返回错误信息「总次数必须大于 0」。
 8. WHEN 用户套餐为「自定义时长」, THE System SHALL 依据管理员输入的天数计算到期时间，天数以自然日累加。
 9. IF 管理员为自定义时长套餐输入的天数小于等于 0, THE System SHALL 拒绝创建并返回错误信息「天数必须大于 0」。
+10. WHEN 管理员为次数套餐启用有效期, THE System SHALL 记录到期时间并在到期后拒绝查询。
+11. WHEN 管理员为次数套餐不启用有效期, THE System SHALL 将该用户到期时间置空且仅以剩余次数控制可用性。
+12. WHEN 管理员为次数套餐启用有效期但未指定有效天数, THE System SHALL 拒绝创建并返回错误信息「请指定有效天数」。
 
 ### Requirement 3：用户令牌登录
 
@@ -153,3 +156,37 @@
 2. WHILE 用户已登录, THE User Console SHALL 在服务端校验用户身份后才返回该用户数据。
 3. IF 请求的 `usertoken` 与所访问资源所属用户不一致, THE System SHALL 拒绝访问并返回错误信息「无权访问」。
 4. THE System SHALL 在用户列表中仅向管理员展示 `usertoken` 的完整值。
+
+### Requirement 11：用户备注与资料
+
+**User Story:** AS 管理员 and 普通用户, I want 维护用户备注与资料, so that 我能识别用户并能自我说明。
+
+#### Acceptance Criteria
+
+1. WHEN 管理员为用户填写备注, THE System SHALL 保存该备注并在用户管理列表展示。
+2. WHILE 用户已登录, THE User Console SHALL 允许用户查看自己的备注。
+3. WHEN 用户提交备注更新, THE System SHALL 保存该备注并在用户页展示。
+4. IF 用户备注长度超过 200 字符, THE System SHALL 拒绝保存并返回错误信息「备注过长」。
+
+### Requirement 12：配额与调用统计报表
+
+**User Story:** AS 管理员, I want 查看每个用户的调用统计, so that 我能掌握用量与消耗趋势。
+
+#### Acceptance Criteria
+
+1. WHILE 管理员处于用户管理视图, THE User Management SHALL 展示每个用户的累计调用次数与剩余配额。
+2. WHEN 管理员查看用户统计, THE System SHALL 按天展示该用户最近 14 天的调用次数。
+3. THE System SHALL 展示全部用户的调用总量与有效用户数。
+4. WHEN 管理员选择时间范围, THE System SHALL 按所选范围统计调用次数。
+
+### Requirement 13：令牌与套餐变更审计
+
+**User Story:** AS 管理员, I want 记录令牌与套餐的变更, so that 我能追溯操作历史。
+
+#### Acceptance Criteria
+
+1. WHEN 管理员创建用户, THE System SHALL 记录一条审计日志，包含操作类型、用户名、操作时间与操作者。
+2. WHEN 管理员重置令牌, THE System SHALL 记录一条审计日志，包含被重置的用户与时间。
+3. WHEN 管理员为用户续费或切换套餐, THE System SHALL 记录一条审计日志，包含原套餐与新套餐。
+4. WHEN 用户自行重置令牌, THE System SHALL 记录一条审计日志，标记来源为用户。
+5. WHILE 管理员查看审计日志, THE User Management SHALL 按时间倒序分页展示审计记录。
