@@ -14,6 +14,7 @@ const (
 	kindMultiple
 	kindJudgement
 	kindCompletion
+	kindEssay
 )
 
 func (k questionKind) chineseName() string {
@@ -26,6 +27,8 @@ func (k questionKind) chineseName() string {
 		return "判断"
 	case kindCompletion:
 		return "填空"
+	case kindEssay:
+		return "简答"
 	}
 	return ""
 }
@@ -40,6 +43,8 @@ func (k questionKind) hint() string {
 		return "这是判断题,请只回答正确或错误,不要添加任何其他文字或标点."
 	case kindCompletion:
 		return "这是填空题.如果有多空请用\"###\"连接每个空的答案,只有一个空则直接返回答案内容,不要加序号."
+	case kindEssay:
+		return "这是简答题.请给出完整、准确的答案,分点作答时要点之间用\"###\"连接,不要输出与答案无关的内容."
 	}
 	return ""
 }
@@ -59,6 +64,10 @@ func detectQuestionKind(queryType string) questionKind {
 		return kindJudgement
 	case strings.Contains(normalized, "completion") || strings.Contains(trimmed, "填空"):
 		return kindCompletion
+	case strings.Contains(normalized, "essay") || strings.Contains(normalized, "short_answer") ||
+		strings.Contains(normalized, "short-answer") || strings.Contains(normalized, "shortanswer") ||
+		strings.Contains(trimmed, "简答") || strings.Contains(trimmed, "问答") || strings.Contains(trimmed, "论述"):
+		return kindEssay
 	}
 	return kindUnknown
 }

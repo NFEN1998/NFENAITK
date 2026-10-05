@@ -416,6 +416,7 @@
     { value: "multiple_choice", label: "多选题" },
     { value: "judgement", label: "判断题" },
     { value: "completion", label: "填空题" },
+    { value: "essay", label: "简答题" },
   ];
   function questionTypeLabel(t) {
     var v = (t || "").trim();
@@ -425,6 +426,8 @@
     if (low.indexOf("multiple") >= 0 || v.indexOf("多选") >= 0 || v.indexOf("多项选择") >= 0) return "多选题";
     if (low.indexOf("judgement") >= 0 || low.indexOf("judgment") >= 0 || v.indexOf("判断") >= 0) return "判断题";
     if (low.indexOf("completion") >= 0 || low.indexOf("fill") >= 0 || v.indexOf("填空") >= 0) return "填空题";
+    if (low.indexOf("essay") >= 0 || low.indexOf("short_answer") >= 0 || low.indexOf("short-answer") >= 0 ||
+        v.indexOf("简答") >= 0 || v.indexOf("问答") >= 0 || v.indexOf("论述") >= 0) return "简答题";
     return v;
   }
   function questionTypeSelectValue(t) {
@@ -434,6 +437,8 @@
     if (low.indexOf("multiple") >= 0 || v.indexOf("多选") >= 0 || v.indexOf("多项选择") >= 0) return "multiple_choice";
     if (low.indexOf("judgement") >= 0 || low.indexOf("judgment") >= 0 || v.indexOf("判断") >= 0) return "judgement";
     if (low.indexOf("completion") >= 0 || low.indexOf("fill") >= 0 || v.indexOf("填空") >= 0) return "completion";
+    if (low.indexOf("essay") >= 0 || low.indexOf("short_answer") >= 0 || low.indexOf("short-answer") >= 0 ||
+        v.indexOf("简答") >= 0 || v.indexOf("问答") >= 0 || v.indexOf("论述") >= 0) return "essay";
     return "";
   }
 
