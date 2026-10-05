@@ -84,6 +84,15 @@ type Settings struct {
 	Network                Network     `json:"network"`
 	Database               Database    `json:"database"`
 	Redis                  Redis       `json:"redis"`
+
+	// User token and plan system.
+	UsersEnabled           bool   `json:"usersEnabled"`
+	RequireTokenForQuery   bool   `json:"requireTokenForQuery"`
+	UserLogRetentionDays   int    `json:"userLogRetentionDays"`
+	UserLogPerUserLimit    int    `json:"userLogPerUserLimit"`
+	UserLogGlobalLimit     int    `json:"userLogGlobalLimit"`
+	UserAuditRetentionDays int    `json:"userAuditRetentionDays"`
+	DefaultPlanCode        string `json:"defaultPlanCode"`
 }
 
 // DefaultSettings returns the baseline configuration used on first start.
@@ -117,6 +126,13 @@ func DefaultSettings() Settings {
 			QueryCacheTTL:  600,
 			HistoryEnabled: true,
 		},
+		UsersEnabled:           true,
+		RequireTokenForQuery:   false,
+		UserLogRetentionDays:   30,
+		UserLogPerUserLimit:    200,
+		UserLogGlobalLimit:     50000,
+		UserAuditRetentionDays: 90,
+		DefaultPlanCode:        "",
 	}
 }
 
@@ -263,6 +279,18 @@ func normalize(settings *Settings) {
 	}
 	if settings.Redis.QueryCacheTTL <= 0 {
 		settings.Redis.QueryCacheTTL = 600
+	}
+	if settings.UserLogRetentionDays <= 0 {
+		settings.UserLogRetentionDays = 30
+	}
+	if settings.UserLogPerUserLimit <= 0 {
+		settings.UserLogPerUserLimit = 200
+	}
+	if settings.UserLogGlobalLimit <= 0 {
+		settings.UserLogGlobalLimit = 50000
+	}
+	if settings.UserAuditRetentionDays <= 0 {
+		settings.UserAuditRetentionDays = 90
 	}
 }
 

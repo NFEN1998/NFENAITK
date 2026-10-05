@@ -37,6 +37,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.adminModelConfig(w, r)
 	case "stats":
 		s.adminStats(w, r)
+	case "users":
+		s.adminUsers(w, r, parts[1:])
 	default:
 		http.NotFound(w, r)
 	}

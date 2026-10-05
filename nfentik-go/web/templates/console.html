@@ -22,6 +22,7 @@
       <button class="nav-item" data-view="folders">文件夹</button>
       <button class="nav-item" data-view="pending">待修正</button>
       <button class="nav-item" data-view="models">模型配置</button>
+      <button class="nav-item" data-view="users">用户管理</button>
       <button class="nav-item" data-view="ocs">OCS 配置</button>
       <button class="nav-item" data-view="settings">系统设置</button>
       <button class="nav-item" data-view="logs">请求日志</button>
@@ -143,6 +144,40 @@
       </div>
     </section>
 
+    <section id="view-users" class="view">
+      <div class="cards">
+        <div class="card stat"><span class="stat-label">用户总数</span><strong id="u-stat-total">-</strong></div>
+        <div class="card stat"><span class="stat-label">有效用户</span><strong id="u-stat-active">-</strong></div>
+        <div class="card stat"><span class="stat-label">已过期</span><strong id="u-stat-expired">-</strong></div>
+        <div class="card stat"><span class="stat-label">次数用尽</span><strong id="u-stat-exhausted">-</strong></div>
+        <div class="card stat"><span class="stat-label">窗口内调用</span><strong id="u-stat-calls">-</strong></div>
+      </div>
+
+      <div class="card">
+        <h2>用户列表</h2>
+        <div class="toolbar">
+          <button id="u-add-btn" class="btn primary">新建用户</button>
+          <button id="u-refresh" class="btn ghost">刷新</button>
+          <span class="spacer"></span>
+          <select id="u-range">
+            <option value="7">近 7 天</option>
+            <option value="14" selected>近 14 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
+          <button id="u-audit-btn" class="btn ghost">审计日志</button>
+        </div>
+        <div class="table-wrap">
+          <table id="u-table">
+            <thead><tr>
+              <th>ID</th><th>用户名</th><th>备注</th><th>套餐</th><th>状态</th><th>剩余</th><th>到期时间</th><th>令牌</th><th>操作</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view">
       <div class="toolbar">
         <span class="muted">系统设置保存在 config.json，保存后立即生效。</span>
@@ -223,6 +258,37 @@
             <input id="s-admin-token" type="text" placeholder="留空则管理接口无需令牌">
           </div>
           <label class="checkbox"><input type="checkbox" id="s-multiuser-enabled"> 启用多用户</label>
+        </div>
+
+        <div class="card">
+          <h2>用户令牌与套餐</h2>
+          <p class="muted small">控制 OCS 查询是否必须携带用户令牌，以及用户调用记录的保留策略。</p>
+          <label class="checkbox"><input type="checkbox" id="s-users-enabled"> 启用用户体系</label>
+          <label class="checkbox"><input type="checkbox" id="s-require-token"> 查询必须携带用户令牌</label>
+          <div class="grid-3">
+            <div class="field">
+              <label>记录保留天数</label>
+              <input id="s-ulog-days" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>每用户记录上限</label>
+              <input id="s-ulog-peruser" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>全局记录上限</label>
+              <input id="s-ulog-global" type="number" min="1">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label>审计日志保留天数</label>
+              <input id="s-uaudit-days" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>默认套餐</label>
+              <select id="s-default-plan"></select>
+            </div>
+          </div>
         </div>
       </div>
 

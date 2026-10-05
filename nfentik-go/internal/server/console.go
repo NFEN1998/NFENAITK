@@ -32,6 +32,23 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleUserPage renders the embedded end-user portal.
+func (s *Server) handleUserPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/user" {
+		http.NotFound(w, r)
+		return
+	}
+	settings := s.config.Settings()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "user.html", map[string]any{
+		"Title":      "nfentik 用户中心",
+		"UsersOn":    settings.UsersEnabled,
+		"ServerPort": settings.Network.ServerPort,
+	}); err != nil {
+		http.Error(w, "render user page: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // wantsJSON reports whether the caller prefers a JSON response.
 func wantsJSON(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/json")

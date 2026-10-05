@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/user/static/user.css">
+</head>
+<body>
+<div id="app" data-users-on="{{if .UsersOn}}1{{else}}0{{end}}">
+
+  <div id="user-login" class="user-login hidden">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="login-logo">Z</span>
+        <div>
+          <strong>nfentik</strong>
+          <span class="login-sub">用户中心</span>
+        </div>
+      </div>
+      <h2>欢迎</h2>
+      <p class="login-hint">请输入管理员分配给你的用户令牌</p>
+      <label class="login-label" for="user-token">用户令牌</label>
+      <div class="login-field">
+        <input id="user-token" type="раs​s​wоr​d" placeholder="请输入 User Token" autocomplete="off">
+        <button type="button" id="user-token-toggle" class="login-eye">显示</button>
+      </div>
+      <button id="user-login-btn" class="btn primary full login-submit">进入用户中心</button>
+      <p id="user-login-error" class="error login-error"></p>
+    </div>
+  </div>
+
+  <div id="user-main" class="user-main hidden">
+    <header class="user-topbar">
+      <div class="brand">
+        <span class="logo">Z</span>
+        <div>
+          <strong>nfentik</strong>
+          <small>用户中心</small>
+        </div>
+      </div>
+      <button id="user-logout" class="btn ghost">退出</button>
+    </header>
+
+    <div id="user-alert" class="user-alert hidden"></div>
+
+    <main class="user-content">
+      <section class="card plan-card">
+        <div class="plan-head">
+          <h2>我的套餐</h2>
+          <span id="user-status-pill" class="pill">-</span>
+        </div>
+        <div class="plan-grid">
+          <div class="plan-item"><span class="label">用户名</span><strong id="user-name">-</strong></div>
+          <div class="plan-item"><span class="label">套餐</span><strong id="user-plan-label">-</strong></div>
+          <div class="plan-item"><span class="label">开始时间</span><strong id="user-start">-</strong></div>
+          <div class="plan-item"><span class="label">到期时间</span><strong id="user-expire">-</strong></div>
+        </div>
+        <div id="user-quota" class="quota hidden">
+          <div class="quota-head">
+            <span>剩余次数</span>
+            <strong id="user-quota-text">-</strong>
+          </div>
+          <div class="quota-bar"><div id="user-quota-fill" class="quota-fill"></div></div>
+        </div>
+        <div class="field note-field">
+          <label>我的备注</label>
+          <div class="note-view">
+            <span id="user-note" class="muted">（暂无备注）</span>
+            <button id="user-note-edit" class="btn ghost small">编辑</button>
+          </div>
+          <div id="user-note-edit-wrap" class="note-edit hidden">
+            <textarea id="user-note-input" rows="2" placeholder="最多 200 字"></textarea>
+            <div class="note-actions">
+              <button id="user-note-cancel" class="btn ghost small">取消</button>
+              <button id="user-note-save" class="btn primary small">保存</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
+          <h2>OCS 配置</h2>
+          <button id="user-copy-ocs" class="btn primary small">复制配置</button>
+        </div>
+        <p class="muted small">把下面的配置粘贴到 OCS 用户脚本的题库配置中；其中已包含你的个人令牌，请勿泄露。</p>
+        <textarea id="user-ocs-json" class="editor" readonly spellcheck="false"></textarea>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
+          <h2>我的调用记录</h2>
+          <button id="user-logs-refresh" class="btn ghost small">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table id="user-logs">
+            <thead><tr><th>时间</th><th>题目</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="user-logs-prev" class="btn ghost">上一页</button>
+          <span id="user-logs-pageinfo">第 1 页</span>
+          <button id="user-logs-next" class="btn ghost">下一页</button>
+        </div>
+      </section>
+
+      <section class="card danger-zone">
+        <h2>令牌安全</h2>
+        <p class="muted small">重置后旧令牌立即失效，需要重新登录，并更新 OCS 配置。</p>
+        <button id="user-reset-token" class="btn danger">重置我的令牌</button>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="/user/static/user.js"></script>
+</body>
+</html>

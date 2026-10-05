@@ -29,13 +29,18 @@ var sensitiveHeaders = map[string]bool{
 
 // skipBodyPaths are paths whose request body is never captured (credentials).
 var skipBodyPaths = map[string]bool{
-	"/api/login": true,
+	"/api/login":      true,
+	"/api/user/login": true,
 }
 
-// skipLogPaths are paths that are not logged at all.
+// skipLogPaths are paths that are not logged at all. The user endpoints are
+// skipped because their payloads carry usertokens.
 func skipLogPaths(path string) bool {
 	switch path {
-	case "/", "/console", "/api/logs/stream", "/api/admin/logs":
+	case "/", "/console", "/user", "/api/logs/stream", "/api/admin/logs":
+		return true
+	}
+	if strings.HasPrefix(path, "/api/user/") || strings.HasPrefix(path, "/user/static/") {
 		return true
 	}
 	return isAsset(path)

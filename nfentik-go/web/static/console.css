@@ -335,3 +335,10 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 @media (max-width: 380px) {
   .cards { grid-template-columns: 1fr; }
 }
+
+/* ---- user management ---- */
+.btn.small { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill.expired { background: #fee2e2; color: #b91c1c; }
+.pill.exhausted { background: #ffe4e6; color: #be123c; }
+.pill.disabled { background: #e2e8f0; color: #64748b; }

@@ -107,12 +107,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/model/call", s.handleModelCall)
 	mux.HandleFunc("/api/model/stream", s.handleModelStream)
 
+	// ---- User endpoints (usertoken protected) ----
+	mux.HandleFunc("/api/user/", s.handleUser)
+	mux.HandleFunc("/user", s.handleUserPage)
+
 	// ---- Admin API (token protected) ----
 	mux.HandleFunc("/api/admin/", s.handleAdmin)
 
 	// ---- Static console ----
 	if staticFS, err := fs.Sub(s.webFS, "static"); err == nil {
 		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	}
+	if userFS, err := fs.Sub(s.webFS, "static"); err == nil {
+		mux.Handle("/user/static/", http.StripPrefix("/user/static/", http.FileServer(http.FS(userFS))))
 	}
 	mux.HandleFunc("/console", s.handleConsole)
 

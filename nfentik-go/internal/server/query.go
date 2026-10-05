@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/nfentik/nfentik-go/internal/ai"
 	"github.com/nfentik/nfentik-go/internal/match"
+	"github.com/nfentik/nfentik-go/internal/plan"
 	"github.com/nfentik/nfentik-go/internal/store"
 )
 
@@ -152,10 +154,45 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		Type: EventRequestLog, ID: requestID, Method: r.Method, Path: "/query",
 		RequestBody: bodyStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "started",
 	})
+
+	// User token authentication and quota check run before any lookup. The
+	// enforcement mode depends on the usersEnabled / requireTokenForQuery
+	// settings: when tokens are not required, anonymous queries stay allowed.
+	user, denied := s.authorizeQuery(r)
+	if denied != nil {
+		status := http.StatusForbidden
+		message := denied.Error()
+		if errors.Is(denied, ErrUserTokenMissing) || errors.Is(denied, errInvalidToken) {
+			status = http.StatusUnauthorized
+		}
+		resp := errorResponse(message)
+		elapsed := time.Since(start).Milliseconds()
+		respBody, _ := json.Marshal(resp)
+		respStr := string(respBody)
+		s.bus.Publish(Event{
+			Type: EventRequestLog, ID: requestID, Method: r.Method, Path: "/query",
+			Status: &status, ResponseTime: &elapsed, ResponseBody: &respStr, Stage: "completed",
+		})
+		s.logRequest(store.RequestLog{
+			ID: requestID, Timestamp: time.Now().Format(time.RFC3339), Method: r.Method,
+			Path: "/query", Status: &status, ResponseTime: &elapsed, RequestBody: bodyStr,
+			ResponseBody: &respStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "completed",
+		})
+		if user != nil {
+			s.recordUserQuery(user, req, "", "denied", elapsed)
+		}
+		writeJSON(w, status, resp)
+		return
+	}
+
 	s.bumpDailyRequest()
 
-	status, resp := s.resolveQuery(r.Context(), req, origin)
+	status, resp, source := s.resolveQuery(r.Context(), req, origin)
 
+	queryStatus := "ok"
+	if resp.Code == 0 {
+		queryStatus = "error"
+	}
 	elapsed := time.Since(start).Milliseconds()
 	respBody, _ := json.Marshal(resp)
 	respStr := string(respBody)
@@ -170,11 +207,73 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		ResponseBody: &respStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "completed",
 	})
 
+	// Charge the query against the user's count quota (duration and unlimited
+	// plans are unaffected) and record the per-user usage log.
+	if user != nil {
+		if _, err := s.store.ConsumeQuota(user.ID); err != nil {
+			s.PublishError("consume quota: %v", err)
+		}
+		s.recordUserQuery(user, req, source, queryStatus, elapsed)
+	}
+
 	writeJSON(w, status, resp)
 }
 
-// resolveQuery performs the bank lookup and, on a miss, asks the AI models.
-func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin string) (int, queryResponse) {
+// authorizeQuery resolves the request's user token and validates the plan.
+// When the user system is disabled or tokens are optional, a missing token is
+// allowed (returns nil user, nil error). A non-nil error denies the query.
+func (s *Server) authorizeQuery(r *http.Request) (*store.User, error) {
+	settings := s.config.Settings()
+	if !settings.UsersEnabled {
+		return nil, nil
+	}
+	u, err := s.userFromRequest(r)
+	if err != nil {
+		if errors.Is(err, ErrUserTokenMissing) && !settings.RequireTokenForQuery {
+			return nil, nil
+		}
+		if errors.Is(err, ErrUserTokenMissing) {
+			return nil, err
+		}
+		return nil, errInvalidToken
+	}
+	switch userUsable(u) {
+	case plan.StatusExpired:
+		return u, errors.New("套餐已过期")
+	case plan.StatusExhausted:
+		return u, errors.New("次数已用尽")
+	case plan.StatusDisabled:
+		return u, errors.New("账号已停用")
+	}
+	return u, nil
+}
+
+// recordUserQuery writes one user request log and periodically prunes the
+// per-user, age and global limits.
+func (s *Server) recordUserQuery(u *store.User, req QueryRequest, source, status string, elapsed int64) {
+	if source == "" {
+		source = "bank"
+	}
+	log := store.UserRequestLog{
+		UserID: u.ID, Timestamp: time.Now().Format("2006-01-02 15:04:05"),
+		Question: req.Title, Source: source, Status: status, ResponseTime: elapsed,
+	}
+	if err := s.store.InsertUserLog(log); err != nil {
+		s.PublishError("insert user log: %v", err)
+		return
+	}
+	settings := s.config.Settings()
+	if err := s.store.PruneUserLogs(settings.UserLogPerUserLimit, settings.UserLogRetentionDays, settings.UserLogGlobalLimit); err != nil {
+		s.PublishError("prune user logs: %v", err)
+	}
+}
+
+// errInvalidToken marks a token that does not resolve to an enabled user.
+var errInvalidToken = errors.New("令牌无效")
+
+// resolveQuery performs the bank lookup and, on a miss, asks the AI models. It
+// also reports which source produced the answer (bank, cache or ai).
+func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin string) (int, queryResponse, string) {
 	hasURL := containsURL(req.Title)
 	if !hasURL && req.Options != nil {
 		hasURL = containsURL(*req.Options)
@@ -182,7 +281,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 
 	hits, err := s.store.Query(req.Title, req.Options, match.Score)
 	if err != nil {
-		return http.StatusInternalServerError, errorResponse("数据库错误: " + err.Error())
+		return http.StatusInternalServerError, errorResponse("数据库错误: " + err.Error()), "bank"
 	}
 	if len(hits) > 0 {
 		hit := hits[0]
@@ -192,7 +291,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 			Answer:              hit.Answer,
 			IsAI:                hit.IsAI,
 			IsPendingCorrection: hit.IsPendingCorrection,
-		}.render(origin, req.Raw)
+		}.render(origin, req.Raw), "bank"
 	}
 
 	// Cache only AI answers, keyed by the question text. Skipped when the
@@ -201,13 +300,13 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	if s.cache != nil && !hasURL {
 		var cached bankAnswer
 		if s.cache.GetQuery(req.Title, req.Options, &cached) {
-			return http.StatusOK, cached.render(origin, req.Raw)
+			return http.StatusOK, cached.render(origin, req.Raw), "cache"
 		}
 	}
 
 	settings, err := s.ModelSettings()
 	if err != nil {
-		return http.StatusInternalServerError, errorResponse("模型配置读取失败: " + err.Error())
+		return http.StatusInternalServerError, errorResponse("模型配置读取失败: " + err.Error()), "ai"
 	}
 
 	var content string
@@ -217,11 +316,11 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		content, err = s.callTextModels(ctx, settings, req)
 	}
 	if err != nil {
-		return http.StatusRequestTimeout, errorResponse("模型调用失败: " + err.Error())
+		return http.StatusRequestTimeout, errorResponse("模型调用失败: " + err.Error()), "ai"
 	}
 
 	if msg, isErr := ai.DetectError(content); isErr {
-		return http.StatusInternalServerError, errorResponse(msg)
+		return http.StatusInternalServerError, errorResponse(msg), "ai"
 	}
 
 	answer := strings.TrimSpace(ai.ExtractAnswer(content))
@@ -236,12 +335,12 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	// A model that produced no usable answer must not create a bank entry or a
 	// cached result. Report the miss instead of returning an empty success.
 	if answer == "" {
-		return http.StatusOK, errorResponse("AI未能给出有效答案")
+		return http.StatusOK, errorResponse("AI未能给出有效答案"), "ai"
 	}
 	// Refusals, "unable to determine" replies and low-information placeholders
 	// are refused so they never pollute the bank.
 	if reason, bad := ai.IsUnreliableAnswer(answer); bad {
-		return http.StatusOK, errorResponse("AI未能给出有效答案：" + reason)
+		return http.StatusOK, errorResponse("AI未能给出有效答案：" + reason), "ai"
 	}
 
 	// Avoid storing a duplicate of a question that already exists in the bank,
@@ -260,7 +359,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		if s.cache != nil && !hasURL {
 			s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 		}
-		return http.StatusOK, entry.render(origin, req.Raw)
+		return http.StatusOK, entry.render(origin, req.Raw), "ai"
 	}
 
 	id, err := s.store.InsertAIResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID())
@@ -279,7 +378,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	if s.cache != nil && !hasURL {
 		s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 	}
-	return http.StatusOK, entry.render(origin, req.Raw)
+	return http.StatusOK, entry.render(origin, req.Raw), "ai"
 }
 
 // queryCacheTTL resolves the configured query cache lifetime.

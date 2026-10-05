@@ -89,6 +89,52 @@ var migrations = []migration{
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS IsPendingCorrection BOOLEAN DEFAULT FALSE`,
 		},
 	},
+	{
+		Version: 2,
+		Name:    "user_token_plans",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS Users (
+				Id BIGSERIAL PRIMARY KEY,
+				Name TEXT NOT NULL,
+				Token TEXT NOT NULL,
+				PlanType TEXT NOT NULL DEFAULT 'duration',
+				PlanCode TEXT NOT NULL DEFAULT 'monthly',
+				PlanLabel TEXT NOT NULL DEFAULT '',
+				StartAt TEXT NOT NULL DEFAULT '',
+				ExpireAt TEXT,
+				TotalCount BIGINT,
+				UsedCount BIGINT NOT NULL DEFAULT 0,
+				RemainCount BIGINT,
+				Note TEXT NOT NULL DEFAULT '',
+				Enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				CreatedAt TIMESTAMP DEFAULT NOW(),
+				UpdatedAt TIMESTAMP DEFAULT NOW()
+			)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON Users(Token)`,
+			`CREATE INDEX IF NOT EXISTS idx_users_name ON Users(Name)`,
+			`CREATE TABLE IF NOT EXISTS UserRequestLogs (
+				LogId BIGSERIAL PRIMARY KEY,
+				UserId BIGINT NOT NULL,
+				Token TEXT NOT NULL DEFAULT '',
+				Timestamp TEXT NOT NULL,
+				Question TEXT,
+				Source TEXT,
+				Status TEXT,
+				ResponseTime BIGINT
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_logs_user ON UserRequestLogs(UserId, LogId DESC)`,
+			`CREATE TABLE IF NOT EXISTS UserAuditLogs (
+				AuditId BIGSERIAL PRIMARY KEY,
+				Action TEXT NOT NULL,
+				UserId BIGINT,
+				UserName TEXT NOT NULL DEFAULT '',
+				Detail TEXT NOT NULL DEFAULT '',
+				Actor TEXT NOT NULL DEFAULT 'admin',
+				CreatedAt TIMESTAMP DEFAULT NOW()
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_audits_created ON UserAuditLogs(CreatedAt DESC)`,
+		},
+	},
 }
 
 // migrate applies every pending migration in order.
