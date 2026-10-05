@@ -45,13 +45,15 @@
 
 #### Acceptance Criteria
 
-1. THE System SHALL 提供时长套餐类型：包月、包季、半年、包年、无限。
+1. THE System SHALL 提供时长套餐类型：包月、包季、半年、包年、无限、自定义时长。
 2. THE System SHALL 提供次数套餐类型：固定总次数。
 3. WHEN 管理员为时长套餐设置生效时间, THE System SHALL 依据套餐时长计算到期时间，包月为 30 天、包季为 90 天、半年为 180 天、包年为 365 天。
 4. WHEN 用户套餐为「无限」, THE System SHALL 将该用户的到期时间置空且不限制调用次数。
 5. WHEN 用户套餐为次数套餐, THE System SHALL 在创建时记录总次数与剩余次数，剩余次数初始值等于总次数。
 6. WHEN 管理员创建次数套餐用户, THE System SHALL 允许管理员指定总次数且总次数大于 0。
 7. IF 管理员为次数套餐指定的总次数小于等于 0, THE System SHALL 拒绝创建并返回错误信息「总次数必须大于 0」。
+8. WHEN 用户套餐为「自定义时长」, THE System SHALL 依据管理员输入的天数计算到期时间，天数以自然日累加。
+9. IF 管理员为自定义时长套餐输入的天数小于等于 0, THE System SHALL 拒绝创建并返回错误信息「天数必须大于 0」。
 
 ### Requirement 3：用户令牌登录
 
@@ -113,6 +115,10 @@
 2. THE 调用记录 SHALL 包含时间、问题、是否命中题库或 AI 与状态。
 3. WHILE 用户已登录, THE User Console SHALL 仅展示属于当前登录用户的调用记录。
 4. THE System SHALL 支持对调用记录按时间倒序分页展示。
+5. THE System SHALL 对每个用户的调用记录保留最近 200 条。
+6. THE System SHALL 对调用记录保留最近 30 天。
+7. THE System SHALL 将全部用户的调用记录总量限制在 50000 条以内。
+8. WHEN 调用记录超过保留条数、保留天数或总量上限, THE System SHALL 删除最旧的记录。
 
 ### Requirement 8：用户修改自己的令牌
 

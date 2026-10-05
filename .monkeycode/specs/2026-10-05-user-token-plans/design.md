@@ -176,7 +176,10 @@ erDiagram
 
 - `usersEnabled`：是否启用用户体系。
 - `requireTokenForQuery`：`/query` 是否强制要求令牌。
-- `userLogRetentionDays`：用户调用记录保留天数。
+- `userLogRetentionDays`：用户调用记录保留天数（默认 30）。
+- `userLogPerUserLimit`：每个用户保留的记录条数上限（默认 200）。
+- `userLogGlobalLimit`：全部用户记录总量上限（默认 50000）。
+- `defaultPlanCode`：创建用户时的默认套餐（可选，默认空表示必须显式选择）。
 
 ## Correctness Properties
 
@@ -202,6 +205,84 @@ erDiagram
 | 用户访问他人资源 | 返回 `{success:false, message:"无权访问"}`（HTTP 403） |
 
 用户页对错误以提示条展示；OCS 查询失败时 OCS 插件按 `code:0` 与 `message` 展示。
+
+## 细化设计
+
+### A. 用户页路由与页面结构
+
+**路由与静态资源**
+
+- `GET /user` → `handleUserPage`，渲染 `web/templates/user.html`。
+- `GET /user/static/user.css`、`GET /user/static/user.js` → 用户页独立静态资源，避免与管理员控制台样式冲突。
+- 与管理端同源不同路径：`/console` 为管理员，`/user` 为普通用户；两者共用同一进程与数据库。
+- 用户页无需服务端渲染令牌，登录状态存于 `sessionStorage["nfentik_usertoken"]`，页面加载时用令牌调用 `/api/user/me` 校验。
+
+**页面结构（从上到下）**
+
+1. 顶部品牌条：logo「Z」+ nfentik + 副标题「用户中心」，右侧「退出登录」。
+2. 提醒条 `#user-alert`：仅在有提醒时显示，按状态着色。
+   - `expiring`：橙色，文案「套餐将于 X 天后到期，请及时续费」。
+   - `expired`：红色，文案「套餐已过期，无法继续查询」。
+   - `exhausted`：红色，文案「次数已用尽，请补充次数」。
+   - `disabled`：灰色，文案「账号已停用，请联系管理员」。
+3. 套餐卡片 `#user-plan-card`：展示用户名、套餐标签、套餐类型（时长/次数）、生效起始时间、到期时间或剩余次数；次数套餐显示进度条（已用/总量），剩�`RemainCount`�低时进度条高亮。
+4. 操作区：大按钮「复制 OCS 配置」+ 次要按钮「重置令牌」。
+5. OCS 配置预览 `<textarea id="user-ocs-json" readonly>`：展示包含个人令牌的配置，供手动复制。
+6. 调用记录卡片 `#user-logs`：表格列「时间 / 问题 / 来源 / 状态 / 耗时」，时间倒序，底部翻页。
+7. 登录遮罩 `#user-login`：与管理员登录页一致的深色渐变卡片风格，输入 `usertoken`，支持显示/隐藏与刷新按钮。
+
+**样式复用**：复用控制台设计语言（`--bg/--ink/--primary/--radius` 变量、卡片、按钮、`.pill` 状态标签），`user.css` 在相同变量基础上新增 `.user-*` 类，移动端沿用 16px 输入、表格横向滚动、按钮整行的适配规则。
+
+**状态与轮询**：登录后调用一次 `/api/user/me`；调用记录按需加载并支持手动刷新。不做实时 SSE，减少普通用户页面的连接数。
+
+### B. 自定义套餐与天数
+
+**次数套餐是否允许自定义天数**：不采用「天数 + 次数」混合。次数套餐只按「总次数」计费，不设有效期（与需求 2 一致），因此次数套餐不需要天数参数。用户若需要「有效期 + 次数」的组合，属于后续可扩展项，本期不实现。
+
+**时长套餐是否允许自定义天数**：允许。除固定套餐外新增 `custom` 时长套餐，管理员可输入自定义天数。
+
+`internal/plan` 的套餐定义最终为：
+
+| Code | 类型 | 时长/额度 | 说明 |
+| --- | --- | --- | --- |
+| `monthly` | 时长 | 30 天 | 包月 |
+| `quarterly` | 时长 | 90 天 | 包季 |
+| `half_year` | 时长 | 180 天 | 半年 |
+| `yearly` | 时长 | 365 天 | 包年 |
+| `unlimited` | 时长 | 无到期 | 无限调用 |
+| `duration_custom` | 时长 | 管理员输入天数 | 自定义时长，`days > 0` |
+| `count` | 次数 | 管理员输入总次数 | 按次套餐，`total_count > 0` |
+
+- `PlanCode` 与 `PlanType` 分离：`PlanType` 为 `duration`/`count`，`PlanCode` 为上表取值，便于前端展示与后端计算。
+- 自定义时长套餐在校验时要求 `days` 为大于 0 的整数；后端用 `StartAt.AddDate(0, 0, days)` 计算 `ExpireAt`。
+- 续费语义：时长套餐续费时，若当前未过期则以 `ExpireAt` 为基准顺延，否则以当前时间 `now` 为基准；次数套餐续费时把新增次数累加到 `RemainCount`，同时同步 `TotalCount`。
+- 套餐切换（需求 9.3/9.4）：切换按新套餐的起始时间 `now` 重新计算，不再保留旧配额。
+
+### C. 用户调用记录保留策略
+
+**存储**：`UserRequestLogs` 表按 `UserId` 建索引（`(UserId, LogId DESC)`），仅记录用户真正发起的 `/query`：`Question` 取题目文本前 500 字符，`Source` 为 `bank`/`cache`/`ai`，`Status` 为 `ok`/`denied`/`error`，`ResponseTime` 为毫秒。不记录请求/响应体与请求头，避免敏感信息与体量膨胀。
+
+**保留策略（三重上限，任一触发即裁剪）**：
+
+1. 按用户条数上限：每个用户最多保留 `userLogPerUserLimit`（默认 200）条，超出删除该用户最旧的记录。
+2. 按全局天数：保留最近 `userLogRetentionDays`（默认 30）天的记录，超出按天删除。
+3. 按全局总条数：`UserRequestLogs` 总行数不超过 `userLogGlobalLimit`（默认 50000），超出删除最旧的记录。
+
+**清理时机**：不做定时器。在 `/query` 写入用户日志后以低频率触发（例如每写入 100 条或随机 1/100 概率）执行一次裁剪；同时提供管理员接口 `POST /api/admin/users/logs/prune` 手动触发。裁剪使用带 `LIMIT` 的删除子查询，避免长时间锁表：
+
+```sql
+DELETE FROM UserRequestLogs
+WHERE LogId IN (
+  SELECT LogId FROM UserRequestLogs
+  WHERE UserId = $1
+  ORDER BY LogId DESC
+  OFFSET $2
+);
+```
+
+**配置项归属**：`userLogPerUserLimit`、`userLogRetentionDays`、`userLogGlobalLimit` 均加入 `AppSettings`，在控制台「系统设置」中可编辑，未设置时使用默认值。
+
+**调用记录接口**：`GET /api/user/logs?page=&page_size=`（`page_size` 默认 20，最大 100），返回 `{success, items, total, page, page_size}`，仅返回当前令牌对应用户的记录；普通用户不提供按关键字跨用户检索能力。
 
 ## Test Strategy
 
