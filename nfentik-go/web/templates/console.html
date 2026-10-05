@@ -299,13 +299,26 @@
 </div>
 
 <div id="login" class="login hidden">
-  <div class="login-box">
-    <h2>访问控制台</h2>
-    <p class="muted">请输入管理令牌</p>
-    <input id="login-token" type="password" placeholder="Admin Token">
-    <button id="login-btn" class="btn primary full">进入</button>
-    <p id="login-error" class="error"></p>
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="login-logo">Z</span>
+      <div>
+        <strong>nfentik</strong>
+        <span class="login-sub">AI 题库管理控制台</span>
+      </div>
+    </div>
+    <h2>欢迎回来</h2>
+    <p class="login-hint">请输入管理令牌以进入控制台</p>
+    <label class="login-label" for="login-token">管理令牌</label>
+    <div class="login-field">
+      <input id="login-token" type="password" placeholder="请输入 Admin Token" autocomplete="current-password">
+      <button type="button" id="login-toggle" class="login-eye" aria-label="显示/隐藏令牌">显示</button>
+    </div>
+    <button id="login-btn" class="btn primary full login-submit">进入控制台</button>
+    <p id="login-error" class="error login-error"></p>
+    <p class="login-foot">令牌由服务端 <span class="mono">adminToken</span> 配置项决定</p>
   </div>
+</div>
 </div>
 
 <script src="/static/console.js"></script>

@@ -1174,6 +1174,13 @@
     if (e.key === "Enter") qs("login-btn").click();
   });
 
+  qs("login-toggle").addEventListener("click", function () {
+    var input = qs("login-token");
+    var show = input.type === "password";
+    input.type = show ? "text" : "password";
+    this.textContent = show ? "隐藏" : "显示";
+  });
+
   qs("logout-btn").addEventListener("click", function () {
     state.token = "";
     try { sessionStorage.removeItem("nfentik_token"); } catch (e) {}
