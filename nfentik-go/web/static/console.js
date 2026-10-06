@@ -1188,15 +1188,15 @@
       var toggle = u.enabled
         ? '<button data-act="disable" data-id="' + u.id + '" class="btn ghost small">停用</button>'
         : '<button data-act="enable" data-id="' + u.id + '" class="btn ghost small">启用</button>';
-      return "<tr>" +
-        "<td>" + u.id + "</td>" +
-        '<td><span class="mono small clamp">' + esc(u.token) + "</span></td>" +
-        '<td class="clamp">' + esc(u.note || "") + "</td>" +
-        "<td>" + esc(planLabel(u.plan_code)) + "</td>" +
-        "<td>" + userStatusPill(u.status) + "</td>" +
-        "<td>" + esc(userRemainText(u)) + "</td>" +
-        "<td>" + esc(u.expire_at || "不限") + "</td>" +
-        '<td class="row-actions">' +
+      return '<tr class="user-row">' +
+        '<td data-label="ID">' + u.id + "</td>" +
+        '<td data-label="令牌"><span class="mono small token-cell">' + esc(u.token) + "</span></td>" +
+        '<td data-label="备注" class="clamp">' + esc(u.note || "") + "</td>" +
+        '<td data-label="套餐">' + esc(planLabel(u.plan_code)) + "</td>" +
+        '<td data-label="状态">' + userStatusPill(u.status) + "</td>" +
+        '<td data-label="剩余">' + esc(userRemainText(u)) + "</td>" +
+        '<td data-label="到期">' + esc(u.expire_at || "不限") + "</td>" +
+        '<td data-label="操作" class="row-actions">' +
           '<button data-act="copy" data-id="' + u.id + '" class="btn ghost small">复制令牌</button>' +
           '<button data-act="renew" data-id="' + u.id + '" class="btn ghost small">续费</button>' +
           '<button data-act="reset" data-id="' + u.id + '" class="btn ghost small">重置令牌</button>' +

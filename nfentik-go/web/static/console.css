@@ -342,3 +342,30 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 .pill.expired { background: #fee2e2; color: #b91c1c; }
 .pill.exhausted { background: #ffe4e6; color: #be123c; }
 .pill.disabled { background: #e2e8f0; color: #64748b; }
+.token-cell { word-break: break-all; }
+
+/* On narrow screens the user list becomes stacked cards so the full token and
+   every action stay readable without horizontal scrolling. */
+@media (max-width: 720px) {
+  #u-table { min-width: 0; }
+  #u-table thead { display: none; }
+  #u-table, #u-table tbody, #u-table tr, #u-table td { display: block; width: 100%; }
+  #u-table tr.user-row {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 6px 10px; margin-bottom: 10px;
+  }
+  #u-table td {
+    display: flex; align-items: flex-start; gap: 10px;
+    border: none; border-bottom: 1px dashed var(--line); padding: 7px 0;
+  }
+  #u-table tr.user-row td:last-child { border-bottom: none; }
+  #u-table td::before {
+    content: attr(data-label); flex: 0 0 62px; color: var(--muted);
+    font-size: 12px; font-weight: 600; line-height: 1.7;
+  }
+  #u-table td[data-label="令牌"] .token-cell { flex: 1; min-width: 0; }
+  #u-table td[data-label="备注"].clamp { max-width: none; }
+  #u-table td[data-label="操作"] { flex-wrap: wrap; }
+  #u-table td[data-label="操作"].row-actions { display: flex; }
+  #u-table td[data-label="操作"] .btn { flex: 1 1 auto; }
+}
