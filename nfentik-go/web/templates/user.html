@@ -90,6 +90,28 @@
 
       <section class="card">
         <div class="plan-head">
+          <h2>URL 模式调用</h2>
+          <button id="user-copy-url" class="btn primary small">复制接口</button>
+        </div>
+        <p class="muted small">直接用 GET 请求调用，把 <code>title</code> 换成题目内容即可；<code>q</code> 与 <code>title</code> 等价。链接已包含你的个人令牌，请勿泄露。</p>
+        <div class="field url-field">
+          <label>示例（title）</label>
+          <div class="url-row">
+            <input id="user-url-title" class="mono" readonly spellcheck="false">
+            <button type="button" data-copy="user-url-title" class="btn ghost small">复制</button>
+          </div>
+        </div>
+        <div class="field url-field">
+          <label>示例（q）</label>
+          <div class="url-row">
+            <input id="user-url-q" class="mono" readonly spellcheck="false">
+            <button type="button" data-copy="user-url-q" class="btn ghost small">复制</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
           <h2>我的调用记录</h2>
           <button id="user-logs-refresh" class="btn ghost small">刷新</button>
         </div>

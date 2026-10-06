@@ -91,6 +91,7 @@
       state.plans.forEach(function (p) { state.planMap[p.Code] = p; });
       renderProfile();
       renderOCS();
+      renderUrlExamples();
     });
   }
 
@@ -214,6 +215,17 @@
     qs("user-ocs-json").value = JSON.stringify(ocsConfigObject(), null, 2);
   }
 
+  // urlExample builds a GET /query URL using the given question key.
+  function urlExample(key) {
+    var base = window.location.origin.replace(/\/+$/, "");
+    return base + "/query?token=" + encodeURIComponent(state.token) + "&" + key + "=";
+  }
+
+  function renderUrlExamples() {
+    qs("user-url-title").value = urlExample("title");
+    qs("user-url-q").value = urlExample("q");
+  }
+
   function copyText(text, okMessage) {
     function done() { toast(okMessage || "已复制"); }
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -233,6 +245,17 @@
 
   qs("user-copy-ocs").addEventListener("click", function () {
     copyText(qs("user-ocs-json").value, "已复制 OCS 配置");
+  });
+
+  qs("user-copy-url").addEventListener("click", function () {
+    copyText(qs("user-url-title").value, "已复制 URL 接口");
+  });
+
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var input = qs(btn.getAttribute("data-copy"));
+      if (input) copyText(input.value, "已复制");
+    });
   });
 
   // ------------------------------------------------------------------ logs

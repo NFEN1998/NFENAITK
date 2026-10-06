@@ -132,6 +132,14 @@ body {
   font-size: 14px; background: #0f172a; color: #e2e8f0; white-space: pre; resize: vertical;
 }
 
+.url-field { margin-top: 14px; }
+.url-row { display: flex; gap: 8px; align-items: center; }
+.url-row input {
+  flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--line);
+  border-radius: 8px; font-size: 13px; background: var(--panel); color: inherit;
+}
+.url-row .btn { flex: 0 0 auto; }
+
 .table-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; }

@@ -121,8 +121,13 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
+		title := q.Get("title")
+		if title == "" {
+			// q is accepted as an alias for title.
+			title = q.Get("q")
+		}
 		req = QueryRequest{
-			Title:   q.Get("title"),
+			Title:   title,
 			Options: optional(q.Get("options")),
 			Type:    optional(q.Get("type")),
 			Raw:     isTruthy(q.Get("raw")),

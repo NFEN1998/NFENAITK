@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -135,6 +136,26 @@ func TestQueryBodyTokenNotLogged(t *testing.T) {
 	for _, l := range logs {
 		if l.RequestBody != nil && strings.Contains(*l.RequestBody, u.Token) {
 			t.Fatalf("token leaked into request body log: %s", *l.RequestBody)
+		}
+	}
+}
+
+func TestQueryGetAcceptsQAlias(t *testing.T) {
+	srv, _ := testServer(t)
+	srv.setTokenForQuery(t, true)
+	u := srv.createTestUser(t, "qalias", "count", 3, 0)
+
+	for _, key := range []string{"title", "q"} {
+		req := httptest.NewRequest(http.MethodGet, "/query?"+key+"=1%2B1%3D&token="+u.Token, nil)
+		rec := httptest.NewRecorder()
+		srv.handleQuery(rec, req)
+		var payload map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%s decode: %v", key, err)
+		}
+		data, ok := payload["data"].(map[string]any)
+		if !ok || data["question"] != "1+1=" {
+			t.Fatalf("%s: unexpected payload %v", key, payload)
 		}
 	}
 }
