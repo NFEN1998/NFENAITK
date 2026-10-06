@@ -60,9 +60,15 @@ func run(port int, bind string, lanAccess bool) error {
 	}
 	log.Printf("引导配置: %s", config.BootstrapPath())
 
+	assets, err := fs.Sub(webFS, "web")
+	if err != nil {
+		return fmt.Errorf("embed assets: %w", err)
+	}
+
 	dsn := bootstrap.Database.URL
 	if dsn == "" {
-		return errors.New("未配置 PostgreSQL 连接，请设置环境变量 DATABASE_URL，或在程序目录的 config/config.json 中填写 database.url")
+		// No database configured yet: run the first-run installation wizard.
+		return serveSetup(assets, bootstrap, nil, nil, "尚未配置数据库连接", port, bind, lanAccess)
 	}
 	st, err := store.Open(dsn)
 	if err != nil {
@@ -90,6 +96,13 @@ func run(port int, bind string, lanAccess bool) error {
 	}
 	log.Printf("配置已从数据库加载")
 
+	// A database without an admin token is still unconfigured: route the
+	// operator through the wizard so the instance is never left open or
+	// unadministrable.
+	if strings.TrimSpace(cfg.Settings().AdminToken) == "" {
+		return serveSetup(assets, bootstrap, st, cfg, "尚未设置管理员令牌", port, bind, lanAccess)
+	}
+
 	// Redis is optional: when unavailable the service keeps working with the
 	// database alone.
 	var cacheClient *cache.Client
@@ -112,11 +125,6 @@ func run(port int, bind string, lanAccess bool) error {
 		}
 	} else {
 		log.Printf("未启用 Redis，直接读写 PostgreSQL")
-	}
-
-	assets, err := fs.Sub(webFS, "web")
-	if err != nil {
-		return fmt.Errorf("embed assets: %w", err)
 	}
 
 	srv, err := server.New(server.Deps{
@@ -165,6 +173,68 @@ func run(port int, bind string, lanAccess bool) error {
 	log.Printf("nfentik-go 服务已启动: http://%s", httpServer.Addr)
 	log.Printf("OCS 查询地址: http://%s/query", httpServer.Addr)
 	log.Printf("管理控制台:   http://%s/console", httpServer.Addr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		log.Println("正在关闭服务...")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return httpServer.Shutdown(ctx)
+}
+
+// serveSetup runs the first-run installation wizard in place of the normal
+// service. It keeps the same bind/port logic so the operator reaches it at the
+// usual address, then restarts the program after saving.
+func serveSetup(assets fs.FS, bootstrap config.BootstrapFile, st *store.Store, cfg *config.Store, reason string, port int, bind string, lanAccess bool) error {
+	setup, err := server.NewSetupServer(assets, bootstrap, st, cfg, reason)
+	if err != nil {
+		return err
+	}
+
+	addr := "127.0.0.1"
+	if bind != "" {
+		addr = bind
+	}
+	if lanAccess {
+		addr = "0.0.0.0"
+	}
+	if addr == "" {
+		addr = "0.0.0.0"
+	}
+
+	listenPort := 3000
+	if port > 0 {
+		listenPort = port
+	}
+
+	httpServer := &http.Server{
+		Addr:              net.JoinHostPort(addr, fmt.Sprint(listenPort)),
+		Handler:           setup.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	ln, err := net.Listen("tcp", httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", httpServer.Addr, err)
+	}
+
+	log.Printf("检测到首次运行（%s），已进入安装配置向导", reason)
+	log.Printf("请在浏览器中打开: http://%s/setup", httpServer.Addr)
+	log.Printf("保存配置后，请手动重启程序使配置生效")
 
 	errCh := make(chan error, 1)
 	go func() {

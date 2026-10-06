@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{.SiteName}} 安装配置向导</title>
+  <link rel="stylesheet" href="/setup/static/setup.css" />
+</head>
+<body>
+  <div class="setup-wrap">
+    <header class="setup-head">
+      <div class="brand">{{.SiteName}}</div>
+      <div class="sub">安装配置向导</div>
+    </header>
+
+    <div id="setup-done" class="card done hidden">
+      <div class="done-icon">已保存</div>
+      <h2>配置已写入</h2>
+      <p>请<strong>手动重启</strong>程序使配置生效。</p>
+      <pre id="done-path" class="path"></pre>
+      <p class="hint">重启命令示例：停止当前进程后重新执行启动命令即可。</p>
+    </div>
+
+    <form id="setup-form" class="card" autocomplete="off">
+      <p class="intro">首次运行需要完成基础配置。带 <span class="req">*</span> 为必填项，保存后请手动重启程序。</p>
+
+      <div id="setup-error" class="alert hidden"></div>
+
+      <section class="section">
+        <h3>数据库</h3>
+        <div class="field">
+          <label>PostgreSQL 连接串 <span class="req">*</span></label>
+          <input id="database-url" type="text" placeholder="postgres://user:password@127.0.0.1:5432/nfentik?sslmode=disable" />
+          <div class="field-hint">例如：postgres://zerror:zerror@127.0.0.1:5432/zerror?sslmode=disable</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h3>缓存（可选）</h3>
+        <div class="field">
+          <label class="checkbox"><input id="redis-enabled" type="checkbox" /> 启用 Redis 缓存</label>
+        </div>
+        <div class="field">
+          <label>Redis 连接串</label>
+          <input id="redis-url" type="text" placeholder="redis://127.0.0.1:6379/0" />
+          <div class="field-hint">留空或未启用时，程序直接读写 PostgreSQL。</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h3>管理员与站点</h3>
+        <div class="field">
+          <label>管理员令牌 <span class="req">*</span></label>
+          <input id="admin-token" type="text" placeholder="用于登录管理控制台，请妥善保存" />
+          <div class="field-hint">请务必牢记，控制台登录与后台管理都依赖此令牌。</div>
+        </div>
+        <div class="field">
+          <label>站点名称</label>
+          <input id="site-name" type="text" value="nfentik" />
+        </div>
+        <div class="field">
+          <label>站点副标题</label>
+          <input id="site-subtitle" type="text" value="智能题库查询服务" />
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="setup-submit" type="submit" class="btn primary">保存配置</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="/setup/static/setup.js"></script>
+</body>
+</html>
