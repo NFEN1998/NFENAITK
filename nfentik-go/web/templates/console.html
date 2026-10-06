@@ -12,7 +12,7 @@
     <div class="brand">
       <span class="logo">Z</span>
       <div>
-        <strong>nfentik</strong>
+        <strong>{{.SiteName}}</strong>
         <small>题库控制台</small>
       </div>
     </div>
@@ -205,6 +205,21 @@
 
       <div id="s-visual">
         <div class="card">
+          <h2>站点信息</h2>
+          <p class="muted small">用于首页、控制台与用户中心的品牌展示，保存后立即生效。</p>
+          <div class="grid-2">
+            <div class="field">
+              <label>题库名称</label>
+              <input id="s-site-name" type="text" placeholder="nfentik">
+            </div>
+            <div class="field">
+              <label>副标题</label>
+              <input id="s-site-subtitle" type="text" placeholder="智能题库查询服务">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>网络与服务</h2>
           <div class="grid-2">
             <div class="field">
@@ -385,7 +400,7 @@
     <div class="login-brand">
       <span class="login-logo">Z</span>
       <div>
-        <strong>nfentik</strong>
+        <strong>{{.SiteName}}</strong>
         <span class="login-sub">AI 题库管理控制台</span>
       </div>
     </div>

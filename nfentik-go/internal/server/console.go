@@ -8,6 +8,7 @@ import (
 // consoleData is the payload rendered into the console template.
 type consoleData struct {
 	Title      string
+	SiteName   string
 	HasToken   bool
 	MultiUser  bool
 	Version    string
@@ -19,7 +20,8 @@ type consoleData struct {
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	settings := s.config.Settings()
 	data := consoleData{
-		Title:      "nfentik-go 管理控制台",
+		Title:      settings.SiteName + " 管理控制台",
+		SiteName:   settings.SiteName,
 		HasToken:   settings.AdminToken != "",
 		MultiUser:  settings.MultiUser.Enabled,
 		Version:    "go",
@@ -41,7 +43,8 @@ func (s *Server) handleUserPage(w http.ResponseWriter, r *http.Request) {
 	settings := s.config.Settings()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "user.html", map[string]any{
-		"Title":      "nfentik 用户中心",
+		"Title":      settings.SiteName + " 用户中心",
+		"SiteName":   settings.SiteName,
 		"UsersOn":    settings.UsersEnabled,
 		"ServerPort": settings.Network.ServerPort,
 	}); err != nil {

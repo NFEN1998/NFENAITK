@@ -785,6 +785,8 @@
   }
 
   function fillSettingsForm(s) {
+    qs("s-site-name").value = s.siteName || "nfentik";
+    qs("s-site-subtitle").value = s.siteSubtitle || "智能题库查询服务";
     qs("s-port").value = (s.network && s.network.serverPort) || 3000;
     qs("s-bind").value = (s.network && s.network.bindAddress) || "";
     qs("s-lan").checked = !!(s.network && s.network.enableLanAccess);
@@ -812,6 +814,8 @@
   function collectSettingsForm() {
     // Start from the loaded settings so unexposed fields are preserved.
     var s = JSON.parse(JSON.stringify(settingsJSON || {}));
+    s.siteName = qs("s-site-name").value.trim();
+    s.siteSubtitle = qs("s-site-subtitle").value.trim();
     s.network = s.network || {};
     s.network.serverPort = Number(qs("s-port").value) || 3000;
     s.network.bindAddress = qs("s-bind").value.trim();

@@ -91,7 +91,11 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(homePageHTML))
+	settings := s.config.Settings()
+	_ = homePageTmpl.Execute(w, homePageData{
+		SiteName:     settings.SiteName,
+		SiteSubtitle: settings.SiteSubtitle,
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {

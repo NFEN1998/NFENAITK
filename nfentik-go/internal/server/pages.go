@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"html/template"
 )
 
 // newID returns a short random identifier for request correlation.
@@ -14,15 +15,25 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// homePageHTML is the public landing page served at "/". It introduces the
-// service and links to the console and user portal; it does not expose the
-// query test form that operators previously used for connectivity checks.
+// homePageTmpl is the public landing page served at "/". The site name and
+// subtitle are injected from the stored settings so operators can rebrand the
+// deployment from the console. It does not expose the query test form that
+// operators previously used for connectivity checks.
+var homePageTmpl = template.Must(template.New("home").Parse(homePageHTML))
+
+// homePageData carries the fields injected into the landing page.
+type homePageData struct {
+	SiteName     string
+	SiteSubtitle string
+}
+
+// homePageHTML is the landing page markup. Brand text is templated.
 const homePageHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nfentik · 智能题库查询服务</title>
+<title>{{.SiteName}} · {{.SiteSubtitle}}</title>
 <style>
   :root{--brand:#2563eb;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--bg:#f8fafc;}
   *{box-sizing:border-box;}
@@ -82,7 +93,7 @@ const homePageHTML = `<!DOCTYPE html>
   <div class="wrap nav-inner">
     <div class="brand">
       <span class="logo">Z</span>
-      <div><strong>nfentik</strong><small>智能题库查询服务</small></div>
+      <div><strong>{{.SiteName}}</strong><small>{{.SiteSubtitle}}</small></div>
     </div>
     <nav>
       <a class="pill-btn primary" href="/user">用户中心</a>
@@ -93,7 +104,7 @@ const homePageHTML = `<!DOCTYPE html>
 <section class="hero wrap">
   <span class="tag">OCS 题库 · 多用户 · 套餐计费</span>
   <h1>让答题查询快而准</h1>
-  <p>nfentik 提供稳定高效的题库查询接口，支持本地题库精确匹配、Redis 缓存加速与 AI 智能兜底，助力团队协作答题。</p>
+  <p>{{.SiteName}} 提供稳定高效的题库查询接口，支持本地题库精确匹配、Redis 缓存加速与 AI 智能兜底，助力团队协作答题。</p>
   <div class="hero-actions">
     <a class="btn primary" href="/user">进入用户中心</a>
   </div>
@@ -152,7 +163,7 @@ const homePageHTML = `<!DOCTYPE html>
 </section>
 
 <footer>
-  <div class="wrap">nfentik 智能题库查询服务</div>
+  <div class="wrap">{{.SiteName}} {{.SiteSubtitle}}</div>
 </footer>
 
 <script>

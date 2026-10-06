@@ -64,6 +64,8 @@ type Redis struct {
 
 // Settings mirrors the frontend AppSettings structure.
 type Settings struct {
+	SiteName               string      `json:"siteName"`
+	SiteSubtitle           string      `json:"siteSubtitle"`
 	Theme                  string      `json:"theme"`
 	Language               string      `json:"language"`
 	AutoSave               bool        `json:"autoSave"`
@@ -95,9 +97,17 @@ type Settings struct {
 	DefaultPlanCode        string `json:"defaultPlanCode"`
 }
 
+// Default site branding shown on the landing page, console and user portal.
+const (
+	DefaultSiteName     = "nfentik"
+	DefaultSiteSubtitle = "智能题库查询服务"
+)
+
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
+		SiteName:              DefaultSiteName,
+		SiteSubtitle:          DefaultSiteSubtitle,
 		Theme:                 "light",
 		Language:              "zh-CN",
 		AutoSave:              true,
@@ -265,6 +275,12 @@ func (s *Store) load(bootstrap BootstrapFile) error {
 }
 
 func normalize(settings *Settings) {
+	if strings.TrimSpace(settings.SiteName) == "" {
+		settings.SiteName = DefaultSiteName
+	}
+	if strings.TrimSpace(settings.SiteSubtitle) == "" {
+		settings.SiteSubtitle = DefaultSiteSubtitle
+	}
 	if settings.Network.ServerPort == 0 {
 		settings.Network.ServerPort = 3000
 	}
