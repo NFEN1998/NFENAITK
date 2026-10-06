@@ -3,7 +3,10 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/nfentik/nfentik-go/internal/store"
 )
 
 // queryWithToken calls /query directly through the handler so the response is
@@ -78,6 +81,61 @@ func TestQueryConsumesCountButNotDuration(t *testing.T) {
 	code, _ := srv.queryWithToken(t, "1+1=", duration.Token)
 	if code == http.StatusForbidden {
 		t.Fatalf("duration plan was denied")
+	}
+}
+
+func (s *Server) queryWithBodyToken(t *testing.T, title, token string) (int, map[string]any) {
+	t.Helper()
+	body := map[string]any{"title": title, "token": token}
+	req := newJSONRequest(http.MethodPost, "/query", body)
+	rec := newRecorder()
+	s.handleQuery(rec, req)
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return rec.Code, payload
+}
+
+func TestQueryAcceptsBodyToken(t *testing.T) {
+	srv, _ := testServer(t)
+	srv.setTokenForQuery(t, true)
+
+	u := srv.createTestUser(t, "bodytok", "count", 2, 0)
+	code, payload := srv.queryWithBodyToken(t, "1+1=", u.Token)
+	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+		t.Fatalf("body token denied: %d (%v)", code, payload)
+	}
+	got, _ := srv.store.GetUserByID(u.ID)
+	if got.UsedCount != 1 || *got.RemainCount != 1 {
+		t.Fatalf("body token did not consume quota: used=%d remain=%d", got.UsedCount, *got.RemainCount)
+	}
+
+	// A missing or invalid body token must still be rejected.
+	if code, _ := srv.queryWithBodyToken(t, "1+1=", ""); code != http.StatusUnauthorized {
+		t.Fatalf("missing body token code = %d, want 401", code)
+	}
+	if code, _ := srv.queryWithBodyToken(t, "1+1=", "nope"); code != http.StatusUnauthorized {
+		t.Fatalf("invalid body token code = %d, want 401", code)
+	}
+}
+
+// TestQueryBodyTokenNotLogged ensures the secret never reaches request logs.
+func TestQueryBodyTokenNotLogged(t *testing.T) {
+	srv, _ := testServer(t)
+	srv.setTokenForQuery(t, true)
+
+	u := srv.createTestUser(t, "secret", "count", 2, 0)
+	srv.queryWithBodyToken(t, "1+1=", u.Token)
+
+	logs, _, err := srv.store.RequestLogsFiltered(store.RequestLogFilter{Path: "/query", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	for _, l := range logs {
+		if l.RequestBody != nil && strings.Contains(*l.RequestBody, u.Token) {
+			t.Fatalf("token leaked into request body log: %s", *l.RequestBody)
+		}
 	}
 }
 

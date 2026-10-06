@@ -33,6 +33,15 @@ func (s *Server) userFromRequest(r *http.Request) (*store.User, error) {
 	if token == "" {
 		return nil, ErrUserTokenMissing
 	}
+	return s.userFromToken(token)
+}
+
+// userFromToken resolves a usertoken value and validates the account is enabled.
+func (s *Server) userFromToken(token string) (*store.User, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrUserTokenMissing
+	}
 	u, err := s.store.GetUserByToken(token)
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {

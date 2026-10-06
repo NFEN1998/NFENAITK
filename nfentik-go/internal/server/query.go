@@ -24,6 +24,9 @@ type QueryRequest struct {
 	// Raw requests the legacy HTML question field (with the pending-correction
 	// button). When false the question is returned as escaped plain text.
 	Raw bool `json:"raw"`
+	// Token is an optional usertoken carried in the body. It is cleared before
+	// the request is logged so the secret never reaches request logs.
+	Token string `json:"token"`
 }
 
 // queryData is one answer entry returned to OCS.
@@ -139,6 +142,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	origin := s.origin(r)
 	ip := clientIP(r)
 
+	// Capture the body token (if any) and strip it before the request is
+	// logged so the secret is never persisted.
+	bodyToken := strings.TrimSpace(req.Token)
+	req.Token = ""
 	var bodyStr *string
 	if raw, err := json.Marshal(req); err == nil {
 		v := string(raw)
@@ -158,7 +165,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// User token authentication and quota check run before any lookup. The
 	// enforcement mode depends on the usersEnabled / requireTokenForQuery
 	// settings: when tokens are not required, anonymous queries stay allowed.
-	user, denied := s.authorizeQuery(r)
+	user, denied := s.authorizeQuery(r, bodyToken)
 	if denied != nil {
 		status := http.StatusForbidden
 		message := denied.Error()
@@ -219,15 +226,25 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
-// authorizeQuery resolves the request's user token and validates the plan.
-// When the user system is disabled or tokens are optional, a missing token is
-// allowed (returns nil user, nil error). A non-nil error denies the query.
-func (s *Server) authorizeQuery(r *http.Request) (*store.User, error) {
+// authorizeQuery resolves the request's user token and validates the plan. The
+// token is looked up from the Authorization header, the URL query, or the
+// request body (bodyToken), in that order. When the user system is disabled or
+// tokens are optional, a missing token is allowed (returns nil user, nil
+// error). A non-nil error denies the query.
+func (s *Server) authorizeQuery(r *http.Request, bodyToken string) (*store.User, error) {
 	settings := s.config.Settings()
 	if !settings.UsersEnabled {
 		return nil, nil
 	}
-	u, err := s.userFromRequest(r)
+	var (
+		u   *store.User
+		err error
+	)
+	if userTokenFromRequest(r) == "" && bodyToken != "" {
+		u, err = s.userFromToken(bodyToken)
+	} else {
+		u, err = s.userFromRequest(r)
+	}
 	if err != nil {
 		if errors.Is(err, ErrUserTokenMissing) && !settings.RequireTokenForQuery {
 			return nil, nil

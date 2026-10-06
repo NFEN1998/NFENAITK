@@ -1220,7 +1220,40 @@
       qs("u-stat-expired").textContent = summary.expired_users || 0;
       qs("u-stat-exhausted").textContent = summary.exhausted_users || 0;
       qs("u-stat-calls").textContent = summary.total_calls || 0;
+      renderUserDaily(r.daily || []);
+      renderUserUsage(users);
     });
+  }
+
+  function renderUserDaily(daily) {
+    var el = qs("u-daily-chart");
+    if (!daily.length) { el.innerHTML = "暂无数据"; return; }
+    var recent = daily.slice(-14);
+    var max = Math.max.apply(null, recent.map(function (d) { return d.count; })) || 1;
+    el.innerHTML = recent.map(function (d) {
+      var height = Math.max(3, Math.round((d.count / max) * 100));
+      var label = (d.day || "").slice(5);
+      return '<div class="bar" style="height:' + height + '%" title="' + esc(d.day) + ': ' + d.count + '"><span>' + esc(label) + '</span></div>';
+    }).join("");
+  }
+
+  function renderUserUsage(users) {
+    var body = qs("u-usage-table").querySelector("tbody");
+    var sorted = users.slice().sort(function (a, b) { return b.total_calls - a.total_calls; });
+    if (!sorted.length) {
+      body.innerHTML = '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
+      return;
+    }
+    body.innerHTML = sorted.map(function (u) {
+      var remain = u.remain == null ? "不限" : u.remain;
+      return "<tr>" +
+        "<td>" + u.id + "</td>" +
+        '<td><span class="mono small clamp">' + esc(u.token) + "</span></td>" +
+        "<td>" + u.total_calls + "</td>" +
+        "<td>" + remain + "</td>" +
+        "<td>" + userStatusPill(u.status) + "</td>" +
+      "</tr>";
+    }).join("");
   }
 
   function planOptionsHtml(selected) {
