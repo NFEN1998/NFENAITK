@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -293,7 +294,7 @@ func (s *Server) adminResetUserToken(w http.ResponseWriter, r *http.Request, id 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	s.audit("reset_token", id, u.Token, `{}`)
+	s.auditTokenReset("reset_token", id, u.Token, token, "admin", r)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "token": token})
 }
 
@@ -336,6 +337,23 @@ func (s *Server) adminPruneUserLogs(w http.ResponseWriter, r *http.Request) {
 // audit records an admin action without failing the request on error.
 func (s *Server) audit(action string, userID int64, userName, detail string) {
 	if err := s.store.InsertAudit(action, userID, userName, detail, "admin"); err != nil {
+		s.PublishError("audit %s: %v", action, err)
+	}
+}
+
+// auditTokenReset records a detailed, recoverable log for token resets so that
+// an accidental reset can always be traced back to both the old and new token.
+func (s *Server) auditTokenReset(action string, userID int64, oldToken, newToken, actor string, r *http.Request) {
+	detail, err := json.Marshal(map[string]any{
+		"old_token":  oldToken,
+		"new_token":  newToken,
+		"ip":         clientIP(r),
+		"user_agent": r.UserAgent(),
+	})
+	if err != nil {
+		detail = []byte(`{}`)
+	}
+	if err := s.store.InsertAudit(action, userID, newToken, string(detail), actor); err != nil {
 		s.PublishError("audit %s: %v", action, err)
 	}
 }

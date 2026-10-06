@@ -1052,6 +1052,19 @@
     return detailBlock("请求头", lines);
   }
 
+  function auditDetailText(a) {
+    var d = a.detail;
+    if (!d) return "";
+    var obj;
+    try { obj = JSON.parse(d); } catch (e) { return d; }
+    var parts = [];
+    if (obj.old_token) parts.push("旧令牌: " + obj.old_token);
+    if (obj.new_token) parts.push("新令牌: " + obj.new_token);
+    if (obj.ip) parts.push("IP: " + obj.ip);
+    if (obj.user_agent) parts.push("UA: " + obj.user_agent);
+    return parts.length ? parts.join("；") : d;
+  }
+
   function openLogDetail(log) {
     var meta = [
       ["请求 ID", log.id], ["时间", log.timestamp], ["方法", log.method], ["路径", log.path],
@@ -1467,11 +1480,12 @@
       if (!data.success) { toast(data.message); return; }
       var rows = (data.audits || []).map(function (a) {
         return '<tr><td class="small">' + esc(a.created_at) + "</td><td>" + esc(a.action) +
-          "</td><td>" + esc(a.user_token || a.user_id) + "</td><td>" + esc(a.actor) + "</td></tr>";
+          "</td><td>" + esc(a.user_token || a.user_id) + "</td><td>" + esc(a.actor) +
+          "</td><td class=\"small\">" + esc(auditDetailText(a)) + "</td></tr>";
       }).join("");
-      if (!rows) rows = '<tr><td colspan="4" class="muted">暂无审计记录</td></tr>';
+      if (!rows) rows = '<tr><td colspan="5" class="muted">暂无审计记录</td></tr>';
       openDetail("审计日志（最近 50 条）",
-        '<div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>用户</th><th>操作者</th></tr></thead><tbody>' +
+        '<div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>用户</th><th>操作者</th><th>详情</th></tr></thead><tbody>' +
         rows + "</tbody></table></div>");
     });
   });

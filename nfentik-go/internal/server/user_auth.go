@@ -139,14 +139,13 @@ func (s *Server) handleUserResetToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	oldToken := u.Token
 	newToken, err := s.store.ResetUserToken(u.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	if err := s.store.InsertAudit("self_reset_token", u.ID, newToken, `{}`, "user"); err != nil {
-		s.PublishError("audit self reset token: %v", err)
-	}
+	s.auditTokenReset("self_reset_token", u.ID, oldToken, newToken, "user", r)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "token": newToken})
 }
 
