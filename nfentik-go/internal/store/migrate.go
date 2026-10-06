@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/nfentik/nfentik-go/internal/match"
 )
@@ -174,10 +175,229 @@ var migrations = []migration{
 	},
 }
 
-// migrate applies every pending migration in order.
+// coreTables are the tables every release expects. They are folded into the
+// baseline migration, so a healthy database always has them.
+var coreTables = []string{
+	"folders",
+	"airesponses",
+	"requestlogs",
+	"dailyrequestcounts",
+	"appsettings",
+	"users",
+	"userrequestlogs",
+	"userauditlogs",
+}
+
+// coreColumns maps each core table to the columns every release expects. It is
+// used for integrity checks and for idempotent repair: a column can be missing
+// even when the version table claims the migration that added it was applied
+// (for example after a partial restore), so repair must not rely on version
+// bookkeeping alone.
+var coreColumns = map[string][]string{
+	"folders":            {"id", "name", "parentid", "createtime"},
+	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "folderid", "foldername", "isai", "ispendingcorrection", "questionhash"},
+	"requestlogs":        {"logid", "requestid", "timestamp", "method", "path", "status", "responsetime", "requestbody", "responsebody", "headers", "ip", "useragent", "stage"},
+	"dailyrequestcounts": {"day", "count"},
+	"appsettings":        {"key", "value", "updatetime"},
+	"users":              {"id", "token", "plantype", "plancode", "planlabel", "startat", "expireat", "totalcount", "usedcount", "remaincount", "note", "enabled", "createdat", "updatedat"},
+	"userrequestlogs":    {"logid", "userid", "token", "timestamp", "question", "options", "answer", "source", "status", "responsetime"},
+	"userauditlogs":      {"auditid", "action", "userid", "usertoken", "detail", "actor", "createdat"},
+}
+
+// ColumnIssue names a single missing column on a table.
+type ColumnIssue struct {
+	Table  string `json:"table"`
+	Column string `json:"column"`
+}
+
+// IntegrityReport summarises the state of the database as seen at startup,
+// before any repair is attempted.
+type IntegrityReport struct {
+	// Empty is true when none of the core tables exist yet: a brand new
+	// database that the migration system will create from scratch.
+	Empty bool `json:"empty"`
+	// MissingTables lists core tables that do not exist.
+	MissingTables []string `json:"missing_tables"`
+	// MissingColumns lists columns absent from their table.
+	MissingColumns []ColumnIssue `json:"missing_columns"`
+	// CurrentVersion is the highest recorded migration (0 when none).
+	CurrentVersion int `json:"current_version"`
+	// TargetVersion is the highest migration this build knows about.
+	TargetVersion int `json:"target_version"`
+	// HasVersionTable reports whether SchemaMigrations exists.
+	HasVersionTable bool `json:"has_version_table"`
+	// PendingMigrations are the versions that still need to be applied.
+	PendingMigrations []int `json:"pending_migrations"`
+}
+
+// Healthy reports whether the schema is complete and fully migrated.
+func (r IntegrityReport) Healthy() bool {
+	return len(r.MissingTables) == 0 && len(r.MissingColumns) == 0 && len(r.PendingMigrations) == 0
+}
+
+// Inspect performs a read-only integrity check of the database: it lists the
+// core tables and columns present, reads the recorded schema version and
+// computes which migrations are still pending. It never modifies the database.
+func (s *Store) Inspect() (IntegrityReport, error) {
+	report := IntegrityReport{TargetVersion: targetVersion()}
+
+	// Which core tables are missing.
+	rows, err := s.db.Query(
+		`SELECT t.name FROM unnest($1::text[]) AS t(name)
+		 WHERE NOT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND lower(table_name) = t.name)`,
+		pqArray(coreTables),
+	)
+	if err != nil {
+		return report, fmt.Errorf("检查缺失表: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return report, err
+		}
+		report.MissingTables = append(report.MissingTables, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return report, err
+	}
+	rows.Close()
+	report.Empty = len(report.MissingTables) == len(coreTables)
+
+	// Which expected columns are missing from the tables that do exist.
+	report.MissingColumns, err = s.missingColumns()
+	if err != nil {
+		return report, err
+	}
+
+	// Version table and recorded migrations.
+	var hasVersion bool
+	if err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+		 WHERE table_schema = 'public' AND lower(table_name) = 'schemamigrations')`,
+	).Scan(&hasVersion); err != nil {
+		return report, fmt.Errorf("检查版本表: %w", err)
+	}
+	report.HasVersionTable = hasVersion
+
+	applied := map[int]bool{}
+	if hasVersion {
+		applied, err = s.appliedVersions()
+		if err != nil {
+			return report, err
+		}
+		for _, m := range migrations {
+			if applied[m.Version] && m.Version > report.CurrentVersion {
+				report.CurrentVersion = m.Version
+			}
+		}
+	}
+
+	// A legacy database has core tables but no recorded migrations; the runner
+	// will baseline it, so those versions are not "pending" in the usual sense.
+	legacy := !hasVersion && !report.Empty
+	for _, m := range migrations {
+		if applied[m.Version] {
+			continue
+		}
+		if legacy && m.Baseline {
+			continue
+		}
+		report.PendingMigrations = append(report.PendingMigrations, m.Version)
+	}
+	return report, nil
+}
+
+// missingColumns returns the expected columns that are absent from their table.
+func (s *Store) missingColumns() ([]ColumnIssue, error) {
+	var issues []ColumnIssue
+	for table, cols := range coreColumns {
+		// Rows for missing tables are reported by the table check; skip them.
+		var exists bool
+		if err := s.db.QueryRow(
+			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+			 WHERE table_schema = 'public' AND lower(table_name) = $1)`,
+			table,
+		).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("检查表 %s: %w", table, err)
+		}
+		if !exists {
+			continue
+		}
+		rows, err := s.db.Query(
+			`SELECT c.name FROM unnest($1::text[]) AS c(name)
+			 WHERE NOT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND lower(table_name) = $2
+				  AND lower(column_name) = c.name)`,
+			pqArray(cols), table,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("检查列 %s: %w", table, err)
+		}
+		for rows.Next() {
+			var col string
+			if err := rows.Scan(&col); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			issues = append(issues, ColumnIssue{Table: table, Column: col})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return issues, nil
+}
+
+// targetVersion returns the highest migration version known to this build.
+func targetVersion() int {
+	best := 0
+	for _, m := range migrations {
+		if m.Version > best {
+			best = m.Version
+		}
+	}
+	return best
+}
+
+// pqArray renders a Go string slice as a PostgreSQL text[] literal. It is used
+// for the small, static core-table list only.
+func pqArray(items []string) string {
+	parts := make([]string, len(items))
+	for i, it := range items {
+		parts[i] = `"` + strings.ReplaceAll(it, `"`, `""`) + `"`
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// migrate applies every pending migration in order, after an integrity check.
+//
+// The sequence is:
+//  1. Inspect the database read-only and log a report. An empty database is a
+//     fresh install; a populated one is checked for missing tables/columns and
+//     a stale schema version.
+//  2. Run the ordered migrations. On a fresh database these create the schema;
+//     on an existing one they apply only the versions still pending.
+//  3. Repair any residual drift (for example a column missing even though the
+//     version table says its migration ran). Repair is idempotent and does not
+//     rely on version bookkeeping.
 func (s *Store) migrate() error {
 	if err := s.ensureMigrationTable(); err != nil {
 		return err
+	}
+
+	// Read-only integrity report, logged before any change so the startup log
+	// shows exactly what the database looked like.
+	if report, err := s.Inspect(); err != nil {
+		log.Printf("数据库完整性检测失败: %v", err)
+	} else {
+		logIntegrityReport(report)
 	}
 
 	applied, err := s.appliedVersions()
@@ -220,6 +440,13 @@ func (s *Store) migrate() error {
 		log.Printf("已应用数据库迁移 %03d %s", m.Version, m.Name)
 	}
 
+	// Repair residual drift: a table or column can be missing even when the
+	// version table says its migration was applied (partial restore, manual
+	// changes). Repair is idempotent and independent of version bookkeeping.
+	if err := s.repairSchema(); err != nil {
+		return err
+	}
+
 	// Guarantee the implicit root folder exists and the sequence is in sync.
 	if err := s.ensureRootFolder(); err != nil {
 		return err
@@ -227,6 +454,107 @@ func (s *Store) migrate() error {
 	// Backfill the question hash column and build its index. Runs in batches so
 	// it stays safe on banks with millions of rows.
 	return s.ensureQuestionHash()
+}
+
+// logIntegrityReport prints a human readable summary of the startup check.
+func logIntegrityReport(r IntegrityReport) {
+	switch {
+	case r.Empty:
+		log.Printf("数据库完整性检测: 空库，将初始化全部表结构（目标版本 %d）", r.TargetVersion)
+	case r.Healthy():
+		log.Printf("数据库完整性检测: 通过（版本 %d/%d，结构与迁移均为最新）",
+			r.CurrentVersion, r.TargetVersion)
+	default:
+		if !r.HasVersionTable {
+			log.Printf("数据库完整性检测: 未发现版本表，将按旧版数据库处理并补齐结构")
+		}
+		if len(r.MissingTables) > 0 {
+			log.Printf("数据库完整性检测: 缺失表 %v，将自动创建", r.MissingTables)
+		}
+		if len(r.MissingColumns) > 0 {
+			items := make([]string, len(r.MissingColumns))
+			for i, c := range r.MissingColumns {
+				items[i] = c.Table + "." + c.Column
+			}
+			log.Printf("数据库完整性检测: 缺失字段 %v，将自动补齐", items)
+		}
+		if len(r.PendingMigrations) > 0 {
+			log.Printf("数据库完整性检测: 待应用迁移 %v（当前版本 %d，目标版本 %d）",
+				r.PendingMigrations, r.CurrentVersion, r.TargetVersion)
+		}
+	}
+}
+
+// repairSchema recreates any missing core table and adds any missing core
+// column. It uses CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS so it is
+// safe to run on every startup and never touches existing data.
+func (s *Store) repairSchema() error {
+	// Only replay the baseline DDL when the integrity check saw a missing
+	// table; the statements are idempotent but there is no reason to run them
+	// on every healthy start.
+	if report, err := s.Inspect(); err == nil && len(report.MissingTables) > 0 {
+		for _, m := range migrations {
+			if m.Version != baselineVersion() {
+				continue
+			}
+			for _, stmt := range m.Statements {
+				if _, err := s.db.Exec(stmt); err != nil {
+					return fmt.Errorf("修复表结构失败: %w", err)
+				}
+			}
+		}
+		log.Printf("已重建缺失的表结构")
+	}
+
+	// Fill in any missing columns with their canonical definitions. The DDL is
+	// kept here (not derived from migrations) so it stays unambiguous.
+	for _, fix := range columnRepairs {
+		if !fix.required(s) {
+			continue
+		}
+		if _, err := s.db.Exec(`ALTER TABLE ` + fix.Table + ` ADD COLUMN IF NOT EXISTS ` + fix.DDL); err != nil {
+			return fmt.Errorf("补齐字段 %s.%s 失败: %w", fix.Table, fix.Column, err)
+		}
+		log.Printf("已补齐缺失字段 %s.%s", fix.Table, fix.Column)
+	}
+
+	return nil
+}
+
+// columnRepair describes one idempotent column addition.
+type columnRepair struct {
+	Table  string
+	Column string
+	DDL    string // column definition, e.g. "QuestionHash TEXT"
+}
+
+// required reports whether the column is currently missing, so we only log and
+// execute the repair when it is actually needed.
+func (c columnRepair) required(s *Store) bool {
+	var exists bool
+	err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		 WHERE table_schema='public' AND lower(table_name)=$1 AND lower(column_name)=$2)`,
+		c.Table, c.Column,
+	).Scan(&exists)
+	return err == nil && !exists
+}
+
+// columnRepairs lists every non-baseline column the schema may be missing. It is
+// generated from the migration history so newly added columns only need to
+// appear here once.
+var columnRepairs = []columnRepair{
+	{Table: "folders", Column: "parentid", DDL: "ParentId INTEGER DEFAULT 0"},
+	{Table: "folders", Column: "createtime", DDL: "CreateTime TIMESTAMP DEFAULT NOW()"},
+	{Table: "airesponses", Column: "questiontype", DDL: "QuestionType TEXT"},
+	{Table: "airesponses", Column: "createtime", DDL: "CreateTime TIMESTAMP DEFAULT NOW()"},
+	{Table: "airesponses", Column: "folderid", DDL: "FolderId INTEGER DEFAULT 0"},
+	{Table: "airesponses", Column: "foldername", DDL: "FolderName TEXT DEFAULT '默认文件夹'"},
+	{Table: "airesponses", Column: "isai", DDL: "IsAi BOOLEAN DEFAULT TRUE"},
+	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection BOOLEAN DEFAULT FALSE"},
+	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash TEXT"},
+	{Table: "userrequestlogs", Column: "options", DDL: "Options TEXT"},
+	{Table: "userrequestlogs", Column: "answer", DDL: "Answer TEXT"},
 }
 
 func (s *Store) ensureMigrationTable() error {
