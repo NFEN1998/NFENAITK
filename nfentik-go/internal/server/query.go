@@ -302,12 +302,23 @@ func (s *Server) recordUserQuery(u *store.User, req QueryRequest, source, status
 // errInvalidToken marks a token that does not resolve to an enabled user.
 var errInvalidToken = errors.New("令牌无效")
 
-// resolveQuery performs the bank lookup and, on a miss, asks the AI models. It
-// also reports which source produced the answer (bank, cache or ai).
+// resolveQuery checks the Redis cache first, then the bank, and on a miss asks
+// the AI models. It also reports which source produced the answer (cache, bank
+// or ai).
 func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin string) (int, queryResponse, string) {
 	hasURL := containsURL(req.Title)
 	if !hasURL && req.Options != nil {
 		hasURL = containsURL(*req.Options)
+	}
+
+	// Cache only AI answers, keyed by the question text. Skipped when the
+	// question carries a URL because those answers can change with the image.
+	// The cache stores raw data so it serves both plain-text and HTML callers.
+	if s.cache != nil && !hasURL {
+		var cached bankAnswer
+		if s.cache.GetQuery(req.Title, req.Options, &cached) {
+			return http.StatusOK, cached.render(origin, req.Raw), "cache"
+		}
 	}
 
 	hits, err := s.store.Query(req.Title, req.Options, match.Score)
@@ -323,16 +334,6 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 			IsAI:                hit.IsAI,
 			IsPendingCorrection: hit.IsPendingCorrection,
 		}.render(origin, req.Raw), "bank"
-	}
-
-	// Cache only AI answers, keyed by the question text. Skipped when the
-	// question carries a URL because those answers can change with the image.
-	// The cache stores raw data so it serves both plain-text and HTML callers.
-	if s.cache != nil && !hasURL {
-		var cached bankAnswer
-		if s.cache.GetQuery(req.Title, req.Options, &cached) {
-			return http.StatusOK, cached.render(origin, req.Raw), "cache"
-		}
 	}
 
 	settings, err := s.ModelSettings()
