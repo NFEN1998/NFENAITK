@@ -28,10 +28,46 @@
 
       <section class="section">
         <h3>数据库</h3>
+        <div class="grid-2">
+          <div class="field">
+            <label>主机地址 <span class="req">*</span></label>
+            <input id="db-host" type="text" value="127.0.0.1" placeholder="127.0.0.1" />
+          </div>
+          <div class="field">
+            <label>端口 <span class="req">*</span></label>
+            <input id="db-port" type="text" value="5432" placeholder="5432" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>用户名 <span class="req">*</span></label>
+            <input id="db-user" type="text" value="postgres" placeholder="postgres" />
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input id="db-password" type="password" placeholder="数据库密码" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>数据库名 <span class="req">*</span></label>
+            <input id="db-name" type="text" value="nfentik" placeholder="nfentik" />
+          </div>
+          <div class="field">
+            <label>SSL 模式</label>
+            <select id="db-sslmode">
+              <option value="disable" selected>disable</option>
+              <option value="prefer">prefer</option>
+              <option value="require">require</option>
+            </select>
+          </div>
+        </div>
         <div class="field">
-          <label>PostgreSQL 连接串 <span class="req">*</span></label>
-          <input id="database-url" type="text" placeholder="postgres://user:password@127.0.0.1:5432/nfentik?sslmode=disable" />
-          <div class="field-hint">例如：postgres://zerror:zerror@127.0.0.1:5432/zerror?sslmode=disable</div>
+          <div class="db-actions">
+            <button id="db-test" type="button" class="btn ghost">测试连接</button>
+            <span id="db-test-result" class="test-result"></span>
+          </div>
+          <div class="field-hint">连接串预览：<code id="db-dsn-preview"></code></div>
         </div>
       </section>
 

@@ -52,8 +52,9 @@ func TestSetupRejectsMissingFields(t *testing.T) {
 		body string
 		want string
 	}{
-		{"no database", `{"database_url":"","admin_token":"x"}`, "PostgreSQL"},
-		{"no token", `{"database_url":"postgres://x","admin_token":""}`, "管理员令牌"},
+		{"no host", `{"db_host":"","db_user":"u","db_name":"d","admin_token":"x"}`, "主机"},
+		{"no token", `{"db_host":"127.0.0.1","db_port":"5432","db_user":"u","db_name":"d","admin_token":""}`, "管理员令牌"},
+		{"bad port", `{"db_host":"127.0.0.1","db_port":"abc","db_user":"u","db_name":"d","admin_token":"x"}`, "端口"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,5 +81,46 @@ func TestSetupPageRenders(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "安装配置向导") {
 		t.Fatalf("setup page missing wizard heading")
+	}
+}
+
+func TestDBFieldsDSN(t *testing.T) {
+	f := dbFields{Host: "127.0.0.1", Port: "5432", User: "zerror", Password: "p@ss:w0rd", Name: "zerror", SSLMode: "disable"}
+	got := f.dsn()
+	if !strings.HasPrefix(got, "postgres://zerror:") {
+		t.Fatalf("dsn %q missing user", got)
+	}
+	if !strings.Contains(got, "@127.0.0.1:5432/zerror") {
+		t.Fatalf("dsn %q missing host/path", got)
+	}
+	if !strings.Contains(got, "sslmode=disable") {
+		t.Fatalf("dsn %q missing sslmode", got)
+	}
+	// Round-trip: parsing must recover the same fields.
+	back := parseDSN(got)
+	if back.Host != f.Host || back.Port != f.Port || back.User != f.User ||
+		back.Password != f.Password || back.Name != f.Name || back.SSLMode != f.SSLMode {
+		t.Fatalf("round-trip mismatch: %+v vs %+v", back, f)
+	}
+}
+
+func TestDBFieldsDSNDefaults(t *testing.T) {
+	got := dbFields{}.dsn()
+	if !strings.Contains(got, "@127.0.0.1:5432") {
+		t.Fatalf("default dsn %q should point at local postgres", got)
+	}
+	if !strings.Contains(got, "sslmode=disable") {
+		t.Fatalf("default dsn %q should default sslmode=disable", got)
+	}
+}
+
+func TestSetupTestDBRequiresFields(t *testing.T) {
+	h := newSetupServer(t).Handler()
+	req := httptest.NewRequest(http.MethodPost, "/setup/test-db", strings.NewReader(`{"db_host":"","db_user":"","db_name":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := newRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

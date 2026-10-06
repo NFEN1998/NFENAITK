@@ -109,6 +109,9 @@ func Open(dsn string) (*Store, error) {
 // Close releases the database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
+// Ping verifies the database connection is still alive.
+func (s *Store) Ping() error { return s.db.Ping() }
+
 // DB exposes the raw handle for log persistence helpers.
 func (s *Store) DB() *sql.DB { return s.db }
 

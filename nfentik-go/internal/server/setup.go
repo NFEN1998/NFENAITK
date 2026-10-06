@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/nfentik/nfentik-go/internal/config"
@@ -44,6 +46,7 @@ func (s *SetupServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/setup", s.handleSetup)
 	mux.HandleFunc("/setup/state", s.handleState)
+	mux.HandleFunc("/setup/test-db", s.handleTestDB)
 	if staticFS, err := fs.Sub(s.webFS, "static"); err == nil {
 		mux.Handle("/setup/static/", http.StripPrefix("/setup/static/", http.FileServer(http.FS(staticFS))))
 	}
@@ -55,9 +58,104 @@ func (s *SetupServer) Handler() http.Handler {
 	return mux
 }
 
+// dbFields holds the individual PostgreSQL connection fields entered in the
+// wizard. They are assembled into a DSN before being persisted.
+type dbFields struct {
+	Host     string `json:"db_host"`
+	Port     string `json:"db_port"`
+	User     string `json:"db_user"`
+	Password string `json:"db_password"`
+	Name     string `json:"db_name"`
+	SSLMode  string `json:"db_sslmode"`
+}
+
+// Default DB field values point at a local PostgreSQL instance.
+const (
+	defaultDBHost    = "127.0.0.1"
+	defaultDBPort    = "5432"
+	defaultDBUser    = "postgres"
+	defaultDBName    = "nfentik"
+	defaultDBSSLMode = "disable"
+)
+
+// dsn assembles a PostgreSQL connection URL from the fields. Empty optional
+// values fall back to sensible defaults so a partial form still produces a
+// usable string.
+func (f dbFields) dsn() string {
+	host := strings.TrimSpace(f.Host)
+	if host == "" {
+		host = defaultDBHost
+	}
+	port := strings.TrimSpace(f.Port)
+	if port == "" {
+		port = defaultDBPort
+	}
+	user := url.UserPassword(strings.TrimSpace(f.User), f.Password)
+
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   user,
+		Host:   host + ":" + port,
+	}
+	if name := strings.TrimSpace(f.Name); name != "" {
+		u.Path = "/" + name
+	}
+	ssl := strings.TrimSpace(f.SSLMode)
+	if ssl == "" {
+		ssl = defaultDBSSLMode
+	}
+	q := url.Values{}
+	q.Set("sslmode", ssl)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// parseDSN splits an existing DSN back into fields so the wizard can prefill
+// them. Unknown or unparseable values return defaults.
+func parseDSN(dsn string) dbFields {
+	f := dbFields{
+		Host: defaultDBHost, Port: defaultDBPort, User: defaultDBUser,
+		Name: defaultDBName, SSLMode: defaultDBSSLMode,
+	}
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return f
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return f
+	}
+	if u.Hostname() != "" {
+		f.Host = u.Hostname()
+	}
+	if u.Port() != "" {
+		f.Port = u.Port()
+	}
+	if u.User != nil {
+		if name := u.User.Username(); name != "" {
+			f.User = name
+		}
+		if pass, ok := u.User.Password(); ok {
+			f.Password = pass
+		}
+	}
+	if p := strings.TrimPrefix(u.Path, "/"); p != "" {
+		f.Name = p
+	}
+	if ssl := u.Query().Get("sslmode"); ssl != "" {
+		f.SSLMode = ssl
+	}
+	return f
+}
+
 // setupState is the prefilled payload returned to the wizard.
 type setupState struct {
-	DatabaseURL  string `json:"database_url"`
+	DBHost       string `json:"db_host"`
+	DBPort       string `json:"db_port"`
+	DBUser       string `json:"db_user"`
+	DBPassword   string `json:"db_password"`
+	DBName       string `json:"db_name"`
+	DBSSLMode    string `json:"db_sslmode"`
 	RedisURL     string `json:"redis_url"`
 	RedisEnabled bool   `json:"redis_enabled"`
 	AdminToken   string `json:"admin_token"`
@@ -66,8 +164,14 @@ type setupState struct {
 }
 
 func (s *SetupServer) currentState() setupState {
+	db := parseDSN(s.bootstrap.Database.URL)
 	st := setupState{
-		DatabaseURL:  s.bootstrap.Database.URL,
+		DBHost:       db.Host,
+		DBPort:       db.Port,
+		DBUser:       db.User,
+		DBPassword:   db.Password,
+		DBName:       db.Name,
+		DBSSLMode:    db.SSLMode,
 		RedisURL:     s.bootstrap.Redis.URL,
 		RedisEnabled: s.bootstrap.Redis.Enabled,
 		SiteName:     config.DefaultSiteName,
@@ -90,14 +194,53 @@ func (s *SetupServer) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "state": s.currentState()})
 }
 
-// setupRequest is the wizard submission.
+// setupRequest is the wizard submission. DB connection fields are carried
+// separately and assembled into a DSN on save.
 type setupRequest struct {
-	DatabaseURL  string `json:"database_url"`
+	dbFields
 	RedisEnabled bool   `json:"redis_enabled"`
 	RedisURL     string `json:"redis_url"`
 	AdminToken   string `json:"admin_token"`
 	SiteName     string `json:"site_name"`
 	SiteSubtitle string `json:"site_subtitle"`
+}
+
+// handleTestDB verifies a candidate database connection without persisting
+// anything, so the operator gets feedback before saving.
+func (s *SetupServer) handleTestDB(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var f dbFields
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体解析失败"})
+		return
+	}
+	if strings.TrimSpace(f.Host) == "" || strings.TrimSpace(f.User) == "" || strings.TrimSpace(f.Name) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请完整填写主机、用户名和数据库名"})
+		return
+	}
+	dsn := f.dsn()
+
+	// Reuse an already-open store when the form points at the same database,
+	// otherwise open a short-lived connection to probe it.
+	if s.store != nil && s.bootstrap.Database.URL == dsn {
+		if err := s.store.Ping(); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "连接失败: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "连接成功"})
+		return
+	}
+
+	st, err := store.Open(dsn)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "连接失败: " + err.Error()})
+		return
+	}
+	defer st.Close()
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "连接成功"})
 }
 
 func (s *SetupServer) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -122,15 +265,20 @@ func (s *SetupServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体解析失败"})
 		return
 	}
-	req.DatabaseURL = strings.TrimSpace(req.DatabaseURL)
 	req.RedisURL = strings.TrimSpace(req.RedisURL)
 	req.AdminToken = strings.TrimSpace(req.AdminToken)
 	req.SiteName = strings.TrimSpace(req.SiteName)
 	req.SiteSubtitle = strings.TrimSpace(req.SiteSubtitle)
 
-	if req.DatabaseURL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请填写 PostgreSQL 连接串"})
+	if strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.User) == "" || strings.TrimSpace(req.Name) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请完整填写数据库主机、用户名和数据库名"})
 		return
+	}
+	if req.Port != "" {
+		if p, err := strconv.Atoi(strings.TrimSpace(req.Port)); err != nil || p <= 0 || p > 65535 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "数据库端口无效"})
+			return
+		}
 	}
 	if req.AdminToken == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请设置管理员令牌"})
@@ -143,54 +291,45 @@ func (s *SetupServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		req.SiteSubtitle = config.DefaultSiteSubtitle
 	}
 
+	dsn := req.dsn()
+
 	// Verify the database is reachable before persisting, so the operator gets
-	// immediate feedback instead of a broken restart.
-	opened := s.store
-	closeAfter := false
-	if opened == nil {
-		st, err := store.Open(req.DatabaseURL)
+	// immediate feedback instead of a broken restart. When the form still
+	// points at the already-open store we reuse its settings repository,
+	// otherwise we open a fresh connection and seed it from scratch.
+	sameDB := s.store != nil && s.bootstrap.Database.URL == dsn
+	var cfg *config.Store
+	if sameDB {
+		cfg = s.cfg
+	} else {
+		st, err := store.Open(dsn)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "连接数据库失败: " + err.Error()})
 			return
 		}
-		opened = st
-		closeAfter = true
-	}
-	if closeAfter {
-		defer opened.Close()
-	}
-
-	// Persist application settings to the database when available.
-	if s.cfg != nil {
-		if _, err := s.cfg.Patch(encodeRawJSON(map[string]any{
-			"adminToken":   req.AdminToken,
-			"siteName":     req.SiteName,
-			"siteSubtitle": req.SiteSubtitle,
-		})); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "保存设置失败: " + err.Error()})
-			return
-		}
-	} else {
-		// Fresh database: seed settings so the restart picks up the new values.
-		cfg, err := config.New(opened, config.BootstrapFile{})
+		defer st.Close()
+		seeded, err := config.New(st, config.BootstrapFile{})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "初始化设置失败: " + err.Error()})
 			return
 		}
-		if _, err := cfg.Patch(encodeRawJSON(map[string]any{
-			"adminToken":   req.AdminToken,
-			"siteName":     req.SiteName,
-			"siteSubtitle": req.SiteSubtitle,
-		})); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "保存设置失败: " + err.Error()})
-			return
-		}
+		cfg = seeded
+	}
+
+	// Persist application settings to the database.
+	if _, err := cfg.Patch(encodeRawJSON(map[string]any{
+		"adminToken":   req.AdminToken,
+		"siteName":     req.SiteName,
+		"siteSubtitle": req.SiteSubtitle,
+	})); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "保存设置失败: " + err.Error()})
+		return
 	}
 
 	// Write the bootstrap file last: once it exists the next start connects to
 	// the database directly.
 	bootstrap := config.BootstrapFile{}
-	bootstrap.Database.URL = req.DatabaseURL
+	bootstrap.Database.URL = dsn
 	bootstrap.Redis = config.Redis{
 		URL:            req.RedisURL,
 		Enabled:        req.RedisEnabled && req.RedisURL != "",
