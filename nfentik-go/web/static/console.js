@@ -891,7 +891,7 @@
     done();
   }
 
-  function ocsConfigObject(baseURL) {
+  function ocsConfigObject(baseURL, token) {
     var base = String(baseURL || window.location.origin).replace(/\/+$/, "");
     return [{
       name: "NFENAI题库",
@@ -904,6 +904,7 @@
         title: "${title}",
         options: "${options}",
         type: "${type}",
+        token: token || "${token}",
       },
       handler: "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]",
     }];
@@ -911,7 +912,8 @@
 
   function renderOCS() {
     var base = qs("ocs-url-base").value.trim() || window.location.origin;
-    qs("ocs-json").value = JSON.stringify(ocsConfigObject(base), null, 2);
+    var token = qs("ocs-token").value.trim();
+    qs("ocs-json").value = JSON.stringify(ocsConfigObject(base, token), null, 2);
   }
 
   function loadOCS() {
@@ -920,6 +922,7 @@
   }
 
   qs("ocs-url-base").addEventListener("input", renderOCS);
+  qs("ocs-token").addEventListener("input", renderOCS);
   qs("ocs-reset").addEventListener("click", function () {
     qs("ocs-url-base").value = window.location.origin;
     renderOCS();

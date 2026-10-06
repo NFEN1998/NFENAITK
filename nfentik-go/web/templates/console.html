@@ -328,7 +328,7 @@
 
     <section id="view-ocs" class="view">
       <div class="toolbar">
-        <span class="muted">把下面的配置复制到 OCS 用户脚本的题库配置中即可连接本服务。</span>
+        <span class="muted">把下面的配置复制到 OCS 用户脚本的题库配置中即可连接本服务（已包含用户令牌）。</span>
         <span class="spacer"></span>
         <button id="ocs-copy" class="btn primary">复制配置</button>
       </div>
@@ -338,6 +338,13 @@
         <div class="toolbar">
           <input id="ocs-url-base" type="text" placeholder="http://localhost:3000">
           <button id="ocs-reset" class="btn ghost">使用当前地址</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>用户令牌</h2>
+        <p class="muted small">填入某个用户的令牌，生成带该令牌的完整配置；留空则使用 <code>${token}</code> 占位符。</p>
+        <div class="toolbar">
+          <input id="ocs-token" type="text" placeholder="nf_xxxxxxxx（留空则用占位符）" autocomplete="off">
         </div>
       </div>
       <div class="card" style="margin-top:16px;">
