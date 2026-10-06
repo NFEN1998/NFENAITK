@@ -91,7 +91,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(queryTestPageHTML))
+	_, _ = w.Write([]byte(homePageHTML))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
