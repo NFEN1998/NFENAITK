@@ -104,13 +104,31 @@ func (c *Client) Ping() bool {
 // Query cache
 // ---------------------------------------------------------------------------
 
-// queryKey derives a stable key from the title plus optional fields.
+// queryKey derives a stable key from the title plus optional fields. It reuses
+// the canonical bank lookup hash so a cached answer is valid for both AI and
+// bank results, and so cache invalidation can target the same identifier.
+//
+// The bank version is part of the key: when the bank changes the version is
+// incremented and every previously cached key becomes unreachable without a
+// full-key scan.
 func (c *Client) queryKey(title string, options *string) string {
-	opt := ""
-	if options != nil {
-		opt = *options
+	return c.key("query", c.bankVersion(), queryCacheKey(title, options))
+}
+
+// versionKey holds the current bank cache version.
+func (c *Client) versionKey() string { return c.key("query", "version") }
+
+// bankVersion returns the current cache version, or "0" when Redis is not
+// reachable. The value is read on every lookup; Redis serves it from memory so
+// this stays cheap.
+func (c *Client) bankVersion() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	v, err := c.rdb.Get(ctx, c.versionKey()).Result()
+	if err != nil || v == "" {
+		return "0"
 	}
-	return c.key("query", hashString(title+"\x00"+opt))
+	return v
 }
 
 // GetQuery returns a cached query result.
@@ -138,26 +156,16 @@ func (c *Client) SetQuery(title string, options *string, value any, ttl time.Dur
 	_ = c.rdb.Set(ctx, c.queryKey(title, options), raw, ttl).Err()
 }
 
-// InvalidateQueries drops every cached query result. Called whenever the bank
-// is mutated so stale answers are never served.
+// InvalidateQueries invalidates every cached query result after a bank change.
+//
+// Instead of scanning and deleting individual keys (O(keyspace) and a source of
+// Redis CPU spikes on large deployments) it increments the bank version. Every
+// cached key embeds the version, so all prior entries become unreachable at
+// once and expire on their own TTL. The stale keys are reclaimed by TTL expiry.
 func (c *Client) InvalidateQueries() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	pattern := c.key("query", "*")
-	var cursor uint64
-	for {
-		keys, next, err := c.rdb.Scan(ctx, cursor, pattern, 200).Result()
-		if err != nil {
-			return
-		}
-		if len(keys) > 0 {
-			_ = c.rdb.Del(ctx, keys...).Err()
-		}
-		cursor = next
-		if cursor == 0 {
-			return
-		}
-	}
+	_ = c.rdb.Incr(ctx, c.versionKey()).Err()
 }
 
 // ---------------------------------------------------------------------------

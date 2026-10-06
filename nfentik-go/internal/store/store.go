@@ -65,6 +65,11 @@ type Store struct {
 	// onChange is invoked after any question or folder mutation. The server
 	// uses it to invalidate Redis query caches.
 	onChange func()
+
+	// trigram reports whether the pg_trgm extension and its GIN index are
+	// available for ranked fuzzy candidate lookup. When false the query path
+	// falls back to a bounded prefix probe.
+	trigram bool
 }
 
 // OnChange registers a callback fired after every bank mutation.
@@ -95,6 +100,9 @@ func Open(dsn string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
+	if err := s.ensureTrigram(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -107,6 +115,9 @@ func (s *Store) DB() *sql.DB { return s.db }
 const questionColumns = `ar.Id, ar.Question, ar.Options, ar.Answer, ar.QuestionType,
 	ar.FolderId, f.Name AS FolderName, ar.CreateTime, ar.IsAi, COALESCE(ar.IsPendingCorrection, FALSE)`
 
+// hitColumns is the compact projection shared by the query hot path.
+const hitColumns = `Id, Question, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)`
+
 func scanQuestion(scan func(dest ...any) error) (Question, error) {
 	var q Question
 	err := scan(&q.ID, &q.Question, &q.Options, &q.Answer, &q.QuestionType,
@@ -118,23 +129,59 @@ func scanQuestion(scan func(dest ...any) error) (Question, error) {
 // Queries
 // ---------------------------------------------------------------------------
 
+// candidateLimit bounds how many bank rows are pulled into memory for
+// fuzzy scoring. The exact-hash stage usually answers without touching it; the
+// limit keeps the fallback bounded regardless of bank size.
+const candidateLimit = 500
+
 // Query matches title/options against the bank and returns the best hits.
+//
+// It works in two stages so it scales to very large banks:
+//
+//  1. Exact stage: probe the indexed QuestionHash column for rows whose
+//     normalized question equals the query. This answers the common case with a
+//     single B-tree lookup and no full scan.
+//  2. Fallback stage: when nothing matches exactly, pull a bounded candidate
+//     window (indexed trigram search when available, otherwise a prefix probe)
+//     and score only those rows with the supplied scorer.
+//
+// The returned slice is capped at 50 entries ordered by descending score.
 func (s *Store) Query(title string, options *string, scorer func(q, c string) (float64, bool)) ([]QueryHit, error) {
-	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE) FROM AIResponses`)
+	queryOptions := normalizeOptional(options)
+	requireOption := requireOptionMatch(title)
+
+	// Stage 1: exact normalized-question matches via the hash index.
+	exact, err := s.queryByHash(title, queryOptions, scorer)
+	if err != nil {
+		return nil, err
+	}
+	if len(exact) > 0 {
+		return exact, nil
+	}
+
+	// Stage 2: bounded fuzzy candidates, scored in memory.
+	candidates, err := s.fuzzyCandidates(title)
+	if err != nil {
+		return nil, err
+	}
+	return scoreCandidates(title, queryOptions, requireOption, candidates, scorer), nil
+}
+
+// queryByHash returns exact normalized-question matches. When the query carries
+// options the row's options must also match.
+func (s *Store) queryByHash(title string, queryOptions *string, scorer func(q, c string) (float64, bool)) ([]QueryHit, error) {
+	hash := match.QuestionHash(title)
+	if hash == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+		FROM AIResponses WHERE QuestionHash = $1 LIMIT $2`, hash, candidateLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	queryOptions := normalizeOptional(options)
-	requireOption := requireOptionMatch(title)
-
-	type scored struct {
-		hit   QueryHit
-		score float64
-	}
-	var results []scored
-
+	var results []QueryHit
 	for rows.Next() {
 		var (
 			id               int64
@@ -146,17 +193,116 @@ func (s *Store) Query(title string, options *string, scorer func(q, c string) (f
 			return nil, err
 		}
 		// When the query carries URLs, require an identical URL set.
-		if len(extractURLs(title)) > 0 {
-			if !equalStringSlices(extractURLs(title), extractURLs(question)) {
+		if len(extractURLs(title)) > 0 && !equalStringSlices(extractURLs(title), extractURLs(question)) {
+			continue
+		}
+		// The normalized questions are identical here, so the title score is
+		// exact and options never gate the match (mirroring the fallback rule
+		// where "exact" bypasses the option requirement).
+		if queryOptions != nil && normalizeOptional(ptrOrNil(dbOptions)) != nil {
+			dbOpt := normalizeOptional(ptrOrNil(dbOptions))
+			if _, ok := scorer(*queryOptions, *dbOpt); !ok {
 				continue
 			}
 		}
-		titleScore, ok := scorer(title, question)
+		results = append(results, QueryHit{
+			ID:                  id,
+			Question:            question,
+			Answer:              answer,
+			IsAI:                isAI,
+			IsPendingCorrection: isPending,
+		})
+	}
+	return results, rows.Err()
+}
+
+// fuzzyCandidates pulls a bounded window of rows for fuzzy scoring. It prefers
+// a trigram (pg_trgm) index scan that ranks rows by similarity; if the
+// extension is unavailable the probe degrades to a prefix match that still uses
+// the hash index's avoidance of a full scan.
+func (s *Store) fuzzyCandidates(title string) ([]candidate, error) {
+	normalized := match.NormalizeQuestion(title)
+	if normalized == "" {
+		return nil, nil
+	}
+	if s.trigram {
+		return s.trigramCandidates(normalized)
+	}
+	return s.prefixCandidates(normalized)
+}
+
+// candidate is one row considered for fuzzy scoring.
+type candidate struct {
+	id              int64
+	question        string
+	answer          string
+	dbOptions       sql.NullString
+	isAI, isPending bool
+}
+
+// trigramCandidates uses pg_trgm's similarity operator to rank candidates in the
+// database, so only the top window is transferred. The `%` operator is the one
+// backed by the GIN trigram index; similarity() only orders the resulting rows.
+func (s *Store) trigramCandidates(normalized string) ([]candidate, error) {
+	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+		FROM AIResponses
+		WHERE Question % $1
+		ORDER BY similarity(Question, $1) DESC
+		LIMIT $2`, normalized, candidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	return scanCandidates(rows)
+}
+
+// prefixCandidates falls back to a prefix probe on the normalized column. It
+// uses a generated-free LIKE on Question; the hash index is used by the exact
+// stage, and this bounded probe keeps the fallback from scanning the whole
+// table.
+func (s *Store) prefixCandidates(normalized string) ([]candidate, error) {
+	prefix := normalized
+	if len([]rune(prefix)) > 12 {
+		prefix = string([]rune(prefix)[:12])
+	}
+	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+		FROM AIResponses WHERE Question ILIKE $1 || '%' LIMIT $2`, prefix, candidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	return scanCandidates(rows)
+}
+
+func scanCandidates(rows *sql.Rows) ([]candidate, error) {
+	defer rows.Close()
+	var out []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.question, &c.dbOptions, &c.answer, &c.isAI, &c.isPending); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// scoreCandidates applies the matcher to the bounded candidate window, returning
+// the best hits ordered by score.
+func scoreCandidates(title string, queryOptions *string, requireOption bool, candidates []candidate, scorer func(q, c string) (float64, bool)) []QueryHit {
+	type scored struct {
+		hit   QueryHit
+		score float64
+	}
+	results := make([]scored, 0, len(candidates))
+	for _, c := range candidates {
+		if len(extractURLs(title)) > 0 && !equalStringSlices(extractURLs(title), extractURLs(c.question)) {
+			continue
+		}
+		titleScore, ok := scorer(title, c.question)
 		if !ok {
 			continue
 		}
 		var optionScore *float64
-		dbOpt := normalizeOptional(ptrOrNil(dbOptions))
+		dbOpt := normalizeOptional(ptrOrNil(c.dbOptions))
 		if queryOptions != nil && dbOpt != nil {
 			if sc, ok := scorer(*queryOptions, *dbOpt); ok {
 				optionScore = &sc
@@ -171,15 +317,12 @@ func (s *Store) Query(title string, options *string, scorer func(q, c string) (f
 			final = titleScore*0.7 + (*optionScore)*0.3
 		}
 		results = append(results, scored{QueryHit{
-			ID:                  id,
-			Question:            question,
-			Answer:              answer,
-			IsAI:                isAI,
-			IsPendingCorrection: isPending,
+			ID:                  c.id,
+			Question:            c.question,
+			Answer:              c.answer,
+			IsAI:                c.isAI,
+			IsPendingCorrection: c.isPending,
 		}, final})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	sort.SliceStable(results, func(i, j int) bool {
 		return results[i].score > results[j].score
@@ -193,44 +336,40 @@ func (s *Store) Query(title string, options *string, scorer func(q, c string) (f
 	for i := 0; i < limit; i++ {
 		out = append(out, results[i].hit)
 	}
-	return out, nil
+	return out
 }
 
 // FindByNormalizedQuestion returns an existing hit whose question is equivalent
 // to title after normalization (case, whitespace and punctuation removed). Used
 // at insert time to avoid storing a duplicate of a question that was just added.
+// The lookup is an indexed probe on QuestionHash, so it stays O(log n) even on
+// banks with tens of millions of rows.
 func (s *Store) FindByNormalizedQuestion(title string) (*QueryHit, error) {
-	target := match.NormalizeQuestion(title)
-	if target == "" {
+	hash := match.QuestionHash(title)
+	if hash == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE) FROM AIResponses`)
-	if err != nil {
+	row := s.db.QueryRow(`SELECT `+hitColumns+` FROM AIResponses
+		WHERE QuestionHash = $1 ORDER BY Id LIMIT 1`, hash)
+
+	var (
+		id               int64
+		question, answer string
+		isAI, isPending  bool
+	)
+	if err := row.Scan(&id, &question, &answer, &isAI, &isPending); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			id               int64
-			question, answer string
-			dbOptions        sql.NullString
-			isAI, isPending  bool
-		)
-		if err := rows.Scan(&id, &question, &dbOptions, &answer, &isAI, &isPending); err != nil {
-			return nil, err
-		}
-		if match.NormalizeQuestion(question) != target {
-			continue
-		}
-		return &QueryHit{
-			ID:                  id,
-			Question:            question,
-			Answer:              answer,
-			IsAI:                isAI,
-			IsPendingCorrection: isPending,
-		}, nil
-	}
-	return nil, rows.Err()
+	return &QueryHit{
+		ID:                  id,
+		Question:            question,
+		Answer:              answer,
+		IsAI:                isAI,
+		IsPendingCorrection: isPending,
+	}, nil
 }
 
 // Folders returns every folder ordered by name.
@@ -544,9 +683,9 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 		return Question{}, err
 	}
 	var id int64
-	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING Id`,
-		question, options, answer, questionType, target, isAI).Scan(&id)
+	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7) RETURNING Id`,
+		question, options, answer, questionType, target, isAI, match.QuestionHash(question)).Scan(&id)
 	if err != nil {
 		return Question{}, err
 	}
@@ -567,9 +706,9 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 	_ = s.db.QueryRow(`SELECT Name FROM Folders WHERE Id = $1`, target).Scan(&folderName)
 	var id int64
 	err = s.db.QueryRow(`INSERT INTO AIResponses
-		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName)
-		VALUES ($1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6) RETURNING Id`,
-		question, answer, options, questionType, target, folderName).Scan(&id)
+		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName, QuestionHash)
+		VALUES ($1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7) RETURNING Id`,
+		question, answer, options, questionType, target, folderName, match.QuestionHash(question)).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -587,6 +726,7 @@ func (s *Store) UpdateQuestion(id int64, question, options, answer, questionType
 	}
 	if question != nil {
 		add("Question", *question)
+		add("QuestionHash", match.QuestionHash(*question))
 	}
 	if options != nil {
 		add("Options", *options)
@@ -652,9 +792,10 @@ func (s *Store) CopyQuestion(questionID, targetFolderID int64) error {
 		return err
 	}
 	if _, err = s.db.Exec(`INSERT INTO AIResponses
-		(Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, CreateTime)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-		q.Question, q.Options, q.Answer, q.QuestionType, target, q.IsAI, q.IsPendingCorrection); err != nil {
+		(Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, CreateTime, QuestionHash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)`,
+		q.Question, q.Options, q.Answer, q.QuestionType, target, q.IsAI, q.IsPendingCorrection,
+		match.QuestionHash(q.Question)); err != nil {
 		return err
 	}
 	s.changed()

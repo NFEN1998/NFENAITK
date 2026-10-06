@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+
+	"github.com/nfentik/nfentik-go/internal/match"
 )
 
 // migration is one ordered, forward-only schema change.
@@ -159,6 +161,17 @@ var migrations = []migration{
 			`ALTER TABLE UserRequestLogs ADD COLUMN IF NOT EXISTS Answer TEXT`,
 		},
 	},
+	{
+		Version: 5,
+		Name:    "question_hash_lookup",
+		// Only the column is added here. Backfilling the digest and building the
+		// index are done in ensureQuestionHash after migrations, because both
+		// must run in batches outside a single transaction to stay safe on
+		// multi-million row banks.
+		Statements: []string{
+			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS QuestionHash TEXT`,
+		},
+	},
 }
 
 // migrate applies every pending migration in order.
@@ -208,7 +221,12 @@ func (s *Store) migrate() error {
 	}
 
 	// Guarantee the implicit root folder exists and the sequence is in sync.
-	return s.ensureRootFolder()
+	if err := s.ensureRootFolder(); err != nil {
+		return err
+	}
+	// Backfill the question hash column and build its index. Runs in batches so
+	// it stays safe on banks with millions of rows.
+	return s.ensureQuestionHash()
 }
 
 func (s *Store) ensureMigrationTable() error {
@@ -306,8 +324,52 @@ func (s *Store) ensureRootFolder() error {
 	return nil
 }
 
+// ensureTrigram enables the pg_trgm extension and its GIN index when the
+// database permits it. Failure is non-fatal: the query path degrades to the
+// bounded prefix probe.
+func (s *Store) ensureTrigram() error {
+	if _, err := s.db.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
+		// A concurrent creator can win the race and surface a duplicate-key
+		// error even though the extension now exists; verify before giving up.
+		if !s.trigramAvailable() {
+			log.Printf("pg_trgm 扩展不可用，模糊匹配将使用前缀回退: %v", err)
+			return nil
+		}
+	}
+	var exists bool
+	if err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = 'idx_airesponses_question_trgm' AND n.nspname = 'public')`,
+	).Scan(&exists); err != nil {
+		log.Printf("检查 trigram 索引失败，使用前缀回退: %v", err)
+		return nil
+	}
+	if !exists {
+		log.Printf("创建 trigram GIN 索引（CONCURRENTLY）")
+		if _, err := s.db.Exec(
+			`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_trgm
+				ON AIResponses USING gin (Question gin_trgm_ops)`,
+		); err != nil {
+			log.Printf("创建 trigram 索引失败，使用前缀回退: %v", err)
+			return nil
+		}
+	}
+	s.trigram = true
+	return nil
+}
+
+// trigramAvailable reports whether the pg_trgm extension is installed.
+func (s *Store) trigramAvailable() bool {
+	var ok bool
+	err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')`,
+	).Scan(&ok)
+	return err == nil && ok
+}
+
 // SchemaVersion returns the highest applied migration version. Exposed for the
-// console and diagnostics.
+// diagnostics endpoint.
 func (s *Store) SchemaVersion() (int, error) {
 	var v sql.NullInt64
 	err := s.db.QueryRow(`SELECT MAX(Version) FROM SchemaMigrations`).Scan(&v)
@@ -315,4 +377,109 @@ func (s *Store) SchemaVersion() (int, error) {
 		return 0, err
 	}
 	return int(v.Int64), nil
+}
+
+// ensureQuestionHash backfills the QuestionHash column and ensures its index
+// exists. Both steps are idempotent and safe to run on every startup.
+//
+// The backfill is done in bounded batches so a multi-million row bank never
+// holds a long transaction; the index is built with CONCURRENTLY so it does not
+// block reads or writes. CONCURRENTLY cannot run inside a transaction, so the
+// single statements below are issued on the pool directly.
+func (s *Store) ensureQuestionHash() error {
+	// Skip the (potentially expensive) backfill scan once the column is fully
+	// populated. A count with a WHERE ... IS NULL LIMIT would still scan, so we
+	// probe for a single residual row.
+	var pending bool
+	if err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM AIResponses WHERE QuestionHash IS NULL LIMIT 1)`,
+	).Scan(&pending); err != nil {
+		return fmt.Errorf("检查 QuestionHash 回填: %w", err)
+	}
+	if pending {
+		if err := s.backfillQuestionHash(); err != nil {
+			return err
+		}
+	}
+	return s.ensureQuestionHashIndex()
+}
+
+// backfillQuestionHash fills QuestionHash for every row still missing one. Rows
+// are processed in key-ordered batches so each UPDATE touches a bounded set.
+func (s *Store) backfillQuestionHash() error {
+	const batchSize = 2000
+	log.Printf("开始回填 QuestionHash（分批进行）")
+	for {
+		rows, err := s.db.Query(
+			`SELECT Id, Question FROM AIResponses WHERE QuestionHash IS NULL ORDER BY Id LIMIT $1`,
+			batchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("读取待回填题目: %w", err)
+		}
+		type pending struct {
+			id       int64
+			question string
+		}
+		var items []pending
+		for rows.Next() {
+			var it pending
+			if err := rows.Scan(&it.id, &it.question); err != nil {
+				rows.Close()
+				return err
+			}
+			items = append(items, it)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if len(items) == 0 {
+			log.Printf("QuestionHash 回填完成")
+			return nil
+		}
+
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		for _, it := range items {
+			if _, err := tx.Exec(
+				`UPDATE AIResponses SET QuestionHash = $1 WHERE Id = $2`,
+				match.QuestionHash(it.question), it.id,
+			); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("回填题目 %d 失败: %w", it.id, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+}
+
+// ensureQuestionHashIndex creates the lookup index if it is missing. Unique is
+// intentionally avoided: duplicate questions are tolerated by the matcher, which
+// scores every candidate sharing a hash.
+func (s *Store) ensureQuestionHashIndex() error {
+	var exists bool
+	if err := s.db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = 'idx_airesponses_question_hash' AND n.nspname = 'public')`,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	log.Printf("创建 QuestionHash 索引（CONCURRENTLY）")
+	if _, err := s.db.Exec(
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_hash
+			ON AIResponses (QuestionHash)`,
+	); err != nil {
+		return fmt.Errorf("创建 QuestionHash 索引失败: %w", err)
+	}
+	return nil
 }

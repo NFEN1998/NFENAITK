@@ -43,3 +43,12 @@ Entries discovered by the Agent during task execution should follow this format:
   - CGO is required (gojieba for Chinese tokenization and go-sqlite3 for the importer), so `CGO_ENABLED=0` builds fail
   - Local test environment uses PostgreSQL 15 and Redis installed via apt; start with `service postgresql start` and `service redis-server start`
   - PostgreSQL folds unquoted identifiers to lowercase, so sequence lookups must use `pg_get_serial_sequence('folders','id')`
+
+[Project Knowledge Summary]
+- Date: 2026-10-06
+- Context: Discovered by Agent while running integration tests for /workspace/nfentik-go
+- Category: Testing Methods
+- Instructions:
+  - Integration tests for internal/server and internal/store share the same PostgreSQL database and Redis, and `go test ./...` runs packages in parallel, so the two packages clobber each other's users/logs and fail intermittently (errors like "用户不存在" / "令牌无效")
+  - Always run tests serially with `cd /workspace/nfentik-go && go test -p 1 ./...`
+  - Override the test database with the `TEST_DATABASE_URL` env var when a throwaway database is available

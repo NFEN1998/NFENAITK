@@ -311,9 +311,11 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		hasURL = containsURL(*req.Options)
 	}
 
-	// Cache only AI answers, keyed by the question text. Skipped when the
-	// question carries a URL because those answers can change with the image.
-	// The cache stores raw data so it serves both plain-text and HTML callers.
+	// Serve from Redis first. Both bank and AI answers populate this cache, so a
+	// repeat question is answered without touching the database. Skipped when
+	// the question carries a URL because those answers can change with the
+	// image. The cache stores raw data so it serves both plain-text and HTML
+	// callers.
 	if s.cache != nil && !hasURL {
 		var cached bankAnswer
 		if s.cache.GetQuery(req.Title, req.Options, &cached) {
@@ -327,13 +329,19 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	}
 	if len(hits) > 0 {
 		hit := hits[0]
-		return http.StatusOK, bankAnswer{
+		entry := bankAnswer{
 			ID:                  hit.ID,
 			Question:            hit.Question,
 			Answer:              hit.Answer,
 			IsAI:                hit.IsAI,
 			IsPendingCorrection: hit.IsPendingCorrection,
-		}.render(origin, req.Raw), "bank"
+		}
+		// Bank answers are cached too so repeated lookups skip the database.
+		// Skipped for URL questions whose answers can change with the image.
+		if s.cache != nil && !hasURL {
+			s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
+		}
+		return http.StatusOK, entry.render(origin, req.Raw), "bank"
 	}
 
 	settings, err := s.ModelSettings()

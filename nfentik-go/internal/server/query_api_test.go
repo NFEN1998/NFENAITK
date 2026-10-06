@@ -107,9 +107,12 @@ func TestQueryAcceptsBodyToken(t *testing.T) {
 	if code == http.StatusUnauthorized || code == http.StatusForbidden {
 		t.Fatalf("body token denied: %d (%v)", code, payload)
 	}
-	got, _ := srv.store.GetUserByID(u.ID)
-	if got.UsedCount != 1 || *got.RemainCount != 1 {
-		t.Fatalf("body token did not consume quota: used=%d remain=%d", got.UsedCount, *got.RemainCount)
+	got, err := srv.store.GetUserByID(u.ID)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if got.UsedCount != 1 || got.RemainCount == nil || *got.RemainCount != 1 {
+		t.Fatalf("body token did not consume quota: used=%d remain=%v", got.UsedCount, got.RemainCount)
 	}
 
 	// A missing or invalid body token must still be rejected.
