@@ -135,6 +135,20 @@
       </section>
     </main>
   </div>
+
+  <div id="token-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2>令牌已重置</h2>
+      <p class="muted small">请立即复制并妥善保存新令牌，旧令牌已失效，关闭后将无法再次查看。</p>
+      <div class="modal-token">
+        <code id="token-modal-value" class="mono"></code>
+        <button type="button" id="token-modal-copy" class="btn primary small">复制</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="token-modal-close" class="btn ghost">我已保存，关闭</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="/user/static/user.js"></script>

@@ -151,6 +151,27 @@ tr:last-child td { border-bottom: none; }
 
 .danger-zone { border-color: #fecaca; }
 
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, .5);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px; z-index: 100;
+}
+.modal-card {
+  background: var(--panel); border-radius: var(--radius);
+  padding: 24px; width: 100%; max-width: 460px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, .2);
+}
+.modal-card h2 { margin: 0 0 8px; font-size: 18px; }
+.modal-card p { margin: 0 0 16px; }
+.modal-token {
+  display: flex; align-items: center; gap: 10px;
+  background: #f8fafc; border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 18px;
+}
+.modal-token code { flex: 1; word-break: break-all; font-size: 13px; color: var(--ink); }
+.modal-token .btn { flex: 0 0 auto; }
+.modal-actions { display: flex; justify-content: flex-end; }
+
 @media (max-width: 720px) {
   body { font-size: 15px; }
   .plan-grid { grid-template-columns: 1fr; }

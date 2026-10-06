@@ -311,9 +311,24 @@
       state.token = res.token;
       try { sessionStorage.setItem("nfentik_usertoken", state.token); } catch (e) {}
       renderOCS();
-      toast("令牌已重置，OCS 配置已更新，请重新复制");
+      showTokenModal(res.token);
     });
   });
+
+  function showTokenModal(token) {
+    qs("token-modal-value").textContent = token;
+    qs("token-modal").classList.remove("hidden");
+  }
+
+  function hideTokenModal() {
+    qs("token-modal").classList.add("hidden");
+  }
+
+  qs("token-modal-copy").addEventListener("click", function () {
+    copyText(qs("token-modal-value").textContent, "新令牌已复制");
+  });
+
+  qs("token-modal-close").addEventListener("click", hideTokenModal);
 
   // ------------------------------------------------------------------ bootstrap
 
