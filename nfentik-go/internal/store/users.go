@@ -345,6 +345,16 @@ func (s *Store) ConsumeQuota(id int64) (bool, error) {
 	return n > 0, nil
 }
 
+// IncrementUsedCount bumps the used count for duration and unlimited plans,
+// which have no remaining quota to decrement. It is a no-op for count plans so
+// the two paths never double count.
+func (s *Store) IncrementUsedCount(id int64) error {
+	_, err := s.db.Exec(`UPDATE Users
+		SET UsedCount = UsedCount + 1, UpdatedAt = NOW()
+		WHERE Id = $1 AND RemainCount IS NULL`, id)
+	return err
+}
+
 // SetPlan updates a user's plan fields in one statement.
 func (s *Store) SetPlan(id int64, planType, planCode, planLabel, startAt string, expireAt *string, total, remain *int64, used int64) error {
 	_, err := s.db.Exec(`UPDATE Users

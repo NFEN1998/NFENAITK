@@ -113,15 +113,20 @@
     pill.textContent = statusLabels[u.enabled ? state.status : "disabled"] || state.status;
 
     var quota = qs("user-quota");
+    var used = u.used_count || 0;
     if (u.remain_count != null) {
       quota.classList.remove("hidden");
+      qs("user-quota-label").textContent = "剩余次数";
       var total = u.total_count || 0;
       var remain = u.remain_count || 0;
       qs("user-quota-text").textContent = remain + " / " + total;
       var pct = total > 0 ? Math.max(0, Math.min(100, Math.round((remain / total) * 100))) : 0;
       qs("user-quota-fill").style.width = pct + "%";
     } else {
-      quota.classList.add("hidden");
+      quota.classList.remove("hidden");
+      qs("user-quota-label").textContent = "已用次数";
+      qs("user-quota-text").textContent = used + " / 无限";
+      qs("user-quota-fill").style.width = "100%";
     }
 
     renderAlert();

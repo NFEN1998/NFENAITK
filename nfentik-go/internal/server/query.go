@@ -226,8 +226,13 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Charge the query against the user's count quota (duration and unlimited
 	// plans are unaffected) and record the per-user usage log.
 	if user != nil {
-		if _, err := s.store.ConsumeQuota(user.ID); err != nil {
+		consumed, err := s.store.ConsumeQuota(user.ID)
+		if err != nil {
 			s.PublishError("consume quota: %v", err)
+		} else if !consumed {
+			if err := s.store.IncrementUsedCount(user.ID); err != nil {
+				s.PublishError("increment used count: %v", err)
+			}
 		}
 		answer := ""
 		if resp.Data != nil {
