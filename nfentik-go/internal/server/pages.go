@@ -85,8 +85,7 @@ const homePageHTML = `<!DOCTYPE html>
       <div><strong>nfentik</strong><small>智能题库查询服务</small></div>
     </div>
     <nav>
-      <a class="pill-btn ghost" href="/user">用户中心</a>
-      <a class="pill-btn primary" href="/console">管理控制台</a>
+      <a class="pill-btn primary" href="/user">用户中心</a>
     </nav>
   </div>
 </header>
@@ -97,7 +96,6 @@ const homePageHTML = `<!DOCTYPE html>
   <p>nfentik 提供稳定高效的题库查询接口，支持本地题库精确匹配、Redis 缓存加速与 AI 智能兜底，助力团队协作答题。</p>
   <div class="hero-actions">
     <a class="btn primary" href="/user">进入用户中心</a>
-    <a class="btn outline" href="/console">打开管理控制台</a>
   </div>
 </section>
 
@@ -154,7 +152,7 @@ const homePageHTML = `<!DOCTYPE html>
 </section>
 
 <footer>
-  <div class="wrap">nfentik 智能题库查询服务 · 管理控制台 <a href="/console">/console</a> · 用户中心 <a href="/user">/user</a></div>
+  <div class="wrap">nfentik 智能题库查询服务</div>
 </footer>
 
 <script>
