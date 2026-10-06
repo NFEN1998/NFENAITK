@@ -314,7 +314,48 @@ var errInvalidToken = errors.New("令牌无效")
 // resolveQuery checks the Redis cache first, then the bank, and on a miss asks
 // the AI models. It also reports which source produced the answer (cache, bank
 // or ai).
+//
+// Identical questions that arrive concurrently are coalesced: the first caller
+// runs the lookup and the others wait and reuse its mode-independent result.
+// This prevents a burst of the same popular question from firing a duplicate
+// round of AI model calls.
 func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin string) (int, queryResponse, string) {
+	res := s.resolveShared(ctx, req)
+	return res.status, res.render(origin, req.Raw), res.source
+}
+
+// resolveShared runs a query resolution behind a single-flight guard. Only the
+// result is shared; rendering stays per-caller because origin and raw differ.
+func (s *Server) resolveShared(ctx context.Context, req QueryRequest) queryResult {
+	key := match.LookupKey(req.Title, req.Options)
+
+	s.pendingMu.Lock()
+	if call, ok := s.pending[key]; ok {
+		s.pendingMu.Unlock()
+		select {
+		case <-call.done:
+			return call.result
+		case <-ctx.Done():
+			return queryResult{status: http.StatusRequestTimeout, errMsg: "请求已取消"}
+		}
+	}
+	call := &pendingCall{done: make(chan struct{})}
+	s.pending[key] = call
+	s.pendingMu.Unlock()
+
+	res := s.resolveQueryUncached(ctx, req)
+	call.result = res
+	close(call.done)
+
+	s.pendingMu.Lock()
+	delete(s.pending, key)
+	s.pendingMu.Unlock()
+	return res
+}
+
+// resolveQueryUncached performs the actual cache/bank/AI resolution without any
+// coalescing. Its result is mode-independent so it can be shared.
+func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) queryResult {
 	hasURL := containsURL(req.Title)
 	if !hasURL && req.Options != nil {
 		hasURL = containsURL(*req.Options)
@@ -328,13 +369,13 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	if s.cache != nil && !hasURL {
 		var cached bankAnswer
 		if s.cache.GetQuery(req.Title, req.Options, &cached) {
-			return http.StatusOK, cached.render(origin, req.Raw), "cache"
+			return queryResult{status: http.StatusOK, entry: cached, source: "cache"}
 		}
 	}
 
 	hits, err := s.store.Query(req.Title, req.Options, match.Score)
 	if err != nil {
-		return http.StatusInternalServerError, errorResponse("数据库错误: " + err.Error()), "bank"
+		return queryResult{status: http.StatusInternalServerError, errMsg: "数据库错误: " + err.Error(), source: "bank"}
 	}
 	if len(hits) > 0 {
 		hit := hits[0]
@@ -350,12 +391,12 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		if s.cache != nil && !hasURL {
 			s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 		}
-		return http.StatusOK, entry.render(origin, req.Raw), "bank"
+		return queryResult{status: http.StatusOK, entry: entry, source: "bank"}
 	}
 
 	settings, err := s.ModelSettings()
 	if err != nil {
-		return http.StatusInternalServerError, errorResponse("模型配置读取失败: " + err.Error()), "ai"
+		return queryResult{status: http.StatusInternalServerError, errMsg: "模型配置读取失败: " + err.Error(), source: "ai"}
 	}
 
 	var content string
@@ -365,11 +406,11 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		content, err = s.callTextModels(ctx, settings, req)
 	}
 	if err != nil {
-		return http.StatusRequestTimeout, errorResponse("模型调用失败: " + err.Error()), "ai"
+		return queryResult{status: http.StatusRequestTimeout, errMsg: "模型调用失败: " + err.Error(), source: "ai"}
 	}
 
 	if msg, isErr := ai.DetectError(content); isErr {
-		return http.StatusInternalServerError, errorResponse(msg), "ai"
+		return queryResult{status: http.StatusInternalServerError, errMsg: msg, source: "ai"}
 	}
 
 	answer := strings.TrimSpace(ai.ExtractAnswer(content))
@@ -384,12 +425,12 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	// A model that produced no usable answer must not create a bank entry or a
 	// cached result. Report the miss instead of returning an empty success.
 	if answer == "" {
-		return http.StatusOK, errorResponse("AI未能给出有效答案"), "ai"
+		return queryResult{status: http.StatusOK, errMsg: "AI未能给出有效答案", source: "ai"}
 	}
 	// Refusals, "unable to determine" replies and low-information placeholders
 	// are refused so they never pollute the bank.
 	if reason, bad := ai.IsUnreliableAnswer(answer); bad {
-		return http.StatusOK, errorResponse("AI未能给出有效答案：" + reason), "ai"
+		return queryResult{status: http.StatusOK, errMsg: "AI未能给出有效答案：" + reason, source: "ai"}
 	}
 
 	// Avoid storing a duplicate of a question that already exists in the bank,
@@ -408,7 +449,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 		if s.cache != nil && !hasURL {
 			s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 		}
-		return http.StatusOK, entry.render(origin, req.Raw), "ai"
+		return queryResult{status: http.StatusOK, entry: entry, source: "ai"}
 	}
 
 	id, err := s.store.InsertAIResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID())
@@ -427,7 +468,7 @@ func (s *Server) resolveQuery(ctx context.Context, req QueryRequest, origin stri
 	if s.cache != nil && !hasURL {
 		s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 	}
-	return http.StatusOK, entry.render(origin, req.Raw), "ai"
+	return queryResult{status: http.StatusOK, entry: entry, source: "ai"}
 }
 
 // queryCacheTTL resolves the configured query cache lifetime.

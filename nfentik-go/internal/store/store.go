@@ -6,8 +6,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nfentik/nfentik-go/internal/match"
 
@@ -82,6 +85,17 @@ func (s *Store) changed() {
 	}
 }
 
+// Connection pool defaults. The pool is intentionally larger than the old
+// fixed 16 so a burst of concurrent AI-backed queries does not serialize on a
+// handful of connections. Both bounds can be overridden from the environment
+// for deployments that need to match a specific PostgreSQL max_connections.
+const (
+	defaultMaxOpenConns = 50
+	defaultMaxIdleConns = 25
+	connMaxLifetime     = time.Hour
+	connMaxIdleTime     = 10 * time.Minute
+)
+
 // Open connects to PostgreSQL using a libpq style DSN, then ensures the schema.
 func Open(dsn string) (*Store, error) {
 	if strings.TrimSpace(dsn) == "" {
@@ -91,8 +105,17 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(16)
-	db.SetMaxIdleConns(8)
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", defaultMaxOpenConns)
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", defaultMaxIdleConns)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	// Recycle connections periodically so a long-running process never holds a
+	// stale backend past a PostgreSQL restart, failover or idle timeout.
+	db.SetConnMaxLifetime(connMaxLifetime)
+	db.SetConnMaxIdleTime(connMaxIdleTime)
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
 	}
@@ -104,6 +127,19 @@ func Open(dsn string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// envInt reads a positive integer from the environment, falling back to def.
+func envInt(key string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return def
+	}
+	return v
 }
 
 // Close releases the database handle.

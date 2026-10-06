@@ -40,16 +40,32 @@ type Server struct {
 	maxLogs int
 }
 
+// pendingCall is one in-flight query resolution shared by every caller that
+// arrives with the same question while it is still running. Callers either lead
+// the call (the first arrival) or wait on done and reuse the result. This
+// coalesces a burst of identical questions into a single bank lookup and a
+// single round of AI model calls.
 type pendingCall struct {
-	query  string
-	chunks chan ai.Delta
-	done   chan callResult
+	done   chan struct{}
+	result queryResult
 }
 
-type callResult struct {
-	content   string
-	reasoning string
-	err       error
+// queryResult is the mode-independent outcome of resolving a query. Callers
+// render it for their own origin/raw flags, so the shared work never bakes in
+// per-request rendering.
+type queryResult struct {
+	status int
+	entry  bankAnswer
+	source string
+	errMsg string
+}
+
+// render converts a shared result into the caller's response shape.
+func (r queryResult) render(origin string, raw bool) queryResponse {
+	if r.errMsg != "" {
+		return errorResponse(r.errMsg)
+	}
+	return r.entry.render(origin, raw)
 }
 
 // Deps configures a new server instance.
