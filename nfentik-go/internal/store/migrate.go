@@ -151,6 +151,14 @@ var migrations = []migration{
 			END $$`,
 		},
 	},
+	{
+		Version: 4,
+		Name:    "user_log_options_answer",
+		Statements: []string{
+			`ALTER TABLE UserRequestLogs ADD COLUMN IF NOT EXISTS Options TEXT`,
+			`ALTER TABLE UserRequestLogs ADD COLUMN IF NOT EXISTS Answer TEXT`,
+		},
+	},
 }
 
 // migrate applies every pending migration in order.

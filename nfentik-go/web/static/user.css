@@ -156,7 +156,7 @@ tr:last-child td { border-bottom: none; }
   .plan-grid { grid-template-columns: 1fr; }
   .user-main { padding: 14px 12px 32px; }
   .card { padding: 14px; }
-  .table-wrap table { min-width: 520px; }
+  .table-wrap table { min-width: 720px; }
   .login-field input, .note-edit textarea, .editor { font-size: 16px; }
   .pager { justify-content: space-between; }
   .pager .btn { flex: 1; }

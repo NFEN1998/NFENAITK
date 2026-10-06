@@ -44,6 +44,8 @@ type UserRequestLog struct {
 	UserID       int64  `json:"user_id"`
 	Timestamp    string `json:"timestamp"`
 	Question     string `json:"question"`
+	Options      string `json:"options"`
+	Answer       string `json:"answer"`
 	Source       string `json:"source"`
 	Status       string `json:"status"`
 	ResponseTime int64  `json:"response_time"`
@@ -474,9 +476,11 @@ func (s *Store) SwitchPlan(id int64, p plan.Plan, customDays int, totalCount int
 
 // InsertUserLog appends one user query record.
 func (s *Store) InsertUserLog(log UserRequestLog) error {
-	_, err := s.db.Exec(`INSERT INTO UserRequestLogs (UserId, Token, Timestamp, Question, Source, Status, ResponseTime)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		log.UserID, "", log.Timestamp, truncateRunes(log.Question, 500), log.Source, log.Status, log.ResponseTime)
+	_, err := s.db.Exec(`INSERT INTO UserRequestLogs (UserId, Token, Timestamp, Question, Options, Answer, Source, Status, ResponseTime)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		log.UserID, "", log.Timestamp, truncateRunes(log.Question, 500),
+		truncateRunes(log.Options, 500), truncateRunes(log.Answer, 2000),
+		log.Source, log.Status, log.ResponseTime)
 	return err
 }
 
@@ -492,7 +496,7 @@ func (s *Store) UserLogs(userID int64, page, pageSize int) ([]UserRequestLog, in
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM UserRequestLogs WHERE UserId = $1`, userID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT LogId, UserId, Timestamp, COALESCE(Question,''), COALESCE(Source,''), COALESCE(Status,''), COALESCE(ResponseTime,0)
+	rows, err := s.db.Query(`SELECT LogId, UserId, Timestamp, COALESCE(Question,''), COALESCE(Options,''), COALESCE(Answer,''), COALESCE(Source,''), COALESCE(Status,''), COALESCE(ResponseTime,0)
 		FROM UserRequestLogs WHERE UserId = $1 ORDER BY LogId DESC LIMIT $2 OFFSET $3`,
 		userID, pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -502,7 +506,7 @@ func (s *Store) UserLogs(userID int64, page, pageSize int) ([]UserRequestLog, in
 	out := []UserRequestLog{}
 	for rows.Next() {
 		var l UserRequestLog
-		if err := rows.Scan(&l.LogID, &l.UserID, &l.Timestamp, &l.Question, &l.Source, &l.Status, &l.ResponseTime); err != nil {
+		if err := rows.Scan(&l.LogID, &l.UserID, &l.Timestamp, &l.Question, &l.Options, &l.Answer, &l.Source, &l.Status, &l.ResponseTime); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, l)

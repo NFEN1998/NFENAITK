@@ -191,7 +191,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ResponseBody: &respStr, Headers: headers, IP: &ip, UserAgent: &ua, Stage: "completed",
 		})
 		if user != nil {
-			s.recordUserQuery(user, req, "", "denied", elapsed)
+			s.recordUserQuery(user, req, "", "denied", "", elapsed)
 		}
 		writeJSON(w, status, resp)
 		return
@@ -225,7 +225,11 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.store.ConsumeQuota(user.ID); err != nil {
 			s.PublishError("consume quota: %v", err)
 		}
-		s.recordUserQuery(user, req, source, queryStatus, elapsed)
+		answer := ""
+		if resp.Data != nil {
+			answer = resp.Data.Answer
+		}
+		s.recordUserQuery(user, req, source, queryStatus, answer, elapsed)
 	}
 
 	writeJSON(w, status, resp)
@@ -272,13 +276,18 @@ func (s *Server) authorizeQuery(r *http.Request, bodyToken string) (*store.User,
 
 // recordUserQuery writes one user request log and periodically prunes the
 // per-user, age and global limits.
-func (s *Server) recordUserQuery(u *store.User, req QueryRequest, source, status string, elapsed int64) {
+func (s *Server) recordUserQuery(u *store.User, req QueryRequest, source, status, answer string, elapsed int64) {
 	if source == "" {
 		source = "bank"
 	}
+	options := ""
+	if req.Options != nil {
+		options = *req.Options
+	}
 	log := store.UserRequestLog{
 		UserID: u.ID, Timestamp: time.Now().Format("2006-01-02 15:04:05"),
-		Question: req.Title, Source: source, Status: status, ResponseTime: elapsed,
+		Question: req.Title, Options: options, Answer: answer,
+		Source: source, Status: status, ResponseTime: elapsed,
 	}
 	if err := s.store.InsertUserLog(log); err != nil {
 		s.PublishError("insert user log: %v", err)

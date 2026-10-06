@@ -276,13 +276,15 @@
   function renderLogs(items) {
     var body = qs("user-logs").querySelector("tbody");
     if (!items.length) {
-      body.innerHTML = '<tr><td colspan="5" class="muted">暂无调用记录</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="muted">暂无调用记录</td></tr>';
       return;
     }
     body.innerHTML = items.map(function (l) {
       return "<tr>" +
         "<td class=\"small\">" + esc(l.timestamp) + "</td>" +
         '<td class="clamp">' + esc(l.question || "") + "</td>" +
+        '<td class="clamp">' + esc(l.options || "") + "</td>" +
+        '<td class="clamp">' + esc(l.answer || "") + "</td>" +
         "<td>" + esc(sourceLabels[l.source] || l.source || "-") + "</td>" +
         "<td>" + esc(statusLabelsLog[l.status] || l.status || "-") + "</td>" +
         "<td>" + (l.response_time != null ? l.response_time + " ms" : "-") + "</td>" +
