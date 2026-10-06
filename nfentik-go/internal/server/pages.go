@@ -50,8 +50,6 @@ const homePageHTML = `<!DOCTYPE html>
   .nav a.pill-btn{padding:8px 16px;border-radius:999px;font-size:14px;font-weight:600;margin-left:10px;}
   .nav a.primary{background:var(--brand);color:#fff;}
   .nav a.primary:hover{text-decoration:none;opacity:.92;}
-  .nav a.ghost{border:1px solid var(--line);color:var(--ink);background:#fff;}
-  .nav a.ghost:hover{text-decoration:none;border-color:#cbd5e1;}
   .hero{padding:72px 0 56px;text-align:center;}
   .hero .tag{display:inline-block;font-size:13px;font-weight:600;color:var(--brand);background:#eff6ff;border:1px solid #dbeafe;border-radius:999px;padding:5px 14px;}
   .hero h1{font-size:44px;line-height:1.2;margin:20px 0 14px;letter-spacing:-.5px;}
@@ -60,8 +58,6 @@ const homePageHTML = `<!DOCTYPE html>
   .btn{padding:11px 22px;border-radius:10px;font-weight:600;font-size:15px;}
   .btn.primary{background:var(--brand);color:#fff;}
   .btn.primary:hover{text-decoration:none;opacity:.92;}
-  .btn.outline{border:1px solid var(--line);background:#fff;color:var(--ink);}
-  .btn.outline:hover{text-decoration:none;border-color:#cbd5e1;}
   .features{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;padding:16px 0 8px;}
   .feature{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px;}
   .feature .ico{width:40px;height:40px;border-radius:10px;background:#eff6ff;color:var(--brand);display:grid;place-items:center;font-size:20px;margin-bottom:12px;}
@@ -75,11 +71,6 @@ const homePageHTML = `<!DOCTYPE html>
   .step .num{width:28px;height:28px;border-radius:8px;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px;margin-bottom:12px;}
   .step h3{margin:0 0 6px;font-size:16px;}
   .step p{margin:0;font-size:14px;color:var(--muted);}
-  .endpoint{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:18px 20px;margin-top:30px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
-  .endpoint .label{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;}
-  .endpoint code{font-size:15px;color:#7dd3fc;word-break:break-all;}
-  .endpoint button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer;}
-  .endpoint button:hover{background:#334155;}
   footer{border-top:1px solid var(--line);padding:28px 0;color:var(--muted);font-size:13px;text-align:center;}
   @media(max-width:640px){
     .hero h1{font-size:32px;}
@@ -145,7 +136,7 @@ const homePageHTML = `<!DOCTYPE html>
     <div class="step">
       <div class="num">2</div>
       <h3>配置查询地址</h3>
-      <p>将下方接口地址填入 OCS 用户脚本，并在请求头中携带用户令牌。</p>
+      <p>将查询接口地址填入 OCS 用户脚本，并在请求头中携带用户令牌。</p>
     </div>
     <div class="step">
       <div class="num">3</div>
@@ -153,30 +144,10 @@ const homePageHTML = `<!DOCTYPE html>
       <p>发送题目即可获得答案，命中题库或缓存同样计入套餐用量。</p>
     </div>
   </div>
-  <div class="endpoint">
-    <div>
-      <div class="label">查询接口地址</div>
-      <code id="endpoint"></code>
-    </div>
-    <button onclick="copyEndpoint()" id="copy-btn">复制</button>
-  </div>
 </section>
 
 <footer>
   <div class="wrap">{{.SiteName}} {{.SiteSubtitle}}</div>
 </footer>
-
-<script>
-function copyEndpoint(){
-  const text = document.getElementById('endpoint').textContent;
-  navigator.clipboard?.writeText(text).then(function(){
-    const btn = document.getElementById('copy-btn');
-    const old = btn.textContent;
-    btn.textContent = '已复制';
-    setTimeout(function(){ btn.textContent = old; }, 1500);
-  });
-}
-document.getElementById('endpoint').textContent = location.origin + '/query';
-</script>
 </body>
 </html>`
