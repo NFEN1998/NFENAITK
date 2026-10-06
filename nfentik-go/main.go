@@ -40,6 +40,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "check-db" {
+		if err := runCheckDB(); err != nil {
+			log.Fatalf("nfentik-go check-db: %v", err)
+		}
+		return
+	}
 
 	var (
 		port      = flag.Int("port", 0, "HTTP port (overrides the stored setting)")
@@ -291,6 +297,76 @@ func redactDSN(dsn string) string {
 		userinfo = userinfo[:colon] + ":***"
 	}
 	return dsn[:schemeEnd+3] + userinfo + hostPart
+}
+
+// runCheckDB performs a read-only database integrity check and prints a human
+// readable report without changing anything. It exits non-zero when the schema
+// is incomplete, so it can gate a deployment.
+func runCheckDB() error {
+	bootstrap, err := config.LoadBootstrap()
+	if err != nil {
+		return fmt.Errorf("读取引导配置失败: %w", err)
+	}
+	dsn := bootstrap.Database.URL
+	if dsn == "" {
+		return errors.New("未配置 PostgreSQL 连接，请设置环境变量 DATABASE_URL 或在 config/config.json 中填写")
+	}
+	report, err := store.InspectDSN(dsn)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("数据库完整性检测报告\n")
+	fmt.Printf("  数据库:       %s\n", redactDSN(dsn))
+	fmt.Printf("  版本表:       %s\n", presence(report.HasVersionTable))
+	fmt.Printf("  当前版本:     %d\n", report.CurrentVersion)
+	fmt.Printf("  目标版本:     %d\n", report.TargetVersion)
+	if report.Empty {
+		fmt.Printf("  状态:         空库（首次启动将初始化全部表结构）\n")
+		return nil
+	}
+	fmt.Printf("  缺失表:       %s\n", listOrNone(report.MissingTables))
+	if len(report.MissingColumns) == 0 {
+		fmt.Printf("  缺失字段:     无\n")
+	} else {
+		cols := make([]string, len(report.MissingColumns))
+		for i, c := range report.MissingColumns {
+			cols[i] = c.Table + "." + c.Column
+		}
+		fmt.Printf("  缺失字段:     %s\n", strings.Join(cols, ", "))
+	}
+	fmt.Printf("  待应用迁移:   %s\n", intsOrNone(report.PendingMigrations))
+	if report.Healthy() {
+		fmt.Printf("  状态:         通过（结构与迁移均为最新）\n")
+		return nil
+	}
+	fmt.Printf("  状态:         需修复（启动服务时将自动补齐，或运行迁移）\n")
+	return fmt.Errorf("数据库结构不完整")
+}
+
+func presence(v bool) string {
+	if v {
+		return "存在"
+	}
+	return "不存在"
+}
+
+func listOrNone(items []string) string {
+	if len(items) == 0 {
+		return "无"
+	}
+	return strings.Join(items, ", ")
+}
+
+func intsOrNone(items []int) string {
+	if len(items) == 0 {
+		return "无"
+	}
+	parts := make([]string, len(items))
+	for i, v := range items {
+		parts[i] = fmt.Sprint(v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // runMigrate imports a legacy SQLite database into PostgreSQL.

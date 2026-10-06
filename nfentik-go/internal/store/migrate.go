@@ -246,7 +246,7 @@ func (s *Store) Inspect() (IntegrityReport, error) {
 		`SELECT t.name FROM unnest($1::text[]) AS t(name)
 		 WHERE NOT EXISTS (
 			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = 'public' AND lower(table_name) = t.name)`,
+			WHERE table_schema = current_schema() AND lower(table_name) = t.name)`,
 		pqArray(coreTables),
 	)
 	if err != nil {
@@ -277,7 +277,7 @@ func (s *Store) Inspect() (IntegrityReport, error) {
 	var hasVersion bool
 	if err := s.db.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-		 WHERE table_schema = 'public' AND lower(table_name) = 'schemamigrations')`,
+		 WHERE table_schema = current_schema() AND lower(table_name) = 'schemamigrations')`,
 	).Scan(&hasVersion); err != nil {
 		return report, fmt.Errorf("检查版本表: %w", err)
 	}
@@ -319,7 +319,7 @@ func (s *Store) missingColumns() ([]ColumnIssue, error) {
 		var exists bool
 		if err := s.db.QueryRow(
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-			 WHERE table_schema = 'public' AND lower(table_name) = $1)`,
+			 WHERE table_schema = current_schema() AND lower(table_name) = $1)`,
 			table,
 		).Scan(&exists); err != nil {
 			return nil, fmt.Errorf("检查表 %s: %w", table, err)
@@ -331,7 +331,7 @@ func (s *Store) missingColumns() ([]ColumnIssue, error) {
 			`SELECT c.name FROM unnest($1::text[]) AS c(name)
 			 WHERE NOT EXISTS (
 				SELECT 1 FROM information_schema.columns
-				WHERE table_schema = 'public' AND lower(table_name) = $2
+				WHERE table_schema = current_schema() AND lower(table_name) = $2
 				  AND lower(column_name) = c.name)`,
 			pqArray(cols), table,
 		)
@@ -393,10 +393,13 @@ func (s *Store) migrate() error {
 	}
 
 	// Read-only integrity report, logged before any change so the startup log
-	// shows exactly what the database looked like.
+	// shows exactly what the database looked like. The report is reused by the
+	// repair step so the schema is only scanned once.
+	var initial IntegrityReport
 	if report, err := s.Inspect(); err != nil {
 		log.Printf("数据库完整性检测失败: %v", err)
 	} else {
+		initial = report
 		logIntegrityReport(report)
 	}
 
@@ -443,7 +446,7 @@ func (s *Store) migrate() error {
 	// Repair residual drift: a table or column can be missing even when the
 	// version table says its migration was applied (partial restore, manual
 	// changes). Repair is idempotent and independent of version bookkeeping.
-	if err := s.repairSchema(); err != nil {
+	if err := s.repairSchema(initial); err != nil {
 		return err
 	}
 
@@ -488,22 +491,26 @@ func logIntegrityReport(r IntegrityReport) {
 // repairSchema recreates any missing core table and adds any missing core
 // column. It uses CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS so it is
 // safe to run on every startup and never touches existing data.
-func (s *Store) repairSchema() error {
-	// Only replay the baseline DDL when the integrity check saw a missing
-	// table; the statements are idempotent but there is no reason to run them
-	// on every healthy start.
-	if report, err := s.Inspect(); err == nil && len(report.MissingTables) > 0 {
+//
+// The report captured before migrations ran is passed in so the schema is only
+// inspected once; repair does not re-scan the database.
+func (s *Store) repairSchema(report IntegrityReport) error {
+	// Only replay DDL when the integrity check saw a missing table; the
+	// statements are idempotent but there is no reason to run them on every
+	// healthy start. Every migration's CREATE TABLE is replayed (not just the
+	// baseline) so a table introduced in V2+ is also recovered.
+	if len(report.MissingTables) > 0 {
 		for _, m := range migrations {
-			if m.Version != baselineVersion() {
-				continue
-			}
 			for _, stmt := range m.Statements {
+				if !isCreateTable(stmt) {
+					continue
+				}
 				if _, err := s.db.Exec(stmt); err != nil {
 					return fmt.Errorf("修复表结构失败: %w", err)
 				}
 			}
 		}
-		log.Printf("已重建缺失的表结构")
+		log.Printf("已重建缺失的表结构: %v", report.MissingTables)
 	}
 
 	// Fill in any missing columns with their canonical definitions. The DDL is
@@ -521,6 +528,14 @@ func (s *Store) repairSchema() error {
 	return nil
 }
 
+// isCreateTable reports whether a migration statement creates a table. Only
+// these are replayed during repair, so index/column maintenance is not repeated
+// needlessly. The match is case-insensitive after trimming leading whitespace.
+func isCreateTable(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "CREATE TABLE ")
+}
+
 // columnRepair describes one idempotent column addition.
 type columnRepair struct {
 	Table  string
@@ -534,7 +549,7 @@ func (c columnRepair) required(s *Store) bool {
 	var exists bool
 	err := s.db.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		 WHERE table_schema='public' AND lower(table_name)=$1 AND lower(column_name)=$2)`,
+		 WHERE table_schema=current_schema() AND lower(table_name)=$1 AND lower(column_name)=$2)`,
 		c.Table, c.Column,
 	).Scan(&exists)
 	return err == nil && !exists
@@ -592,7 +607,7 @@ func (s *Store) hasLegacySchema() (bool, error) {
 	var exists bool
 	err := s.db.QueryRow(`SELECT EXISTS (
 		SELECT 1 FROM information_schema.tables
-		WHERE table_schema = 'public' AND lower(table_name) = 'airesponses')`).Scan(&exists)
+		WHERE table_schema = current_schema() AND lower(table_name) = 'airesponses')`).Scan(&exists)
 	return exists, err
 }
 
@@ -668,7 +683,7 @@ func (s *Store) ensureTrigram() error {
 	if err := s.db.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM pg_class c
 			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = 'idx_airesponses_question_trgm' AND n.nspname = 'public')`,
+			WHERE c.relname = 'idx_airesponses_question_trgm' AND n.nspname = current_schema())`,
 	).Scan(&exists); err != nil {
 		log.Printf("检查 trigram 索引失败，使用前缀回退: %v", err)
 		return nil
@@ -795,7 +810,7 @@ func (s *Store) ensureQuestionHashIndex() error {
 	if err := s.db.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM pg_class c
 			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = 'idx_airesponses_question_hash' AND n.nspname = 'public')`,
+			WHERE c.relname = 'idx_airesponses_question_hash' AND n.nspname = current_schema())`,
 	).Scan(&exists); err != nil {
 		return err
 	}

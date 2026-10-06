@@ -107,6 +107,23 @@ func Open(dsn string) (*Store, error) {
 }
 
 // Close releases the database handle.
+
+// InspectDSN opens a short-lived connection, runs the read-only integrity check
+// and closes it without applying any migration. It backs the check-db command.
+func InspectDSN(dsn string) (IntegrityReport, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return IntegrityReport{}, errors.New("DATABASE_URL 未配置")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return IntegrityReport{}, err
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return IntegrityReport{}, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+	}
+	return (&Store{db: db}).Inspect()
+}
 func (s *Store) Close() error { return s.db.Close() }
 
 // Ping verifies the database connection is still alive.
