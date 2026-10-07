@@ -739,9 +739,9 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 		return Question{}, err
 	}
 	var id int64
-	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7) RETURNING Id`,
-		question, options, answer, questionType, target, isAI, match.QuestionHash(question)).Scan(&id)
+	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash, OptionsHash)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8) RETURNING Id`,
+		question, options, answer, questionType, target, isAI, match.QuestionHash(question), match.OptionsHash(options)).Scan(&id)
 	if err != nil {
 		return Question{}, err
 	}
@@ -760,15 +760,58 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 	}
 	folderName := "默认文件夹"
 	_ = s.db.QueryRow(`SELECT Name FROM Folders WHERE Id = $1`, target).Scan(&folderName)
+	questionHash := match.QuestionHash(question)
+
+	// Reuse an existing row for the same question, options and folder when one
+	// is present, so a repeated AI answer does not create a duplicate. Questions
+	// may legitimately repeat across folders, so folder is part of the identity.
+	// The AI path already runs behind single-flight; this guarded insert is the
+	// second line of defence for multi-instance deployments.
+	if existing, err := s.idByLookup(questionHash, options, target); err != nil {
+		return 0, err
+	} else if existing != 0 {
+		return existing, nil
+	}
+
 	var id int64
 	err = s.db.QueryRow(`INSERT INTO AIResponses
 		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName, QuestionHash)
-		VALUES ($1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7) RETURNING Id`,
-		question, answer, options, questionType, target, folderName, match.QuestionHash(question)).Scan(&id)
+		SELECT $1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7
+		WHERE NOT EXISTS (
+			SELECT 1 FROM AIResponses
+			WHERE QuestionHash = $7 AND Options IS NOT DISTINCT FROM $3 AND FolderId = $5
+		)
+		RETURNING Id`,
+		question, answer, options, questionType, target, folderName, questionHash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The guarded WHERE matched an existing row (possibly inserted
+		// concurrently); reuse it instead of failing.
+		existing, lookupErr := s.idByLookup(questionHash, options, target)
+		if lookupErr != nil {
+			return 0, lookupErr
+		}
+		return existing, nil
+	}
 	if err != nil {
 		return 0, err
 	}
 	s.changed()
+	return id, nil
+}
+
+// idByLookup returns the id of the row matching the question hash, the exact
+// stored options and the folder, or zero when none exists.
+func (s *Store) idByLookup(questionHash string, options *string, folderID int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT Id FROM AIResponses
+		WHERE QuestionHash = $1 AND Options IS NOT DISTINCT FROM $2 AND FolderId = $3
+		ORDER BY Id LIMIT 1`, questionHash, options, folderID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 

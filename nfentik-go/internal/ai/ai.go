@@ -59,15 +59,53 @@ type Delta struct {
 // Client performs chat completions.
 type Client struct {
 	http *http.Client
+	// sem bounds the number of concurrent outbound completions across every
+	// caller. A nil channel means unlimited. It provides backpressure so a
+	// burst of queries cannot open an unbounded number of upstream requests.
+	sem chan struct{}
 }
 
-// New creates a client with a pooled HTTP transport.
-func New() *Client {
-	return &Client{http: &http.Client{Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 16,
-		IdleConnTimeout:     90 * time.Second,
+// Transport defaults for the shared HTTP client. Kept generous because a
+// single chat completion holds one connection for its whole streamed lifetime,
+// so the pool must exceed the expected number of simultaneous completions.
+const (
+	defaultMaxIdleConns        = 200
+	defaultMaxIdleConnsPerHost = 64
+	defaultMaxConnsPerHost     = 128
+	defaultIdleConnTimeout     = 90 * time.Second
+)
+
+// New creates a client with a pooled HTTP transport and no concurrency cap.
+func New() *Client { return NewWithLimits(0) }
+
+// NewWithLimits creates a client whose concurrent completions never exceed
+// maxConcurrent (<= 0 means unlimited). The transport is sized so a saturated
+// client reuses connections instead of rebuilding TLS for every request.
+func NewWithLimits(maxConcurrent int) *Client {
+	c := &Client{http: &http.Client{Transport: &http.Transport{
+		MaxIdleConns:        defaultMaxIdleConns,
+		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+		MaxConnsPerHost:     defaultMaxConnsPerHost,
+		IdleConnTimeout:     defaultIdleConnTimeout,
 	}}}
+	if maxConcurrent > 0 {
+		c.sem = make(chan struct{}, maxConcurrent)
+	}
+	return c
+}
+
+// acquire reserves a concurrency slot, returning a release function. It blocks
+// until a slot is free or ctx is cancelled.
+func (c *Client) acquire(ctx context.Context) (func(), error) {
+	if c.sem == nil {
+		return func() {}, nil
+	}
+	select {
+	case c.sem <- struct{}{}:
+		return func() { <-c.sem }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 type chatRequest struct {
@@ -150,6 +188,15 @@ func (c *Client) Complete(ctx context.Context, opt Options, onDelta func(Delta))
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// Wait for a concurrency slot before opening the upstream request. The wait
+	// is bounded by the request timeout so a saturated client sheds load
+	// instead of queueing forever.
+	release, err := c.acquire(reqCtx)
+	if err != nil {
+		return "", "", fmt.Errorf("等待模型并发槽位超时: %w", err)
+	}
+	defer release()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {

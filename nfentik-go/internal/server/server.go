@@ -12,6 +12,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +82,25 @@ type Deps struct {
 	TmplDir     string
 }
 
+// defaultAIConcurrency caps simultaneous outbound model completions. It keeps a
+// burst of queries from opening unbounded upstream connections (which risks
+// provider rate limits and local resource exhaustion).
+const defaultAIConcurrency = 64
+
+// maxAIConcurrency reads the global model concurrency cap from the environment,
+// falling back to defaultAIConcurrency. AI_MAX_CONCURRENCY=0 disables the cap.
+func maxAIConcurrency() int {
+	raw := strings.TrimSpace(os.Getenv("AI_MAX_CONCURRENCY"))
+	if raw == "" {
+		return defaultAIConcurrency
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 {
+		return defaultAIConcurrency
+	}
+	return v
+}
+
 // New builds a server from its dependencies.
 func New(deps Deps) (*Server, error) {
 	tmpl, err := template.ParseFS(deps.WebFS, "templates/*.html")
@@ -90,7 +111,7 @@ func New(deps Deps) (*Server, error) {
 		store:       deps.Store,
 		config:      deps.Config,
 		cache:       deps.Cache,
-		ai:          ai.New(),
+		ai:          ai.NewWithLimits(maxAIConcurrency()),
 		bus:         NewBus(),
 		tmpl:        tmpl,
 		webFS:       deps.WebFS,
