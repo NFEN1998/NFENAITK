@@ -257,30 +257,34 @@
   function renderFolderTree(folders, stats) {
     var countMap = {};
     stats.forEach(function (s) { countMap[s.folder_id] = s.question_count; });
+    var ROOT = "root";
     var children = {};
     folders.forEach(function (f) {
-      var parent = f.parent_id || 0;
-      (children[parent] = children[parent] || []).push(f);
+      var key = f.parent_id ? String(f.parent_id) : ROOT;
+      (children[key] = children[key] || []).push(f);
     });
 
-    function build(parentId) {
-      var list = children[parentId] || [];
+    function build(key, seen) {
+      var list = children[key] || [];
       if (!list.length) return "";
       return '<div class="folder-children">' + list.map(function (f) {
         var count = countMap[f.id] || 0;
+        var visited = seen ? seen.slice() : [];
+        if (visited.indexOf(f.id) !== -1) return "";
+        visited.push(f.id);
         return '<div class="folder-node">' +
           '<span class="name">' + esc(f.name) + "</span>" +
           '<span class="count">' + count + " 题</span>" +
           '<button class="btn ghost" data-add-sub="' + f.id + '">子文件夹</button> ' +
           '<button class="btn ghost" data-rename="' + f.id + '">重命名</button> ' +
           '<button class="btn danger" data-remove="' + f.id + '">删除</button>' +
-          build(f.id) +
+          build(String(f.id), visited) +
         "</div>";
       }).join("") + "</div>";
     }
 
     var el = qs("folder-tree");
-    el.innerHTML = build(0) || '<p class="muted">暂无文件夹</p>';
+    el.innerHTML = build(ROOT) || '<p class="muted">暂无文件夹</p>';
 
     el.querySelectorAll("[data-add-sub]").forEach(function (btn) {
       btn.addEventListener("click", function () {
