@@ -100,7 +100,10 @@
     el.innerHTML = recent.map(function (d) {
       var height = Math.max(3, Math.round((d.count / max) * 100));
       var label = (d.date || "").slice(5);
-      return '<div class="bar" style="height:' + height + '%" title="' + esc(d.date) + ': ' + d.count + '"><span>' + esc(label) + '</span></div>';
+      return '<div class="bar" style="height:' + height + '%" title="' + esc(d.date) + ': ' + d.count + '">' +
+        '<span class="count">' + d.count + '</span>' +
+        '<span>' + esc(label) + '</span>' +
+      '</div>';
     }).join("");
   }
 

@@ -157,9 +157,10 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
   max-height: 320px; overflow: auto; margin: 0;
 }
 
-.chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
+.chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 20px; }
 .chart .bar { flex: 1; background: linear-gradient(180deg, #3b82f6, #2563eb); border-radius: 4px 4px 0 0; position: relative; min-height: 3px; }
 .chart .bar span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }
+.chart .bar span.count { bottom: 100%; margin-bottom: 3px; font-size: 11px; font-weight: 600; color: var(--ink); }
 
 .modal { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: grid; place-items: center; z-index: 50; }
 .modal-body { background: #fff; border-radius: var(--radius); padding: 20px; width: min(560px, 92vw); max-height: 88vh; overflow: auto; }
