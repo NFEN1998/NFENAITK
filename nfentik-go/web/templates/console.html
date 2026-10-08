@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+<div id="app" data-has-token="{{if .HasToken}}1{{else}}0{{end}}" data-multiuser="{{if .MultiUser}}1{{else}}0{{end}}">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="logo">Z</span>
+      <div>
+        <strong>{{.SiteName}}</strong>
+        <small>题库控制台</small>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard">概览</button>
+      <button class="nav-item" data-view="questions">题库</button>
+      <button class="nav-item" data-view="folders">文件夹</button>
+      <button class="nav-item" data-view="pending">待修正</button>
+      <button class="nav-item" data-view="models">模型配置</button>
+      <button class="nav-item" data-view="users">用户管理</button>
+      <button class="nav-item" data-view="ocs">OCS 配置</button>
+      <button class="nav-item" data-view="settings">系统设置</button>
+      <button class="nav-item" data-view="logs">请求日志</button>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="conn-dot" class="dot"></span>
+      <span id="conn-text">未连接</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="view-title">概览</h1>
+      <div class="topbar-actions">
+        <button id="refresh-btn" class="btn ghost">刷新</button>
+        <button id="logout-btn" class="btn ghost hidden">退出</button>
+      </div>
+    </header>
+
+    <section id="view-dashboard" class="view active">
+      <div class="cards">
+        <div class="card stat"><span class="stat-label">待修正题目</span><strong id="stat-pending">-</strong></div>
+        <div class="card stat"><span class="stat-label">累计请求</span><strong id="stat-requests">-</strong></div>
+        <div class="card stat"><span class="stat-label">日志订阅</span><strong id="stat-subs">-</strong></div>
+        <div class="card stat"><span class="stat-label">数据目录</span><strong id="stat-datapath" class="mono small">-</strong></div>
+        <div class="card stat"><span class="stat-label">数据库结构版本</span><strong id="stat-schemaversion">-</strong></div>
+      </div>
+      <div class="card">
+        <h2>近 14 天请求量</h2>
+        <div id="daily-chart" class="chart">暂无数据</div>
+      </div>
+    </section>
+
+    <section id="view-questions" class="view">
+      <div class="toolbar">
+        <input id="q-search" placeholder="搜索题目或答案">
+        <select id="q-folder"><option value="all">全部文件夹</option></select>
+        <select id="q-sort">
+          <option value="desc">最新优先</option>
+          <option value="asc">最早优先</option>
+        </select>
+        <button id="q-search-btn" class="btn">搜索</button>
+        <button id="q-add-btn" class="btn primary">新增</button>
+      </div>
+      <div class="table-wrap">
+        <table id="q-table">
+          <thead><tr><th>ID</th><th>题目</th><th>答案</th><th>题型</th><th>来源</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="q-prev" class="btn ghost">上一页</button>
+        <span id="q-pageinfo">第 1 页</span>
+        <button id="q-next" class="btn ghost">下一页</button>
+      </div>
+    </section>
+
+    <section id="view-folders" class="view">
+      <div class="toolbar">
+        <button id="f-add-root" class="btn primary">新建根文件夹</button>
+      </div>
+      <div id="folder-tree" class="folder-tree"></div>
+    </section>
+
+    <section id="view-pending" class="view">
+      <div class="toolbar">
+        <span class="muted">标记为「待修正」的题目，确认后可直接编辑或删除。</span>
+      </div>
+      <div class="table-wrap">
+        <table id="p-table">
+          <thead><tr><th>ID</th><th>题目</th><th>当前答案</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="view-models" class="view">
+      <div class="toolbar">
+        <span class="muted">在这里可视化配置 AI 平台与模型，保存后立即生效。</span>
+        <span class="spacer"></span>
+        <label class="checkbox"><input type="checkbox" id="m-raw-toggle"> JSON 直接编辑</label>
+        <button id="m-add-platform" class="btn">新增平台</button>
+        <button id="m-save" class="btn primary">保存配置</button>
+      </div>
+      <p id="m-status" class="muted"></p>
+
+      <div id="m-visual">
+        <div class="card selection-card">
+          <h2>默认模型选择</h2>
+          <p class="muted small">未显式指定模型时，查询会依次使用「文本模型」。</p>
+          <div class="grid-3">
+            <div class="field">
+              <label>文本模型（可多选，按顺序尝试）</label>
+              <select id="m-text-models" multiple size="4"></select>
+            </div>
+            <div class="field">
+              <label>视觉模型（图片题）</label>
+              <select id="m-vision-model"></select>
+            </div>
+            <div class="field">
+              <label>总结模型</label>
+              <select id="m-summary-model"></select>
+            </div>
+          </div>
+        </div>
+        <div id="m-platforms"></div>
+      </div>
+
+      <textarea id="m-editor" class="editor hidden" spellcheck="false"></textarea>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>模型试跑</h2>
+        <div class="toolbar">
+          <select id="t-model"></select>
+          <input id="t-query" placeholder="输入测试题目">
+          <button id="t-run" class="btn primary">发送</button>
+        </div>
+        <pre id="t-output" class="editor" style="min-height:160px;white-space:pre-wrap;"></pre>
+      </div>
+    </section>
+
+    <section id="view-users" class="view">
+      <div class="cards">
+        <div class="card stat"><span class="stat-label">用户总数</span><strong id="u-stat-total">-</strong></div>
+        <div class="card stat"><span class="stat-label">有效用户</span><strong id="u-stat-active">-</strong></div>
+        <div class="card stat"><span class="stat-label">已过期</span><strong id="u-stat-expired">-</strong></div>
+        <div class="card stat"><span class="stat-label">次数用尽</span><strong id="u-stat-exhausted">-</strong></div>
+        <div class="card stat"><span class="stat-label">窗口内调用</span><strong id="u-stat-calls">-</strong></div>
+      </div>
+
+      <div class="card">
+        <h2>调用趋势</h2>
+        <div id="u-daily-chart" class="chart">暂无数据</div>
+      </div>
+
+      <div class="card">
+        <h2>用户调用统计</h2>
+        <div class="table-wrap">
+          <table id="u-usage-table">
+            <thead><tr><th>ID</th><th>令牌</th><th>累计调用</th><th>剩余</th><th>状态</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>用户列表</h2>
+        <div class="toolbar">
+          <button id="u-add-btn" class="btn primary">新建用户</button>
+          <button id="u-batch-btn" class="btn">批量生成</button>
+          <button id="u-refresh" class="btn ghost">刷新</button>
+          <span class="spacer"></span>
+          <select id="u-range">
+            <option value="7">近 7 天</option>
+            <option value="14" selected>近 14 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
+          <button id="u-audit-btn" class="btn ghost">审计日志</button>
+        </div>
+        <div class="table-wrap">
+          <table id="u-table">
+            <thead><tr>
+              <th>ID</th><th>令牌</th><th>备注</th><th>套餐</th><th>状态</th><th>剩余</th><th>到期时间</th><th>操作</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div class="toolbar">
+        <span class="muted">系统设置保存在 config.json，保存后立即生效。</span>
+        <span class="spacer"></span>
+        <label class="checkbox"><input type="checkbox" id="s-raw-toggle"> JSON 直接编辑</label>
+        <button id="s-save" class="btn primary">保存设置</button>
+      </div>
+      <p id="s-status" class="muted"></p>
+
+      <div id="s-visual">
+        <div class="card">
+          <h2>站点信息</h2>
+          <p class="muted small">用于首页、控制台与用户中心的品牌展示，保存后立即生效。</p>
+          <div class="grid-2">
+            <div class="field">
+              <label>题库名称</label>
+              <input id="s-site-name" type="text" placeholder="nfentik">
+            </div>
+            <div class="field">
+              <label>副标题</label>
+              <input id="s-site-subtitle" type="text" placeholder="智能题库查询服务">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>网络与服务</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label>监听端口</label>
+              <input id="s-port" type="number" min="1" max="65535">
+            </div>
+            <div class="field">
+              <label>监听地址</label>
+              <input id="s-bind" type="text" placeholder="0.0.0.0">
+            </div>
+          </div>
+          <label class="checkbox"><input type="checkbox" id="s-lan"> 允许局域网访问</label>
+        </div>
+
+        <div class="card">
+          <h2>数据库与缓存连接</h2>
+          <p class="muted small">
+            连接串保存在程序目录下的 <code>config/config.json</code>，也可用环境变量
+            <code>DATABASE_URL</code> / <code>REDIS_URL</code> 覆盖。此处仅供查看，修改请编辑该文件后重启服务。
+          </p>
+          <div class="field">
+            <label>PostgreSQL 连接串</label>
+            <input id="s-db-url" type="text" readonly>
+          </div>
+          <div class="field">
+            <label>Redis 连接串</label>
+            <input id="s-redis-url" type="text" readonly>
+          </div>
+          <div class="grid-3">
+            <div class="field">
+              <label>Redis 状态</label>
+              <input id="s-redis-enabled" type="text" readonly>
+            </div>
+            <div class="field">
+              <label>Key 前缀</label>
+              <input id="s-redis-prefix" type="text" readonly>
+            </div>
+            <div class="field">
+              <label>查询缓存有效期（秒）</label>
+              <input id="s-redis-ttl" type="number" min="0">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>模型调用</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label>响应超时（秒）</label>
+              <input id="s-model-timeout" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>心跳超时（秒）</label>
+              <input id="s-heartbeat-timeout" type="number" min="1">
+            </div>
+          </div>
+          <div class="field">
+            <label>题目保存文件夹</label>
+            <select id="s-save-folder"></select>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>访问控制</h2>
+          <div class="field">
+            <label>管理令牌 adminToken（为空时不校验管理接口）</label>
+            <input id="s-admin-token" type="text" placeholder="留空则管理接口无需令牌">
+          </div>
+          <label class="checkbox"><input type="checkbox" id="s-multiuser-enabled"> 启用多用户</label>
+        </div>
+
+        <div class="card">
+          <h2>用户令牌与套餐</h2>
+          <p class="muted small">控制 OCS 查询是否必须携带用户令牌，以及用户调用记录的保留策略。</p>
+          <label class="checkbox"><input type="checkbox" id="s-users-enabled"> 启用用户体系</label>
+          <label class="checkbox"><input type="checkbox" id="s-require-token"> 查询必须携带用户令牌</label>
+          <div class="grid-3">
+            <div class="field">
+              <label>记录保留天数</label>
+              <input id="s-ulog-days" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>每用户记录上限</label>
+              <input id="s-ulog-peruser" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>全局记录上限</label>
+              <input id="s-ulog-global" type="number" min="1">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label>审计日志保留天数</label>
+              <input id="s-uaudit-days" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>默认套餐</label>
+              <select id="s-default-plan"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <textarea id="s-editor" class="editor hidden" spellcheck="false"></textarea>
+    </section>
+
+    <section id="view-ocs" class="view">
+      <div class="toolbar">
+        <span class="muted">把下面的配置复制到 OCS 用户脚本的题库配置中即可连接本服务（已包含用户令牌）。</span>
+        <span class="spacer"></span>
+        <button id="ocs-copy" class="btn primary">复制配置</button>
+      </div>
+      <div class="card">
+        <h2>题库地址</h2>
+        <p class="muted small">OCS 运行在浏览器中，需填一个它可访问到的地址（默认取当前控制台地址）。</p>
+        <div class="toolbar">
+          <input id="ocs-url-base" type="text" placeholder="http://localhost:3000">
+          <button id="ocs-reset" class="btn ghost">使用当前地址</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>用户令牌</h2>
+        <p class="muted small">填入某个用户的令牌，生成带该令牌的完整配置；留空则使用 <code>${token}</code> 占位符。</p>
+        <div class="toolbar">
+          <input id="ocs-token" type="text" placeholder="nf_xxxxxxxx（留空则用占位符）" autocomplete="off">
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>配置内容</h2>
+        <textarea id="ocs-json" class="editor" spellcheck="false" style="min-height:320px;white-space:pre;"></textarea>
+      </div>
+    </section>
+
+    <section id="view-logs" class="view">
+      <div class="toolbar">
+        <input id="l-keyword" placeholder="关键字（题目/答案/路径/IP）">
+        <select id="l-method">
+          <option value="">全部方法</option>
+          <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>HEAD</option>
+        </select>
+        <select id="l-status">
+          <option value="">全部状态</option>
+          <option value="2xx">2xx 成功</option>
+          <option value="3xx">3xx 重定向</option>
+          <option value="4xx">4xx 客户端错误</option>
+          <option value="5xx">5xx 服务端错误</option>
+        </select>
+        <input id="l-path" placeholder="路径包含…">
+        <button id="l-search" class="btn primary">查询</button>
+        <span class="spacer"></span>
+        <label class="checkbox"><input type="checkbox" id="l-live" checked> 实时</label>
+        <button id="l-refresh" class="btn ghost">刷新</button>
+        <button id="l-clear" class="btn danger">清空</button>
+      </div>
+      <div class="table-wrap">
+        <table id="l-table">
+          <thead><tr>
+            <th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>IP</th><th>User-Agent</th><th>操作</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="l-prev" class="btn ghost">上一页</button>
+        <span id="l-pageinfo">第 1 页</span>
+        <button id="l-next" class="btn ghost">下一页</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-body">
+    <h3 id="modal-title">编辑</h3>
+    <div id="modal-content"></div>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn ghost">取消</button>
+      <button id="modal-ok" class="btn primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="login-logo">Z</span>
+      <div>
+        <strong>{{.SiteName}}</strong>
+        <span class="login-sub">AI 题库管理控制台</span>
+      </div>
+    </div>
+    <h2>欢迎回来</h2>
+    <p class="login-hint">请输入管理令牌以进入控制台</p>
+    <label class="login-label" for="login-token">管理令牌</label>
+    <div class="login-field">
+      <input id="login-token" type="password" placeholder="请输入 Admin Token" autocomplete="current-password">
+      <button type="button" id="login-toggle" class="login-eye" aria-label="显示/隐藏令牌">显示</button>
+    </div>
+    <button id="login-btn" class="btn primary full login-submit">进入控制台</button>
+    <p id="login-error" class="error login-error"></p>
+    <p class="login-foot">令牌由服务端 <span class="mono">adminToken</span> 配置项决定</p>
+  </div>
+</div>
+</div>
+
+<script src="/static/console.js"></script>
+</body>
+</html>
