@@ -335,7 +335,7 @@
       tbody.innerHTML = data.items.map(function (item) {
         return "<tr>" +
           "<td>" + item.id + "</td>" +
-          '<td class="clamp">' + esc(item.question) + "</td>" +
+          '<td class="clamp-1" title="' + esc(item.question) + '">' + esc(item.question) + "</td>" +
         '<td class="clamp-1" title="' + esc(item.answer) + '">' + esc(item.answer) + "</td>" +
           "<td>" +
             '<button class="btn ghost" data-fix="' + item.id + '">编辑</button> ' +
