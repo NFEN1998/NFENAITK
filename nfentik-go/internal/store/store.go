@@ -739,9 +739,9 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 		return Question{}, err
 	}
 	var id int64
-	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash, OptionsHash)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8) RETURNING Id`,
-		question, options, answer, questionType, target, isAI, match.QuestionHash(question), match.OptionsHash(options)).Scan(&id)
+	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7) RETURNING Id`,
+		question, options, answer, questionType, target, isAI, match.QuestionHash(question)).Scan(&id)
 	if err != nil {
 		return Question{}, err
 	}

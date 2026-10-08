@@ -42,6 +42,32 @@ func TestInsertAIResponseDeduplicatesSameFolder(t *testing.T) {
 	_, _ = s.db.Exec(`DELETE FROM AIResponses WHERE QuestionHash = $1`, match.QuestionHash(question))
 }
 
+// TestAddQuestionPersistsOptionsAndHash locks in the admin "add question" path,
+// which regressed once when an options-hash column was added and removed.
+func TestAddQuestionPersistsOptionsAndHash(t *testing.T) {
+	s := testStore(t)
+
+	options := strp("A. 一 B. 二")
+	created, err := s.AddQuestion("管理端新增题目 add-question", options, nil, nil, 0, false)
+	if err != nil {
+		t.Fatalf("add question: %v", err)
+	}
+	if created.ID == 0 {
+		t.Fatalf("expected a persisted id")
+	}
+	if created.Options == nil || *created.Options != *options {
+		t.Fatalf("options not persisted: %v", created.Options)
+	}
+	var hash string
+	if err := s.db.QueryRow(`SELECT QuestionHash FROM AIResponses WHERE Id = $1`, created.ID).Scan(&hash); err != nil {
+		t.Fatalf("read hash: %v", err)
+	}
+	if hash == "" {
+		t.Fatalf("question hash not persisted")
+	}
+	_, _ = s.db.Exec(`DELETE FROM AIResponses WHERE Id = $1`, created.ID)
+}
+
 // TestInsertAIResponseAllowsDifferentOptions verifies that the same question
 // with different options is stored as a distinct entry.
 func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {
