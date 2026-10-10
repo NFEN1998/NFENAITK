@@ -1,0 +1,12 @@
+{
+  "database": {
+    "url": "postgres://nfentik:nfentik@127.0.0.1:5432/nfentik?sslmode=disable"
+  },
+  "redis": {
+    "url": "redis://127.0.0.1:6379/0",
+    "enabled": true,
+    "prefix": "nfentik",
+    "queryCacheTTL": 300,
+    "historyEnabled": false
+  }
+}
