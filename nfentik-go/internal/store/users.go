@@ -9,15 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nfentik/nfentik-go/internal/plan"
 )
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint error.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
 
 // User is an end user that authenticates with a usertoken. The token is the
 // only identity: there is no separate display name.
@@ -108,9 +101,13 @@ func NewUserToken() (string, error) {
 	return "nf_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-const userColumns = `Id, Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt,
+// userColumns is the shared Users projection, with timestamps rendered as
+// strings in the dialect's format.
+func (s *Store) userColumns() string {
+	return `Id, Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt,
 	TotalCount, UsedCount, RemainCount, Note, Enabled,
-	to_char(CreatedAt, 'YYYY-MM-DD HH24:MI:SS'), to_char(UpdatedAt, 'YYYY-MM-DD HH24:MI:SS')`
+	` + s.dialect.formatTimestamp("CreatedAt") + `, ` + s.dialect.formatTimestamp("UpdatedAt")
+}
 
 func scanUser(scan func(dest ...any) error) (User, error) {
 	var (
@@ -176,12 +173,11 @@ func (s *Store) insertUser(u User) (int64, string, error) {
 	if startAt == "" {
 		startAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	var id int64
-	err := s.db.QueryRow(`INSERT INTO Users
+	id, err := s.insertReturningID(`INSERT INTO Users
 		(Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW()) RETURNING Id`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
 		token, u.PlanType, u.PlanCode, u.PlanLabel, startAt,
-		u.ExpireAt, u.TotalCount, u.UsedCount, u.RemainCount, u.Note, u.Enabled).Scan(&id)
+		u.ExpireAt, u.TotalCount, u.UsedCount, u.RemainCount, u.Note, u.Enabled)
 	if err != nil {
 		return 0, "", err
 	}
@@ -213,13 +209,12 @@ func (s *Store) CreateUsers(template User, n int) ([]User, error) {
 		if startAt == "" {
 			startAt = time.Now().Format("2006-01-02 15:04:05")
 		}
-		var id int64
-		err = tx.QueryRow(`INSERT INTO Users
+		id, err := s.insertReturningIDTx(tx, `INSERT INTO Users
 			(Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW()) RETURNING Id`,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
 			token, template.PlanType, template.PlanCode, template.PlanLabel, startAt,
 			template.ExpireAt, template.TotalCount, template.UsedCount, template.RemainCount,
-			template.Note, template.Enabled).Scan(&id)
+			template.Note, template.Enabled)
 		if err != nil {
 			return nil, err
 		}
@@ -242,7 +237,7 @@ func (s *Store) GetUserByToken(token string) (*User, error) {
 	if token == "" {
 		return nil, ErrUserNotFound
 	}
-	row := s.db.QueryRow(`SELECT `+userColumns+` FROM Users WHERE Token = $1`, token)
+	row := s.queryRow(`SELECT `+s.userColumns()+` FROM Users WHERE Token = $1`, token)
 	u, err := scanUser(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
@@ -255,7 +250,7 @@ func (s *Store) GetUserByToken(token string) (*User, error) {
 
 // GetUserByID loads a user by id.
 func (s *Store) GetUserByID(id int64) (User, error) {
-	row := s.db.QueryRow(`SELECT `+userColumns+` FROM Users WHERE Id = $1`, id)
+	row := s.queryRow(`SELECT `+s.userColumns()+` FROM Users WHERE Id = $1`, id)
 	u, err := scanUser(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
@@ -265,7 +260,7 @@ func (s *Store) GetUserByID(id int64) (User, error) {
 
 // ListUsers returns all users ordered by id.
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT ` + userColumns + ` FROM Users ORDER BY Id`)
+	rows, err := s.query(`SELECT ` + s.userColumns() + ` FROM Users ORDER BY Id`)
 	if err != nil {
 		return nil, err
 	}
@@ -303,16 +298,16 @@ func (s *Store) UpdateUser(id int64, note *string, enabled *bool) error {
 	}
 	add("UpdatedAt", time.Now())
 	args = append(args, id)
-	_, err := s.db.Exec(`UPDATE Users SET `+strings.Join(sets, ", ")+fmt.Sprintf(" WHERE Id = $%d", len(args)), args...)
+	_, err := s.exec(`UPDATE Users SET `+strings.Join(sets, ", ")+fmt.Sprintf(" WHERE Id = $%d", len(args)), args...)
 	return err
 }
 
 // DeleteUser removes a user and its logs.
 func (s *Store) DeleteUser(id int64) error {
-	if _, err := s.db.Exec(`DELETE FROM UserRequestLogs WHERE UserId = $1`, id); err != nil {
+	if _, err := s.exec(`DELETE FROM UserRequestLogs WHERE UserId = $1`, id); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM Users WHERE Id = $1`, id)
+	_, err := s.exec(`DELETE FROM Users WHERE Id = $1`, id)
 	return err
 }
 
@@ -322,7 +317,7 @@ func (s *Store) ResetUserToken(id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := s.db.Exec(`UPDATE Users SET Token = $1, UpdatedAt = NOW() WHERE Id = $2`, token, id)
+	res, err := s.exec(`UPDATE Users SET Token = $1, UpdatedAt = NOW() WHERE Id = $2`, token, id)
 	if err != nil {
 		return "", err
 	}
@@ -335,7 +330,7 @@ func (s *Store) ResetUserToken(id int64) (string, error) {
 // ConsumeQuota decrements the remaining count for count plans. It returns true
 // when a decrement happened, false when the user has no count quota or is out.
 func (s *Store) ConsumeQuota(id int64) (bool, error) {
-	res, err := s.db.Exec(`UPDATE Users
+	res, err := s.exec(`UPDATE Users
 		SET RemainCount = RemainCount - 1, UsedCount = UsedCount + 1, UpdatedAt = NOW()
 		WHERE Id = $1 AND RemainCount IS NOT NULL AND RemainCount > 0`, id)
 	if err != nil {
@@ -349,7 +344,7 @@ func (s *Store) ConsumeQuota(id int64) (bool, error) {
 // which have no remaining quota to decrement. It is a no-op for count plans so
 // the two paths never double count.
 func (s *Store) IncrementUsedCount(id int64) error {
-	_, err := s.db.Exec(`UPDATE Users
+	_, err := s.exec(`UPDATE Users
 		SET UsedCount = UsedCount + 1, UpdatedAt = NOW()
 		WHERE Id = $1 AND RemainCount IS NULL`, id)
 	return err
@@ -357,7 +352,7 @@ func (s *Store) IncrementUsedCount(id int64) error {
 
 // SetPlan updates a user's plan fields in one statement.
 func (s *Store) SetPlan(id int64, planType, planCode, planLabel, startAt string, expireAt *string, total, remain *int64, used int64) error {
-	_, err := s.db.Exec(`UPDATE Users
+	_, err := s.exec(`UPDATE Users
 		SET PlanType=$1, PlanCode=$2, PlanLabel=$3, StartAt=$4, ExpireAt=$5,
 		    TotalCount=$6, RemainCount=$7, UsedCount=$8, UpdatedAt=NOW()
 		WHERE Id=$9`, planType, planCode, planLabel, startAt, expireAt, total, remain, used, id)
@@ -366,7 +361,7 @@ func (s *Store) SetPlan(id int64, planType, planCode, planLabel, startAt string,
 
 // AddCountTopUp adds count to a count plan, extending TotalCount as well.
 func (s *Store) AddCountTopUp(id int64, delta int64) error {
-	_, err := s.db.Exec(`UPDATE Users
+	_, err := s.exec(`UPDATE Users
 		SET RemainCount = COALESCE(RemainCount,0) + $1,
 		    TotalCount = COALESCE(TotalCount,0) + $1,
 		    UpdatedAt = NOW()
@@ -377,7 +372,7 @@ func (s *Store) AddCountTopUp(id int64, delta int64) error {
 // ExtendExpiry moves the expiry from base by the given number of days.
 // expireAt is stored as text; callers pass an already formatted value.
 func (s *Store) SetExpiry(id int64, expireAt *string) error {
-	_, err := s.db.Exec(`UPDATE Users SET ExpireAt = $1, UpdatedAt = NOW() WHERE Id = $2`, expireAt, id)
+	_, err := s.exec(`UPDATE Users SET ExpireAt = $1, UpdatedAt = NOW() WHERE Id = $2`, expireAt, id)
 	return err
 }
 
@@ -486,7 +481,7 @@ func (s *Store) SwitchPlan(id int64, p plan.Plan, customDays int, totalCount int
 
 // InsertUserLog appends one user query record.
 func (s *Store) InsertUserLog(log UserRequestLog) error {
-	_, err := s.db.Exec(`INSERT INTO UserRequestLogs (UserId, Token, Timestamp, Question, Options, Answer, Source, Status, ResponseTime)
+	_, err := s.exec(`INSERT INTO UserRequestLogs (UserId, Token, Timestamp, Question, Options, Answer, Source, Status, ResponseTime)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		log.UserID, "", log.Timestamp, truncateRunes(log.Question, 500),
 		truncateRunes(log.Options, 500), truncateRunes(log.Answer, 2000),
@@ -503,10 +498,10 @@ func (s *Store) UserLogs(userID int64, page, pageSize int) ([]UserRequestLog, in
 		pageSize = 20
 	}
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM UserRequestLogs WHERE UserId = $1`, userID).Scan(&total); err != nil {
+	if err := s.queryRow(`SELECT COUNT(*) FROM UserRequestLogs WHERE UserId = $1`, userID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT LogId, UserId, Timestamp, COALESCE(Question,''), COALESCE(Options,''), COALESCE(Answer,''), COALESCE(Source,''), COALESCE(Status,''), COALESCE(ResponseTime,0)
+	rows, err := s.query(`SELECT LogId, UserId, Timestamp, COALESCE(Question,''), COALESCE(Options,''), COALESCE(Answer,''), COALESCE(Source,''), COALESCE(Status,''), COALESCE(ResponseTime,0)
 		FROM UserRequestLogs WHERE UserId = $1 ORDER BY LogId DESC LIMIT $2 OFFSET $3`,
 		userID, pageSize, (page-1)*pageSize)
 	if err != nil {
@@ -528,23 +523,26 @@ func (s *Store) UserLogs(userID int64, page, pageSize int) ([]UserRequestLog, in
 // days, and a global row cap.
 func (s *Store) PruneUserLogs(perUserLimit, retentionDays, globalLimit int) error {
 	if perUserLimit > 0 {
-		if _, err := s.db.Exec(`DELETE FROM UserRequestLogs
-			WHERE LogId IN (
-				SELECT LogId FROM UserRequestLogs ul
-				WHERE (SELECT COUNT(*) FROM UserRequestLogs x WHERE x.UserId = ul.UserId AND x.LogId >= ul.LogId) > $1
-			)`, perUserLimit); err != nil {
+		inner := `SELECT LogId FROM UserRequestLogs ul
+			WHERE (SELECT COUNT(*) FROM UserRequestLogs x WHERE x.UserId = ul.UserId AND x.LogId >= ul.LogId) > $1`
+		if s.dialect.isMySQL() {
+			// MySQL cannot select from the table it is deleting inside a
+			// subquery, so materialise the choice through a derived table.
+			inner = `SELECT LogId FROM (` + inner + `) AS t`
+		}
+		if _, err := s.exec(`DELETE FROM UserRequestLogs WHERE LogId IN (`+inner+`)`, perUserLimit); err != nil {
 			return err
 		}
 	}
 	if retentionDays > 0 {
-		if _, err := s.db.Exec(`DELETE FROM UserRequestLogs WHERE Timestamp < $1`,
+		if _, err := s.exec(`DELETE FROM UserRequestLogs WHERE Timestamp < $1`,
 			time.Now().AddDate(0, 0, -retentionDays).Format("2006-01-02 15:04:05")); err != nil {
 			return err
 		}
 	}
 	if globalLimit > 0 {
-		if _, err := s.db.Exec(`DELETE FROM UserRequestLogs
-			WHERE LogId IN (SELECT LogId FROM UserRequestLogs ORDER BY LogId DESC OFFSET $1)`, globalLimit); err != nil {
+		// Keep the newest globalLimit rows; delete everything older.
+		if err := s.deleteBeyondNewest("UserRequestLogs", "LogId", globalLimit); err != nil {
 			return err
 		}
 	}
@@ -557,7 +555,7 @@ func (s *Store) PruneUserLogs(perUserLimit, retentionDays, globalLimit int) erro
 
 // InsertAudit records a token/plan change.
 func (s *Store) InsertAudit(action string, userID int64, userToken, detail, actor string) error {
-	_, err := s.db.Exec(`INSERT INTO UserAuditLogs (Action, UserId, UserToken, Detail, Actor, CreatedAt)
+	_, err := s.exec(`INSERT INTO UserAuditLogs (Action, UserId, UserToken, Detail, Actor, CreatedAt)
 		VALUES ($1,$2,$3,$4,$5,NOW())`, action, userID, userToken, detail, actor)
 	return err
 }
@@ -571,11 +569,11 @@ func (s *Store) ListAudits(page, pageSize int) ([]UserAuditLog, int64, error) {
 		pageSize = 50
 	}
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM UserAuditLogs`).Scan(&total); err != nil {
+	if err := s.queryRow(`SELECT COUNT(*) FROM UserAuditLogs`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT AuditId, Action, COALESCE(UserId,0), UserToken, Detail, Actor,
-		to_char(CreatedAt, 'YYYY-MM-DD HH24:MI:SS')
+	rows, err := s.query(`SELECT AuditId, Action, COALESCE(UserId,0), UserToken, Detail, Actor,
+		`+s.dialect.formatTimestamp("CreatedAt")+`
 		FROM UserAuditLogs ORDER BY AuditId DESC LIMIT $1 OFFSET $2`, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, err
@@ -597,7 +595,7 @@ func (s *Store) PruneAudits(retentionDays int) error {
 	if retentionDays <= 0 {
 		return nil
 	}
-	_, err := s.db.Exec(`DELETE FROM UserAuditLogs WHERE CreatedAt < $1`,
+	_, err := s.exec(`DELETE FROM UserAuditLogs WHERE CreatedAt < $1`,
 		time.Now().AddDate(0, 0, -retentionDays))
 	return err
 }
@@ -619,7 +617,7 @@ func (s *Store) UsageReport(windowDays int) (UsageReport, error) {
 		return report, err
 	}
 	// Per-user call counts in the window.
-	rows, err := s.db.Query(`SELECT UserId, COUNT(*) FROM UserRequestLogs WHERE Timestamp >= $1 GROUP BY UserId`, since)
+	rows, err := s.query(`SELECT UserId, COUNT(*) FROM UserRequestLogs WHERE Timestamp >= $1 GROUP BY UserId`, since)
 	if err != nil {
 		return report, err
 	}
@@ -650,7 +648,7 @@ func (s *Store) UsageReport(windowDays int) (UsageReport, error) {
 		}
 	}
 
-	daily, err := s.db.Query(`SELECT substring(Timestamp,1,10) AS day, COUNT(*) FROM UserRequestLogs
+	daily, err := s.query(`SELECT substring(Timestamp,1,10) AS day, COUNT(*) FROM UserRequestLogs
 		WHERE Timestamp >= $1 GROUP BY day ORDER BY day`, since)
 	if err != nil {
 		return report, err

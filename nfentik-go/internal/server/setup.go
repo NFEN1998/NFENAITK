@@ -58,9 +58,10 @@ func (s *SetupServer) Handler() http.Handler {
 	return mux
 }
 
-// dbFields holds the individual PostgreSQL connection fields entered in the
+// dbFields holds the individual database connection fields entered in the
 // wizard. They are assembled into a DSN before being persisted.
 type dbFields struct {
+	Driver   string `json:"db_driver"`
 	Host     string `json:"db_host"`
 	Port     string `json:"db_port"`
 	User     string `json:"db_user"`
@@ -71,27 +72,53 @@ type dbFields struct {
 
 // Default DB field values point at a local PostgreSQL instance.
 const (
+	defaultDBDriver  = "postgres"
 	defaultDBHost    = "127.0.0.1"
 	defaultDBPort    = "5432"
+	defaultMySQLPort = "3306"
 	defaultDBUser    = "postgres"
 	defaultDBName    = "nfentik"
 	defaultDBSSLMode = "disable"
 )
 
-// dsn assembles a PostgreSQL connection URL from the fields. Empty optional
-// values fall back to sensible defaults so a partial form still produces a
-// usable string.
+// normalizedDriver returns the driver name, defaulting to PostgreSQL.
+func (f dbFields) normalizedDriver() string {
+	d := strings.ToLower(strings.TrimSpace(f.Driver))
+	if d == "" {
+		return defaultDBDriver
+	}
+	return d
+}
+
+// dsn assembles a connection URL from the fields. Empty optional values fall
+// back to sensible defaults so a partial form still produces a usable string.
 func (f dbFields) dsn() string {
+	driver := f.normalizedDriver()
 	host := strings.TrimSpace(f.Host)
 	if host == "" {
 		host = defaultDBHost
 	}
 	port := strings.TrimSpace(f.Port)
+	user := url.UserPassword(strings.TrimSpace(f.User), f.Password)
+
+	if driver == "mysql" {
+		if port == "" {
+			port = defaultMySQLPort
+		}
+		u := &url.URL{
+			Scheme: "mysql",
+			User:   user,
+			Host:   host + ":" + port,
+		}
+		if name := strings.TrimSpace(f.Name); name != "" {
+			u.Path = "/" + name
+		}
+		return u.String()
+	}
+
 	if port == "" {
 		port = defaultDBPort
 	}
-	user := url.UserPassword(strings.TrimSpace(f.User), f.Password)
-
 	u := &url.URL{
 		Scheme: "postgres",
 		User:   user,
@@ -114,8 +141,8 @@ func (f dbFields) dsn() string {
 // them. Unknown or unparseable values return defaults.
 func parseDSN(dsn string) dbFields {
 	f := dbFields{
-		Host: defaultDBHost, Port: defaultDBPort, User: defaultDBUser,
-		Name: defaultDBName, SSLMode: defaultDBSSLMode,
+		Driver: defaultDBDriver, Host: defaultDBHost, Port: defaultDBPort,
+		User: defaultDBUser, Name: defaultDBName, SSLMode: defaultDBSSLMode,
 	}
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
@@ -124,6 +151,11 @@ func parseDSN(dsn string) dbFields {
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return f
+	}
+	if strings.EqualFold(u.Scheme, "mysql") {
+		f.Driver = "mysql"
+		f.Port = defaultMySQLPort
+		f.SSLMode = ""
 	}
 	if u.Hostname() != "" {
 		f.Host = u.Hostname()
@@ -150,6 +182,7 @@ func parseDSN(dsn string) dbFields {
 
 // setupState is the prefilled payload returned to the wizard.
 type setupState struct {
+	DBDriver     string `json:"db_driver"`
 	DBHost       string `json:"db_host"`
 	DBPort       string `json:"db_port"`
 	DBUser       string `json:"db_user"`
@@ -166,6 +199,7 @@ type setupState struct {
 func (s *SetupServer) currentState() setupState {
 	db := parseDSN(s.bootstrap.Database.URL)
 	st := setupState{
+		DBDriver:     db.Driver,
 		DBHost:       db.Host,
 		DBPort:       db.Port,
 		DBUser:       db.User,

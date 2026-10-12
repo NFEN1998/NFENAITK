@@ -78,10 +78,13 @@ func TestIsCreateTable(t *testing.T) {
 
 func TestRepairRecoversNonBaselineTable(t *testing.T) {
 	s := testStore(t)
+	if s.dialect.isMySQL() {
+		t.Skip("repairSchema replays PostgreSQL DDL; MySQL uses ensureSchemaMySQL")
+	}
 
 	// Drop a table introduced after the baseline migration. Because its
 	// migration is already recorded, only repairSchema can bring it back.
-	if _, err := s.db.Exec(`DROP TABLE IF EXISTS UserAuditLogs`); err != nil {
+	if _, err := s.exec(`DROP TABLE IF EXISTS UserAuditLogs`); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
 	report, err := s.Inspect()

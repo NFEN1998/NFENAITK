@@ -114,6 +114,25 @@ func TestDBFieldsDSNDefaults(t *testing.T) {
 	}
 }
 
+func TestDBFieldsDSNMySQL(t *testing.T) {
+	f := dbFields{Driver: "mysql", Host: "127.0.0.1", User: "nfentik", Password: "p@ss:w0rd", Name: "nfentik"}
+	got := f.dsn()
+	if !strings.HasPrefix(got, "mysql://nfentik:") {
+		t.Fatalf("dsn %q missing mysql scheme/user", got)
+	}
+	if !strings.Contains(got, "@127.0.0.1:3306/nfentik") {
+		t.Fatalf("dsn %q missing host/port/path", got)
+	}
+	if strings.Contains(got, "sslmode") {
+		t.Fatalf("dsn %q should not carry sslmode for mysql", got)
+	}
+	back := parseDSN(got)
+	if back.Driver != "mysql" || back.Port != "3306" ||
+		back.Host != f.Host || back.User != f.User || back.Password != f.Password || back.Name != f.Name {
+		t.Fatalf("round-trip mismatch: %+v vs %+v", back, f)
+	}
+}
+
 func TestSetupTestDBRequiresFields(t *testing.T) {
 	h := newSetupServer(t).Handler()
 	req := httptest.NewRequest(http.MethodPost, "/setup/test-db", strings.NewReader(`{"db_host":"","db_user":"","db_name":""}`))

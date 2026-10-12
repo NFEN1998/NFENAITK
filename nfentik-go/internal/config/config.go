@@ -46,8 +46,8 @@ type Algorithm struct {
 	Code           string `json:"code"`
 }
 
-// Database holds the PostgreSQL connection settings. DATABASE_URL always wins
-// when it is set in the environment.
+// Database holds the database connection settings (PostgreSQL or MySQL).
+// DATABASE_URL always wins when it is set in the environment.
 type Database struct {
 	URL string `json:"url"`
 }

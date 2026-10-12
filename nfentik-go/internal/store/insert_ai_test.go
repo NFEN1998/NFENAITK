@@ -30,7 +30,7 @@ func TestInsertAIResponseDeduplicatesSameFolder(t *testing.T) {
 	}
 
 	var count int
-	if err := s.db.QueryRow(
+	if err := s.queryRow(
 		`SELECT COUNT(*) FROM AIResponses WHERE QuestionHash = $1 AND FolderId = 0`,
 		match.QuestionHash(question),
 	).Scan(&count); err != nil {
@@ -39,7 +39,7 @@ func TestInsertAIResponseDeduplicatesSameFolder(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("row count = %d, want 1", count)
 	}
-	_, _ = s.db.Exec(`DELETE FROM AIResponses WHERE QuestionHash = $1`, match.QuestionHash(question))
+	_, _ = s.exec(`DELETE FROM AIResponses WHERE QuestionHash = $1`, match.QuestionHash(question))
 }
 
 // TestAddQuestionPersistsOptionsAndHash locks in the admin "add question" path,
@@ -59,13 +59,37 @@ func TestAddQuestionPersistsOptionsAndHash(t *testing.T) {
 		t.Fatalf("options not persisted: %v", created.Options)
 	}
 	var hash string
-	if err := s.db.QueryRow(`SELECT QuestionHash FROM AIResponses WHERE Id = $1`, created.ID).Scan(&hash); err != nil {
+	if err := s.queryRow(`SELECT QuestionHash FROM AIResponses WHERE Id = $1`, created.ID).Scan(&hash); err != nil {
 		t.Fatalf("read hash: %v", err)
 	}
 	if hash == "" {
 		t.Fatalf("question hash not persisted")
 	}
-	_, _ = s.db.Exec(`DELETE FROM AIResponses WHERE Id = $1`, created.ID)
+	_, _ = s.exec(`DELETE FROM AIResponses WHERE Id = $1`, created.ID)
+}
+
+// TestQueryMatchesInsertedQuestion exercises the two-stage query path (exact
+// hash probe plus fuzzy fallback) on the active dialect.
+func TestQueryMatchesInsertedQuestion(t *testing.T) {
+	s := testStore(t)
+
+	question := "查询匹配测试题 unique query match"
+	answer := "A"
+	if _, err := s.AddQuestion(question, strp("A. 甲 B. 乙"), &answer, nil, 0, false); err != nil {
+		t.Fatalf("add question: %v", err)
+	}
+	defer s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
+
+	hits, err := s.Query(question, nil, match.Score)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatalf("expected a hit for the inserted question")
+	}
+	if hits[0].Answer != "A" {
+		t.Fatalf("answer = %q, want A", hits[0].Answer)
+	}
 }
 
 // TestInsertAIResponseAllowsDifferentOptions verifies that the same question
@@ -85,5 +109,5 @@ func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {
 	if a == b {
 		t.Fatalf("different options reused the same row %d", a)
 	}
-	_, _ = s.db.Exec(`DELETE FROM AIResponses WHERE QuestionHash = $1`, match.QuestionHash(question))
+	_, _ = s.exec(`DELETE FROM AIResponses WHERE QuestionHash = $1`, match.QuestionHash(question))
 }

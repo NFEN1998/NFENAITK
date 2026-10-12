@@ -2,7 +2,7 @@
 
 nfentik-go：由 ZError 的 Go 语言重写而来，把原本的 Tauri 桌面 AI 题库软件改造成可在 Linux 上部署的网页服务。前端管理控制台使用 Go `embed` 内嵌，最终产物是一个单文件二进制，无需 Node 构建。
 
-数据层使用 PostgreSQL，并用 Redis 做查询缓存、每日计数与请求日志缓冲。
+数据层支持 PostgreSQL 与 MySQL/MariaDB，并用 Redis 做查询缓存、每日计数与请求日志缓冲。
 
 ## 功能
 
@@ -10,7 +10,7 @@ nfentik-go：由 ZError 的 Go 语言重写而来，把原本的 Tauri 桌面 AI
 - 题库命中直接返回本地答案；未命中时自动调用配置的 AI 模型，并把答案回写题库。
 - 支持多文本模型并行调用与视觉模型（图片题）。
 - 管理控制台提供题库、文件夹、待修正、模型配置、系统设置、实时请求日志六个视图。
-- 提供旧版 SQLite 数据库到 PostgreSQL 的迁移命令。
+- 提供旧版 SQLite 数据库到 PostgreSQL / MySQL 的迁移命令。
 
 ## 架构
 
@@ -33,14 +33,18 @@ Redis 的三个用途：
 2. **每日请求计数**：`/query` 计数先在 Redis 累加，后台每 20 秒批量落库到 `DailyRequestCounts`。
 3. **请求日志缓冲**：请求日志写入 Redis 列表，后台每 3 秒批量写入 `RequestLogs`，失败会重新入队。
 
-Redis 不可用时服务自动退化为直接读写 PostgreSQL，功能不受影响。
+Redis 不可用时服务自动退化为直接读写数据库，功能不受影响。
 
 ## 环境要求
 
 - Go 1.24 或更高版本
-- PostgreSQL 13 或更高版本
+- 数据库（二选一）：
+  - PostgreSQL 13 或更高版本
+  - MySQL 5.7 或更高版本 / MariaDB 10.2 或更高版本
 - Redis 6 或更高版本（可选，用于缓存加速）
 - CGO 环境（`gcc`）。中文分词依赖 gojieba，且迁移旧数据依赖 go-sqlite3，因此需要 `gcc` 与 SQLite 开发头文件。
+
+数据库引擎由 `DATABASE_URL` / `config/config.json` 中的连接串前缀自动识别：`postgres://` 走 PostgreSQL，`mysql://` 走 MySQL/MariaDB。
 
 Debian / Ubuntu 安装依赖：
 
@@ -48,6 +52,10 @@ Debian / Ubuntu 安装依赖：
 sudo apt-get update
 sudo apt-get install -y build-essential postgresql redis-server
 ```
+
+使用 MySQL / MariaDB 时改为安装 `mariadb-server` 或 MySQL 官方包即可。
+
+Windows 上构建需要 MinGW-w64（MSYS2）或 MinGW-w64 交叉工具链，运行本身不依赖 Go 环境，详见「构建」与「Windows 部署」章节。
 
 ## 配置
 
@@ -76,6 +84,12 @@ export DATABASE_URL="postgres://nfentik:nfentik@127.0.0.1:5432/nfentik?sslmode=d
 export REDIS_URL="redis://127.0.0.1:6379/0"
 ```
 
+使用 MySQL / MariaDB 时，连接串改为：
+
+```
+mysql://nfentik:nfentik@127.0.0.1:3306/nfentik
+```
+
 `queryCacheTTL` 单位为秒，默认 600。
 
 **2. 数据库配置**（系统设置 + 模型配置）
@@ -86,19 +100,52 @@ export REDIS_URL="redis://127.0.0.1:6379/0"
 
 ## 数据库准备
 
+PostgreSQL：
+
 ```bash
 sudo -u postgres psql -c "CREATE USER nfentik WITH PASSWORD 'nfentik';"
 sudo -u postgres psql -c "CREATE DATABASE nfentik OWNER nfentik;"
 ```
 
-服务首次启动会自动建表。
+MySQL / MariaDB：
+
+```sql
+CREATE DATABASE nfentik CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'nfentik'@'%' IDENTIFIED BY 'nfentik';
+GRANT ALL PRIVILEGES ON nfentik.* TO 'nfentik'@'%';
+FLUSH PRIVILEGES;
+```
+
+服务首次启动会自动建表并执行结构迁移。MySQL 侧使用 utf8mb4，索引与字段类型按 MySQL 5.7 兼容设计；模糊匹配基于归一化前缀 `LIKE`（PostgreSQL 侧使用 pg_trgm，可选）。
 
 ## 构建
+
+Linux 本机构建：
 
 ```bash
 cd /workspace/nfentik-go
 go build -o nfentik-go .
 ```
+
+打包为 Linux amd64 发布包：
+
+```bash
+nfentik-go/scripts/packaging/build.sh
+```
+
+### Windows 构建
+
+`gojieba` 与 `go-sqlite3` 都依赖 CGO，无法用纯 Go 方式交叉编译，需要 C/C++ 工具链：
+
+- 在 Linux 上交叉编译：安装 `gcc-mingw-w64-x86-64` 与 `g++-mingw-w64-x86-64`，然后执行 `scripts/packaging/build-windows.sh`。
+- 在 Windows 上原生编译：安装 MSYS2 的 MinGW-w64 工具链，在 MSYS2 终端里执行 `scripts/packaging/build-windows.sh`。
+
+```bash
+sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+nfentik-go/scripts/packaging/build-windows.sh
+```
+
+产物为 `dist/nfentik-go-<版本>-windows-amd64.zip`，内含 `nfentik-go.exe`、`dict/`（中文分词词典）、`start.bat`、示例配置与 Windows 使用说明（`README.md`）。
 
 ## 运行
 
@@ -120,9 +167,24 @@ export REDIS_URL="redis://127.0.0.1:6379/0"
 
 启动后控制台地址为 `http://127.0.0.1:3000/console`。
 
+中文分词词典（`dict/`）的加载顺序：`JIEBA_DICT_DIR` 环境变量指定的目录 > 可执行文件同级的 `dict/` 目录 > gojieba 编译期内置路径。发布包已随包附带 `dict/`，把二进制复制到别处时请一并复制该目录，否则程序启动会因找不到词典而退出。
+
+## Windows 部署
+
+Windows 发布包（`build-windows.sh` 生成）解压后包含 `nfentik-go.exe`、`dict/`、`start.bat` 与 `config/config.example.json`，无需 Go 环境：
+
+```bat
+copy config\config.example.json config\config.json
+nfentik-go.exe -port 3000 -lan
+```
+
+也可以在 `config\config.json` 或用环境变量（`DATABASE_URL`、`REDIS_URL`）提供连接串，环境变量优先级更高。首次启动访问 `http://127.0.0.1:3000/setup` 完成安装向导后手动重启。
+
+要用后台服务方式托管、实现开机自启，推荐用 WinSW 或 nssm，完整步骤（含 WinSW 配置示例）见发布包内的 `README.md`，即 `scripts/packaging/assets/README-windows.md`。
+
 ## 数据持久化
 
-题目、文件夹、请求日志、系统设置与模型配置**全部保存在 PostgreSQL** 中。服务启动时会先执行数据库迁移，**不会**删除或重建任何已有数据。
+题目、文件夹、请求日志、系统设置与模型配置**全部保存在数据库中**。服务启动时会先执行数据库迁移，**不会**删除或重建任何已有数据。
 
 只要**始终连接同一个数据库**，程序放在哪个目录、重启多少次都不会丢数据。启动日志会打印引导配置路径与脱敏后的连接串，可据此确认连到了预期位置：
 
@@ -317,7 +379,7 @@ go run . -port 3000
 
 ```
 internal/config   配置读写
-internal/store    PostgreSQL 存储与题库查询
+internal/store    PostgreSQL / MySQL 存储与题库查询
 internal/cache    Redis 查询缓存、计数与日志队列
 internal/match    题目匹配算法（jieba 分词）
 internal/ai       AI 模型调用与结果解析

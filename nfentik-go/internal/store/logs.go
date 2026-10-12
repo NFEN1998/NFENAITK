@@ -51,7 +51,7 @@ func (f *RequestLogFilter) normalize() int {
 
 // conditions builds the shared WHERE clause and argument list for the list and
 // count queries.
-func (f RequestLogFilter) conditions() ([]string, []any) {
+func (f RequestLogFilter) conditions(d dialect) ([]string, []any) {
 	where := []string{"1=1"}
 	args := []any{}
 	add := func(clause string, val any) {
@@ -63,7 +63,8 @@ func (f RequestLogFilter) conditions() ([]string, []any) {
 		add("Method = $%d", f.Method)
 	}
 	if f.Path != "" {
-		add("Path ILIKE $%d", "%"+f.Path+"%")
+		args = append(args, "%"+f.Path+"%")
+		where = append(where, d.ilike("Path", fmt.Sprintf("$%d", len(args))))
 	}
 	if f.Status != "" {
 		switch {
@@ -81,9 +82,13 @@ func (f RequestLogFilter) conditions() ([]string, []any) {
 		like := "%" + kw + "%"
 		args = append(args, like, like, like, like, like, like)
 		n := len(args)
-		where = append(where, fmt.Sprintf(
-			"(RequestId ILIKE $%d OR Path ILIKE $%d OR RequestBody ILIKE $%d OR ResponseBody ILIKE $%d OR Ip ILIKE $%d OR UserAgent ILIKE $%d)",
-			n-5, n-4, n-3, n-2, n-1, n))
+		where = append(where, "("+
+			d.ilike("RequestId", fmt.Sprintf("$%d", n-5))+" OR "+
+			d.ilike("Path", fmt.Sprintf("$%d", n-4))+" OR "+
+			d.ilike("RequestBody", fmt.Sprintf("$%d", n-3))+" OR "+
+			d.ilike("ResponseBody", fmt.Sprintf("$%d", n-2))+" OR "+
+			d.ilike("Ip", fmt.Sprintf("$%d", n-1))+" OR "+
+			d.ilike("UserAgent", fmt.Sprintf("$%d", n))+")")
 	}
 	return where, args
 }
@@ -92,11 +97,11 @@ func (f RequestLogFilter) conditions() ([]string, []any) {
 // total number of matching rows.
 func (s *Store) RequestLogsFiltered(f RequestLogFilter) ([]RequestLog, int, error) {
 	offset := f.normalize()
-	where, args := f.conditions()
+	where, args := f.conditions(s.dialect)
 	clause := strings.Join(where, " AND ")
 
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM RequestLogs WHERE `+clause, args...).Scan(&total); err != nil {
+	if err := s.queryRow(`SELECT COUNT(*) FROM RequestLogs WHERE `+clause, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -106,7 +111,7 @@ func (s *Store) RequestLogsFiltered(f RequestLogFilter) ([]RequestLog, int, erro
 		FROM RequestLogs WHERE %s ORDER BY LogId DESC LIMIT $%d OFFSET $%d`,
 		clause, len(args)-1, len(args))
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -120,7 +125,7 @@ func (s *Store) RequestLogsFiltered(f RequestLogFilter) ([]RequestLog, int, erro
 
 // RequestLogByID loads one full log row.
 func (s *Store) RequestLogByID(id int64) (*RequestLog, error) {
-	rows, err := s.db.Query(`SELECT LogId, RequestId, Timestamp, Method, Path, Status, ResponseTime,
+	rows, err := s.query(`SELECT LogId, RequestId, Timestamp, Method, Path, Status, ResponseTime,
 		RequestBody, ResponseBody, Headers, Ip, UserAgent, Stage
 		FROM RequestLogs WHERE LogId = $1`, id)
 	if err != nil {
@@ -140,7 +145,7 @@ func (s *Store) RequestLogByID(id int64) (*RequestLog, error) {
 // InsertRequestLog stores a log row and trims the table to maxLogs rows.
 func (s *Store) InsertRequestLog(log RequestLog, maxLogs int) error {
 	headers := marshalHeaders(log.Headers)
-	if _, err := s.db.Exec(`INSERT INTO RequestLogs
+	if _, err := s.exec(`INSERT INTO RequestLogs
 		(RequestId, Timestamp, Method, Path, Status, ResponseTime, RequestBody, ResponseBody, Headers, Ip, UserAgent, Stage)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		log.ID, log.Timestamp, log.Method, log.Path, log.Status, log.ResponseTime,
@@ -148,8 +153,7 @@ func (s *Store) InsertRequestLog(log RequestLog, maxLogs int) error {
 		return err
 	}
 	if maxLogs > 0 {
-		_, _ = s.db.Exec(`DELETE FROM RequestLogs WHERE LogId NOT IN
-			(SELECT LogId FROM RequestLogs ORDER BY LogId DESC LIMIT $1)`, maxLogs)
+		_ = s.deleteBeyondNewest("RequestLogs", "LogId", maxLogs)
 	}
 	return nil
 }
@@ -165,16 +169,12 @@ func (s *Store) InsertRequestLogs(logs []RequestLog, maxLogs int) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT INTO RequestLogs
-		(RequestId, Timestamp, Method, Path, Status, ResponseTime, RequestBody, ResponseBody, Headers, Ip, UserAgent, Stage)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
 	for _, log := range logs {
 		headers := marshalHeaders(log.Headers)
-		if _, err := stmt.Exec(log.ID, log.Timestamp, log.Method, log.Path, log.Status,
+		if _, err := execOn(s.dialect, tx, `INSERT INTO RequestLogs
+			(RequestId, Timestamp, Method, Path, Status, ResponseTime, RequestBody, ResponseBody, Headers, Ip, UserAgent, Stage)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			log.ID, log.Timestamp, log.Method, log.Path, log.Status,
 			log.ResponseTime, log.RequestBody, log.ResponseBody, headers, log.IP, log.UserAgent, log.Stage); err != nil {
 			return err
 		}
@@ -183,10 +183,24 @@ func (s *Store) InsertRequestLogs(logs []RequestLog, maxLogs int) error {
 		return err
 	}
 	if maxLogs > 0 {
-		_, _ = s.db.Exec(`DELETE FROM RequestLogs WHERE LogId NOT IN
-			(SELECT LogId FROM RequestLogs ORDER BY LogId DESC LIMIT $1)`, maxLogs)
+		_ = s.deleteBeyondNewest("RequestLogs", "LogId", maxLogs)
 	}
 	return nil
+}
+
+// deleteBeyondNewest removes every row except the newest keep rows of table.
+// MySQL forbids selecting from the table being deleted inside a subquery, so the
+// selection is wrapped in a derived table there.
+func (s *Store) deleteBeyondNewest(table, keyColumn string, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+	inner := fmt.Sprintf("SELECT %s FROM %s ORDER BY %s DESC LIMIT $1", keyColumn, table, keyColumn)
+	if s.dialect.isMySQL() {
+		inner = fmt.Sprintf("SELECT %s FROM (%s) AS t", keyColumn, inner)
+	}
+	_, err := s.exec(fmt.Sprintf("DELETE FROM %s WHERE %s NOT IN (%s)", table, keyColumn, inner), keep)
+	return err
 }
 
 func marshalHeaders(headers map[string]string) *string {
@@ -234,7 +248,7 @@ func parseInt(v string) (int, error) {
 
 // ClearRequestLogs deletes every persisted log entry.
 func (s *Store) ClearRequestLogs() error {
-	_, err := s.db.Exec(`DELETE FROM RequestLogs`)
+	_, err := s.exec(`DELETE FROM RequestLogs`)
 	return err
 }
 
@@ -248,8 +262,8 @@ func (s *Store) AddDailyRequestCount(day string, delta int64) error {
 	if delta == 0 {
 		return nil
 	}
-	_, err := s.db.Exec(`INSERT INTO DailyRequestCounts (Day, Count) VALUES ($1, $2)
-		ON CONFLICT (Day) DO UPDATE SET Count = DailyRequestCounts.Count + EXCLUDED.Count`, day, delta)
+	_, err := s.exec(`INSERT INTO DailyRequestCounts (Day, Count) VALUES ($1, $2)`+
+		s.dialect.upsertDailyCountSuffix(), day, delta)
 	return err
 }
 
@@ -261,8 +275,8 @@ type DailyRequestCount struct {
 
 // DailyRequestCounts returns the last 365 days of counts, oldest first.
 func (s *Store) DailyRequestCounts() ([]DailyRequestCount, error) {
-	rows, err := s.db.Query(`SELECT Day, Count FROM DailyRequestCounts
-		WHERE Day >= to_char(NOW() - INTERVAL '364 days', 'YYYY-MM-DD') ORDER BY Day ASC`)
+	rows, err := s.query(`SELECT Day, Count FROM DailyRequestCounts
+		WHERE Day >= ` + s.dialect.dailyWindowStartExpr() + ` ORDER BY Day ASC`)
 	if err != nil {
 		return nil, err
 	}

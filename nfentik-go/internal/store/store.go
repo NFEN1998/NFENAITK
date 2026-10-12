@@ -1,5 +1,6 @@
-// Package store owns the PostgreSQL database. Schema and queries mirror the
-// desktop edition's database.rs so existing question banks keep working.
+// Package store owns the PostgreSQL or MySQL database. Schema and queries
+// mirror the desktop edition's database.rs so existing question banks keep
+// working.
 package store
 
 import (
@@ -61,9 +62,10 @@ type QueryHit struct {
 	IsPendingCorrection bool
 }
 
-// Store wraps the PostgreSQL connection pool.
+// Store wraps the PostgreSQL or MySQL connection pool.
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect
 
 	// onChange is invoked after any question or folder mutation. The server
 	// uses it to invalidate Redis query caches.
@@ -85,6 +87,55 @@ func (s *Store) changed() {
 	}
 }
 
+// query/queryRow/exec run a statement after rebinding placeholders for the
+// active dialect.
+func (s *Store) query(query string, args ...any) (*sql.Rows, error) {
+	return queryOn(s.dialect, s.db, query, args...)
+}
+
+func (s *Store) queryRow(query string, args ...any) *sql.Row {
+	return queryRowOn(s.dialect, s.db, query, args...)
+}
+
+func (s *Store) exec(query string, args ...any) (sql.Result, error) {
+	return execOn(s.dialect, s.db, query, args...)
+}
+
+// insertReturningID runs an INSERT (without a RETURNING clause) and returns the
+// generated id. PostgreSQL appends RETURNING Id; MySQL uses LastInsertId.
+func (s *Store) insertReturningID(query string, args ...any) (int64, error) {
+	if s.dialect.isPostgres() {
+		text, a := s.dialect.rebind(query+" RETURNING Id", args)
+		var id int64
+		if err := s.db.QueryRow(text, a...).Scan(&id); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	res, err := s.exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// insertReturningIDTx is insertReturningID for a transaction.
+func (s *Store) insertReturningIDTx(tx *sql.Tx, query string, args ...any) (int64, error) {
+	if s.dialect.isPostgres() {
+		text, a := s.dialect.rebind(query+" RETURNING Id", args)
+		var id int64
+		if err := tx.QueryRow(text, a...).Scan(&id); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	res, err := execOn(s.dialect, tx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
 // Connection pool defaults. The pool is intentionally larger than the old
 // fixed 16 so a burst of concurrent AI-backed queries does not serialize on a
 // handful of connections. Both bounds can be overridden from the environment
@@ -96,12 +147,17 @@ const (
 	connMaxIdleTime     = 10 * time.Minute
 )
 
-// Open connects to PostgreSQL using a libpq style DSN, then ensures the schema.
+// Open connects to PostgreSQL or MySQL using a libpq or mysql style DSN, then
+// ensures the schema.
 func Open(dsn string) (*Store, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, errors.New("DATABASE_URL 未配置")
 	}
-	db, err := sql.Open("pgx", dsn)
+	d, err := detectDialect(dsn)
+	if err != nil {
+		return nil, err
+	}
+	db, err := openDB(d, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -113,17 +169,20 @@ func Open(dsn string) (*Store, error) {
 	db.SetMaxOpenConns(maxOpen)
 	db.SetMaxIdleConns(maxIdle)
 	// Recycle connections periodically so a long-running process never holds a
-	// stale backend past a PostgreSQL restart, failover or idle timeout.
+	// stale backend past a server restart, failover or idle timeout.
 	db.SetConnMaxLifetime(connMaxLifetime)
 	db.SetConnMaxIdleTime(connMaxIdleTime)
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+		db.Close()
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, dialect: d}
 	if err := s.migrate(); err != nil {
+		db.Close()
 		return nil, err
 	}
 	if err := s.ensureTrigram(); err != nil {
+		db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -150,15 +209,19 @@ func InspectDSN(dsn string) (IntegrityReport, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return IntegrityReport{}, errors.New("DATABASE_URL 未配置")
 	}
-	db, err := sql.Open("pgx", dsn)
+	d, err := detectDialect(dsn)
+	if err != nil {
+		return IntegrityReport{}, err
+	}
+	db, err := openDB(d, dsn)
 	if err != nil {
 		return IntegrityReport{}, err
 	}
 	defer db.Close()
 	if err := db.Ping(); err != nil {
-		return IntegrityReport{}, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+		return IntegrityReport{}, fmt.Errorf("连接数据库失败: %w", err)
 	}
-	return (&Store{db: db}).Inspect()
+	return (&Store{db: db, dialect: d}).Inspect()
 }
 func (s *Store) Close() error { return s.db.Close() }
 
@@ -230,7 +293,7 @@ func (s *Store) queryByHash(title string, queryOptions *string, scorer func(q, c
 	if hash == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+	rows, err := s.query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
 		FROM AIResponses WHERE QuestionHash = $1 LIMIT $2`, hash, candidateLimit)
 	if err != nil {
 		return nil, err
@@ -300,7 +363,7 @@ type candidate struct {
 // database, so only the top window is transferred. The `%` operator is the one
 // backed by the GIN trigram index; similarity() only orders the resulting rows.
 func (s *Store) trigramCandidates(normalized string) ([]candidate, error) {
-	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+	rows, err := s.query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
 		FROM AIResponses
 		WHERE Question % $1
 		ORDER BY similarity(Question, $1) DESC
@@ -320,8 +383,9 @@ func (s *Store) prefixCandidates(normalized string) ([]candidate, error) {
 	if len([]rune(prefix)) > 12 {
 		prefix = string([]rune(prefix)[:12])
 	}
-	rows, err := s.db.Query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
-		FROM AIResponses WHERE Question ILIKE $1 || '%' LIMIT $2`, prefix, candidateLimit)
+	pattern := prefix + "%"
+	rows, err := s.query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
+		FROM AIResponses WHERE `+s.dialect.ilike("Question", "$1")+` LIMIT $2`, pattern, candidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +469,7 @@ func (s *Store) FindByNormalizedQuestion(title string) (*QueryHit, error) {
 	if hash == "" {
 		return nil, nil
 	}
-	row := s.db.QueryRow(`SELECT `+hitColumns+` FROM AIResponses
+	row := s.queryRow(`SELECT `+hitColumns+` FROM AIResponses
 		WHERE QuestionHash = $1 ORDER BY Id LIMIT 1`, hash)
 
 	var (
@@ -430,7 +494,7 @@ func (s *Store) FindByNormalizedQuestion(title string) (*QueryHit, error) {
 
 // Folders returns every folder ordered by name.
 func (s *Store) Folders() ([]Folder, error) {
-	rows, err := s.db.Query(`SELECT Id, Name, ParentId, CreateTime FROM Folders ORDER BY Name`)
+	rows, err := s.query(`SELECT Id, Name, ParentId, CreateTime FROM Folders ORDER BY Name`)
 	if err != nil {
 		return nil, err
 	}
@@ -446,35 +510,39 @@ func (s *Store) Folders() ([]Folder, error) {
 	return out, rows.Err()
 }
 
-// FolderPath returns the ancestor chain (root first) for a folder.
+// FolderPath returns the ancestor chain (root first) for a folder. The walk is
+// done in Go rather than with a recursive CTE so it works identically on MySQL
+// 5.7, which has no recursive queries.
 func (s *Store) FolderPath(folderID int64) ([]Folder, error) {
-	rows, err := s.db.Query(`
-		WITH RECURSIVE folder_path AS (
-			SELECT Id, Name, ParentId, 0 AS level FROM Folders WHERE Id = $1
-			UNION ALL
-			SELECT f.Id, f.Name, f.ParentId, fp.level + 1 FROM Folders f
-			INNER JOIN folder_path fp ON f.Id = fp.ParentId
-			WHERE f.Id != fp.Id
-		)
-		SELECT Id, Name, ParentId FROM folder_path ORDER BY level DESC`, folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Folder
-	for rows.Next() {
+	chain := []Folder{}
+	seen := map[int64]bool{}
+	for current := folderID; !seen[current]; {
+		seen[current] = true
 		var f Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID); err != nil {
+		err := s.queryRow(`SELECT Id, Name, ParentId FROM Folders WHERE Id = $1`, current).
+			Scan(&f.ID, &f.Name, &f.ParentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, f)
+		chain = append(chain, f)
+		if f.ParentID == f.ID {
+			break
+		}
+		current = f.ParentID
 	}
-	return out, rows.Err()
+	// Reverse so the root comes first.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
 }
 
 // FolderStats lists all folders with their direct question counts.
 func (s *Store) FolderStats() ([]FolderStat, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.query(`
 		SELECT f.Id, COALESCE(f.Name, '[未分类]'), COUNT(ar.Id)
 		FROM Folders f
 		LEFT JOIN AIResponses ar ON f.Id = ar.FolderId
@@ -536,22 +604,25 @@ func (s *Store) PaginatedQuestions(folderID *int64, pendingOnly bool, page, page
 			ORDER BY ar.CreateTime %s LIMIT $1 OFFSET $2`, questionColumns, direction)
 		args = []any{pageSize, offset}
 	case folderID != nil:
-		countSQL = `WITH RECURSIVE folder_tree AS (
-			SELECT Id FROM Folders WHERE Id = $1
-			UNION ALL
-			SELECT f.Id FROM Folders f INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-		) SELECT COUNT(*) FROM AIResponses ar INNER JOIN folder_tree ft ON ar.FolderId = ft.Id`
-		countArg = []any{*folderID}
-		query = fmt.Sprintf(`WITH RECURSIVE folder_tree AS (
-				SELECT Id FROM Folders WHERE Id = $1
-				UNION ALL
-				SELECT f.Id FROM Folders f INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-			)
-			SELECT %s FROM AIResponses ar
-			INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+		ids, err := s.subtreeIDs(*folderID)
+		if err != nil {
+			return Page{}, err
+		}
+		if len(ids) == 0 {
+			return Page{Items: []Question{}, Total: 0}, nil
+		}
+		clause := inClause(1, len(ids))
+		countArg = make([]any, 0, len(ids))
+		for _, id := range ids {
+			countArg = append(countArg, id)
+		}
+		countSQL = `SELECT COUNT(*) FROM AIResponses ar WHERE ar.FolderId IN (` + clause + `)`
+		query = fmt.Sprintf(`SELECT %s FROM AIResponses ar
 			INNER JOIN Folders f ON ar.FolderId = f.Id
-			ORDER BY ar.CreateTime %s LIMIT $2 OFFSET $3`, questionColumns, direction)
-		args = []any{*folderID, pageSize, offset}
+			WHERE ar.FolderId IN (%s)
+			ORDER BY ar.CreateTime %s LIMIT $%d OFFSET $%d`,
+			questionColumns, clause, direction, len(ids)+1, len(ids)+2)
+		args = append(append([]any{}, countArg...), pageSize, offset)
 	default:
 		countSQL = `SELECT COUNT(*) FROM AIResponses`
 		query = fmt.Sprintf(`SELECT %s FROM AIResponses ar
@@ -560,11 +631,11 @@ func (s *Store) PaginatedQuestions(folderID *int64, pendingOnly bool, page, page
 		args = []any{pageSize, offset}
 	}
 
-	if err := s.db.QueryRow(countSQL, countArg...).Scan(&total); err != nil {
+	if err := s.queryRow(countSQL, countArg...).Scan(&total); err != nil {
 		return Page{}, err
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return Page{}, err
 	}
@@ -591,18 +662,22 @@ func (s *Store) RecursiveQuestions(folderID int64) ([]Question, error) {
 			INNER JOIN Folders f ON ar.FolderId = f.Id
 			WHERE ar.FolderId = 0 ORDER BY ar.CreateTime DESC`, questionColumns)
 	} else {
-		query = fmt.Sprintf(`WITH RECURSIVE folder_tree AS (
-				SELECT Id FROM Folders WHERE Id = $1
-				UNION ALL
-				SELECT f.Id FROM Folders f INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-			)
-			SELECT %s FROM AIResponses ar
-			INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
+		ids, err := s.subtreeIDs(folderID)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		query = fmt.Sprintf(`SELECT %s FROM AIResponses ar
 			INNER JOIN Folders f ON ar.FolderId = f.Id
-			ORDER BY ar.CreateTime DESC`, questionColumns)
-		args = []any{folderID}
+			WHERE ar.FolderId IN (%s)
+			ORDER BY ar.CreateTime DESC`, questionColumns, inClause(1, len(ids)))
+		for _, id := range ids {
+			args = append(args, id)
+		}
 	}
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +695,7 @@ func (s *Store) RecursiveQuestions(folderID int64) ([]Question, error) {
 
 // PendingCorrectionQuestions returns all flagged questions.
 func (s *Store) PendingCorrectionQuestions() ([]Question, error) {
-	rows, err := s.db.Query(fmt.Sprintf(`SELECT %s FROM AIResponses ar
+	rows, err := s.query(fmt.Sprintf(`SELECT %s FROM AIResponses ar
 		LEFT JOIN Folders f ON ar.FolderId = f.Id
 		WHERE COALESCE(ar.IsPendingCorrection, FALSE) = TRUE
 		ORDER BY ar.CreateTime DESC`, questionColumns))
@@ -642,14 +717,14 @@ func (s *Store) PendingCorrectionQuestions() ([]Question, error) {
 // PendingCorrectionCount returns how many questions are flagged.
 func (s *Store) PendingCorrectionCount() (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM AIResponses WHERE COALESCE(IsPendingCorrection, FALSE) = TRUE`).Scan(&n)
+	err := s.queryRow(`SELECT COUNT(*) FROM AIResponses WHERE COALESCE(IsPendingCorrection, FALSE) = TRUE`).Scan(&n)
 	return n, err
 }
 
 // FolderQuestionCount returns the direct question count for a folder.
 func (s *Store) FolderQuestionCount(folderID int64) (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM AIResponses WHERE FolderId = $1`, folderID).Scan(&n)
+	err := s.queryRow(`SELECT COUNT(*) FROM AIResponses WHERE FolderId = $1`, folderID).Scan(&n)
 	return n, err
 }
 
@@ -665,21 +740,25 @@ func (s *Store) Search(keyword string, folderID *int64) ([]Question, error) {
 			INNER JOIN Folders f ON ar.FolderId = f.Id
 			WHERE ar.FolderId = 0`, questionColumns)
 	case folderID != nil:
-		query = fmt.Sprintf(`WITH RECURSIVE folder_tree AS (
-				SELECT Id FROM Folders WHERE Id = $1
-				UNION ALL
-				SELECT f.Id FROM Folders f INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-			)
-			SELECT %s FROM AIResponses ar
-			INNER JOIN folder_tree ft ON ar.FolderId = ft.Id
-			INNER JOIN Folders f ON ar.FolderId = f.Id`, questionColumns)
-		args = []any{*folderID}
+		ids, err := s.subtreeIDs(*folderID)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return []Question{}, nil
+		}
+		query = fmt.Sprintf(`SELECT %s FROM AIResponses ar
+			INNER JOIN Folders f ON ar.FolderId = f.Id
+			WHERE ar.FolderId IN (%s)`, questionColumns, inClause(1, len(ids)))
+		for _, id := range ids {
+			args = append(args, id)
+		}
 	default:
 		query = fmt.Sprintf(`SELECT %s FROM AIResponses ar
 			LEFT JOIN Folders f ON ar.FolderId = f.Id`, questionColumns)
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +795,7 @@ func (s *Store) Search(keyword string, folderID *int64) ([]Question, error) {
 
 // GetQuestion fetches a single question by id.
 func (s *Store) GetQuestion(id int64) (Question, error) {
-	row := s.db.QueryRow(fmt.Sprintf(`SELECT %s FROM AIResponses ar
+	row := s.queryRow(fmt.Sprintf(`SELECT %s FROM AIResponses ar
 		LEFT JOIN Folders f ON ar.FolderId = f.Id WHERE ar.Id = $1`, questionColumns), id)
 	q, err := scanQuestion(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -739,9 +818,9 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 		return Question{}, err
 	}
 	var id int64
-	err = s.db.QueryRow(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7) RETURNING Id`,
-		question, options, answer, questionType, target, isAI, match.QuestionHash(question)).Scan(&id)
+	id, err = s.insertReturningID(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, FolderId, IsAi, CreateTime, QuestionHash)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)`,
+		question, options, answer, questionType, target, isAI, match.QuestionHash(question))
 	if err != nil {
 		return Question{}, err
 	}
@@ -759,7 +838,7 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 		return 0, err
 	}
 	folderName := "默认文件夹"
-	_ = s.db.QueryRow(`SELECT Name FROM Folders WHERE Id = $1`, target).Scan(&folderName)
+	_ = s.queryRow(`SELECT Name FROM Folders WHERE Id = $1`, target).Scan(&folderName)
 	questionHash := match.QuestionHash(question)
 
 	// Reuse an existing row for the same question, options and folder when one
@@ -773,27 +852,49 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 		return existing, nil
 	}
 
-	var id int64
-	err = s.db.QueryRow(`INSERT INTO AIResponses
+	// Guarded insert: the WHERE NOT EXISTS clause makes a concurrent insert of
+	// the same identity a no-op. PostgreSQL reports that no-op via RETURNING
+	// yielding no row; MySQL reports it as LastInsertId 0. Both then fall back
+	// to a lookup so the caller reuses the row that won the race.
+	from := ""
+	if s.dialect.isMySQL() {
+		from = " FROM DUAL"
+	}
+	insertSQL := `INSERT INTO AIResponses
 		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName, QuestionHash)
-		SELECT $1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7
+		SELECT $1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7` + from + `
 		WHERE NOT EXISTS (
 			SELECT 1 FROM AIResponses
-			WHERE QuestionHash = $7 AND Options IS NOT DISTINCT FROM $3 AND FolderId = $5
-		)
-		RETURNING Id`,
-		question, answer, options, questionType, target, folderName, questionHash).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The guarded WHERE matched an existing row (possibly inserted
-		// concurrently); reuse it instead of failing.
+			WHERE QuestionHash = $7 AND ` + s.dialect.nullSafeEqual("Options", "$3") + ` AND FolderId = $5
+		)`
+	insertArgs := []any{question, answer, options, questionType, target, folderName, questionHash}
+
+	lookupExisting := func() (int64, error) {
 		existing, lookupErr := s.idByLookup(questionHash, options, target)
 		if lookupErr != nil {
 			return 0, lookupErr
 		}
 		return existing, nil
 	}
-	if err != nil {
-		return 0, err
+
+	var id int64
+	if s.dialect.isPostgres() {
+		if err := s.queryRow(insertSQL+` RETURNING Id`, insertArgs...).Scan(&id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return lookupExisting()
+			}
+			return 0, err
+		}
+	} else {
+		res, err := s.exec(insertSQL, insertArgs...)
+		if err != nil {
+			return 0, err
+		}
+		inserted, _ := res.LastInsertId()
+		if inserted == 0 {
+			return lookupExisting()
+		}
+		id = inserted
 	}
 	s.changed()
 	return id, nil
@@ -803,8 +904,8 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 // stored options and the folder, or zero when none exists.
 func (s *Store) idByLookup(questionHash string, options *string, folderID int64) (int64, error) {
 	var id int64
-	err := s.db.QueryRow(`SELECT Id FROM AIResponses
-		WHERE QuestionHash = $1 AND Options IS NOT DISTINCT FROM $2 AND FolderId = $3
+	err := s.queryRow(`SELECT Id FROM AIResponses
+		WHERE QuestionHash = $1 AND `+s.dialect.nullSafeEqual("Options", "$2")+` AND FolderId = $3
 		ORDER BY Id LIMIT 1`, questionHash, options, folderID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
@@ -841,7 +942,7 @@ func (s *Store) UpdateQuestion(id int64, question, options, answer, questionType
 	}
 	sets = append(sets, "IsPendingCorrection = FALSE")
 	args = append(args, id)
-	res, err := s.db.Exec("UPDATE AIResponses SET "+strings.Join(sets, ", ")+
+	res, err := s.exec("UPDATE AIResponses SET "+strings.Join(sets, ", ")+
 		fmt.Sprintf(" WHERE Id = $%d", len(args)), args...)
 	if err != nil {
 		return err
@@ -855,7 +956,7 @@ func (s *Store) UpdateQuestion(id int64, question, options, answer, questionType
 
 // SetPendingCorrection toggles the pending-correction flag.
 func (s *Store) SetPendingCorrection(id int64, pending bool) error {
-	res, err := s.db.Exec(`UPDATE AIResponses SET IsPendingCorrection = $1 WHERE Id = $2`, pending, id)
+	res, err := s.exec(`UPDATE AIResponses SET IsPendingCorrection = $1 WHERE Id = $2`, pending, id)
 	if err != nil {
 		return err
 	}
@@ -873,7 +974,7 @@ func (s *Store) MoveQuestion(questionID, targetFolderID int64) error {
 	if err != nil {
 		return err
 	}
-	if _, err = s.db.Exec(`UPDATE AIResponses SET FolderId = $1 WHERE Id = $2`, target, questionID); err != nil {
+	if _, err = s.exec(`UPDATE AIResponses SET FolderId = $1 WHERE Id = $2`, target, questionID); err != nil {
 		return err
 	}
 	s.changed()
@@ -890,7 +991,7 @@ func (s *Store) CopyQuestion(questionID, targetFolderID int64) error {
 	if err != nil {
 		return err
 	}
-	if _, err = s.db.Exec(`INSERT INTO AIResponses
+	if _, err = s.exec(`INSERT INTO AIResponses
 		(Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, CreateTime, QuestionHash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)`,
 		q.Question, q.Options, q.Answer, q.QuestionType, target, q.IsAI, q.IsPendingCorrection,
@@ -903,7 +1004,7 @@ func (s *Store) CopyQuestion(questionID, targetFolderID int64) error {
 
 // DeleteQuestion removes a single question.
 func (s *Store) DeleteQuestion(id int64) error {
-	if _, err := s.db.Exec(`DELETE FROM AIResponses WHERE Id = $1`, id); err != nil {
+	if _, err := s.exec(`DELETE FROM AIResponses WHERE Id = $1`, id); err != nil {
 		return err
 	}
 	s.changed()
@@ -920,13 +1021,8 @@ func (s *Store) DeleteQuestions(ids []int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`DELETE FROM AIResponses WHERE Id = $1`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
 	for _, id := range ids {
-		if _, err := stmt.Exec(id); err != nil {
+		if _, err := execOn(s.dialect, tx, `DELETE FROM AIResponses WHERE Id = $1`, id); err != nil {
 			return err
 		}
 	}
@@ -949,7 +1045,7 @@ func (s *Store) ClearFolderQuestions(folderID int64) error {
 	}
 	defer tx.Rollback()
 	for _, id := range ids {
-		if _, err := tx.Exec(`DELETE FROM AIResponses WHERE FolderId = $1`, id); err != nil {
+		if _, err := execOn(s.dialect, tx, `DELETE FROM AIResponses WHERE FolderId = $1`, id); err != nil {
 			return err
 		}
 	}
@@ -962,9 +1058,8 @@ func (s *Store) ClearFolderQuestions(folderID int64) error {
 
 // AddFolder creates a folder and returns its id.
 func (s *Store) AddFolder(name string, parentID int64) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(`INSERT INTO Folders (Name, ParentId, CreateTime) VALUES ($1, $2, NOW()) RETURNING Id`,
-		name, parentID).Scan(&id)
+	id, err := s.insertReturningID(`INSERT INTO Folders (Name, ParentId, CreateTime) VALUES ($1, $2, NOW())`,
+		name, parentID)
 	if err != nil {
 		return 0, err
 	}
@@ -974,7 +1069,7 @@ func (s *Store) AddFolder(name string, parentID int64) (int64, error) {
 
 // RenameFolder updates a folder name.
 func (s *Store) RenameFolder(id int64, name string) error {
-	if _, err := s.db.Exec(`UPDATE Folders SET Name = $1 WHERE Id = $2`, name, id); err != nil {
+	if _, err := s.exec(`UPDATE Folders SET Name = $1 WHERE Id = $2`, name, id); err != nil {
 		return err
 	}
 	s.changed()
@@ -986,7 +1081,7 @@ func (s *Store) MoveFolder(id, parentID int64) error {
 	if id == parentID {
 		return errors.New("cannot move folder into itself")
 	}
-	if _, err := s.db.Exec(`UPDATE Folders SET ParentId = $1 WHERE Id = $2`, parentID, id); err != nil {
+	if _, err := s.exec(`UPDATE Folders SET ParentId = $1 WHERE Id = $2`, parentID, id); err != nil {
 		return err
 	}
 	s.changed()
@@ -1006,21 +1101,21 @@ func (s *Store) DeleteFolder(id int64, deleteQuestions bool) error {
 	defer tx.Rollback()
 
 	var parentID int64
-	_ = tx.QueryRow(`SELECT ParentId FROM Folders WHERE Id = $1`, id).Scan(&parentID)
+	_ = queryRowOn(s.dialect, tx, `SELECT ParentId FROM Folders WHERE Id = $1`, id).Scan(&parentID)
 
 	for _, fid := range ids {
 		if deleteQuestions {
-			if _, err := tx.Exec(`DELETE FROM AIResponses WHERE FolderId = $1`, fid); err != nil {
+			if _, err := execOn(s.dialect, tx, `DELETE FROM AIResponses WHERE FolderId = $1`, fid); err != nil {
 				return err
 			}
 		} else {
-			if _, err := tx.Exec(`UPDATE AIResponses SET FolderId = $1 WHERE FolderId = $2`, parentID, fid); err != nil {
+			if _, err := execOn(s.dialect, tx, `UPDATE AIResponses SET FolderId = $1 WHERE FolderId = $2`, parentID, fid); err != nil {
 				return err
 			}
 		}
 	}
 	for _, fid := range ids {
-		if _, err := tx.Exec(`DELETE FROM Folders WHERE Id = $1`, fid); err != nil {
+		if _, err := execOn(s.dialect, tx, `DELETE FROM Folders WHERE Id = $1`, fid); err != nil {
 			return err
 		}
 	}
@@ -1031,26 +1126,43 @@ func (s *Store) DeleteFolder(id int64, deleteQuestions bool) error {
 	return nil
 }
 
-// subtreeIDs returns a folder id together with all descendants.
+// subtreeIDs returns a folder id together with all descendants. The traversal is
+// done in Go so it does not depend on recursive CTE support (absent on MySQL
+// 5.7); folder trees are small enough that the extra round trips are cheap.
 func (s *Store) subtreeIDs(folderID int64) ([]int64, error) {
-	rows, err := s.db.Query(`WITH RECURSIVE folder_tree AS (
-		SELECT Id FROM Folders WHERE Id = $1
-		UNION ALL
-		SELECT f.Id FROM Folders f INNER JOIN folder_tree ft ON f.ParentId = ft.Id
-	) SELECT Id FROM folder_tree`, folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+	ids := []int64{}
+	seen := map[int64]bool{}
+	queue := []int64{folderID}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if seen[current] {
+			continue
+		}
+		seen[current] = true
+		ids = append(ids, current)
+
+		rows, err := s.query(`SELECT Id FROM Folders WHERE ParentId = $1`, current)
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		for rows.Next() {
+			var child int64
+			if err := rows.Scan(&child); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if !seen[child] {
+				queue = append(queue, child)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
 	}
-	return ids, rows.Err()
+	return ids, nil
 }
 
 // targetFolder resolves the actual folder for inserts, creating a
@@ -1059,12 +1171,13 @@ func (s *Store) targetFolder(parentID int64) (int64, error) {
 	if parentID == 0 {
 		return 0, nil
 	}
-	var hasSub bool
-	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM Folders WHERE ParentId = $1)`, parentID).Scan(&hasSub); err != nil {
+	var subCount int
+	if err := s.queryRow(`SELECT COUNT(*) FROM Folders WHERE ParentId = $1`, parentID).Scan(&subCount); err != nil {
 		return 0, err
 	}
+	hasSub := subCount > 0
 	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM Folders WHERE Id = $1`, parentID).Scan(&one)
+	err := s.queryRow(`SELECT 1 FROM Folders WHERE Id = $1`, parentID).Scan(&one)
 	exists := err == nil
 	if !exists {
 		return 0, nil
@@ -1073,13 +1186,12 @@ func (s *Store) targetFolder(parentID int64) (int64, error) {
 		return parentID, nil
 	}
 	var uncategorized int64
-	err = s.db.QueryRow(`SELECT Id FROM Folders WHERE ParentId = $1 AND Name = '[未分类]'`, parentID).Scan(&uncategorized)
+	err = s.queryRow(`SELECT Id FROM Folders WHERE ParentId = $1 AND Name = '[未分类]'`, parentID).Scan(&uncategorized)
 	if err == nil {
 		return uncategorized, nil
 	}
-	var id int64
-	err = s.db.QueryRow(`INSERT INTO Folders (Name, ParentId, CreateTime) VALUES ('[未分类]', $1, NOW()) RETURNING Id`,
-		parentID).Scan(&id)
+	id, err := s.insertReturningID(`INSERT INTO Folders (Name, ParentId, CreateTime) VALUES ('[未分类]', $1, NOW())`,
+		parentID)
 	if err != nil {
 		return 0, err
 	}
@@ -1118,6 +1230,16 @@ func requireOptionMatch(title string) bool {
 		}
 	}
 	return false
+}
+
+// inClause renders "$start,$start+1,...,$start+n-1" for an IN list. Callers pass
+// the values in the matching order.
+func inClause(start, n int) string {
+	parts := make([]string, n)
+	for i := 0; i < n; i++ {
+		parts[i] = fmt.Sprintf("$%d", start+i)
+	}
+	return strings.Join(parts, ", ")
 }
 
 var optionMatchKeywords = []string{"以下", "下列", "下面", "下叙"}

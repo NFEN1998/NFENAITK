@@ -16,7 +16,8 @@ const (
 // the row existed.
 func (s *Store) GetSetting(key string) (json.RawMessage, bool, error) {
 	var value string
-	err := s.db.QueryRow(`SELECT Value FROM AppSettings WHERE Key = $1`, key).Scan(&value)
+	err := s.queryRow(`SELECT `+s.dialect.settingValueColumn()+` FROM AppSettings WHERE `+
+		s.dialect.settingKeyColumn()+` = $1`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -28,13 +29,14 @@ func (s *Store) GetSetting(key string) (json.RawMessage, bool, error) {
 
 // SetSetting upserts a raw JSON value for a key.
 func (s *Store) SetSetting(key string, value json.RawMessage) error {
-	_, err := s.db.Exec(`INSERT INTO AppSettings (Key, Value, UpdateTime) VALUES ($1, $2, NOW())
-		ON CONFLICT (Key) DO UPDATE SET Value = EXCLUDED.Value, UpdateTime = NOW()`, key, string(value))
+	_, err := s.exec(`INSERT INTO AppSettings (`+s.dialect.settingKeyColumn()+`, `+
+		s.dialect.settingValueColumn()+`, UpdateTime) VALUES ($1, $2, NOW())`+
+		s.dialect.upsertSettingSuffix(), key, string(value))
 	return err
 }
 
 // DeleteSetting removes a key if present.
 func (s *Store) DeleteSetting(key string) error {
-	_, err := s.db.Exec(`DELETE FROM AppSettings WHERE Key = $1`, key)
+	_, err := s.exec(`DELETE FROM AppSettings WHERE `+s.dialect.settingKeyColumn()+` = $1`, key)
 	return err
 }

@@ -24,6 +24,7 @@
 
   function dbFields() {
     return {
+      driver: el("db-driver").value,
       host: el("db-host").value.trim(),
       port: el("db-port").value.trim(),
       user: el("db-user").value.trim(),
@@ -33,14 +34,18 @@
     };
   }
 
-  // buildDSN assembles a PostgreSQL URL from the individual fields. Values are
+  // buildDSN assembles a connection URL from the individual fields. Values are
   // percent-encoded so special characters in the password stay valid.
   function buildDSN(f) {
     var host = f.host || "127.0.0.1";
-    var port = f.port || "5432";
     var user = encodeURIComponent(f.user || "");
     var pass = f.password ? ":" + encodeURIComponent(f.password) : "";
     var db = f.database ? "/" + encodeURIComponent(f.database) : "";
+    if (f.driver === "mysql") {
+      var mysqlPort = f.port || "3306";
+      return "mysql://" + user + pass + "@" + host + ":" + mysqlPort + db;
+    }
+    var port = f.port || "5432";
     var ssl = f.sslmode ? "?sslmode=" + encodeURIComponent(f.sslmode) : "";
     return "postgres://" + user + pass + "@" + host + ":" + port + db + ssl;
   }
@@ -49,9 +54,33 @@
     dsnPreview.textContent = buildDSN(dbFields());
   }
 
+  // syncDriverUI hides the PostgreSQL-only SSL selector for MySQL.
+  function syncDriverUI() {
+    var mysql = el("db-driver").value === "mysql";
+    var sslField = el("db-sslmode-field");
+    if (sslField) sslField.classList.toggle("hidden", mysql);
+  }
+
+  // applyDriverDefaults switches the port when the operator picks a driver and
+  // the port is still one of the known defaults.
+  function applyDriverDefaults() {
+    var mysql = el("db-driver").value === "mysql";
+    var portEl = el("db-port");
+    var current = portEl.value.trim();
+    if (!current || current === "5432" || current === "3306") {
+      portEl.value = mysql ? "3306" : "5432";
+    }
+    syncDriverUI();
+  }
+
   ["db-host", "db-port", "db-user", "db-password", "db-name", "db-sslmode"].forEach(function (id) {
     el(id).addEventListener("input", refreshPreview);
     el(id).addEventListener("change", refreshPreview);
+  });
+
+  el("db-driver").addEventListener("change", function () {
+    applyDriverDefaults();
+    refreshPreview();
   });
 
   // Prefill from the server so the operator only edits what is needed.
@@ -60,6 +89,7 @@
     .then(function (s) {
       if (!s || !s.success) return;
       var d = s.state || {};
+      if (d.db_driver) el("db-driver").value = d.db_driver;
       if (d.db_host) el("db-host").value = d.db_host;
       if (d.db_port) el("db-port").value = d.db_port;
       if (d.db_user) el("db-user").value = d.db_user;
@@ -71,6 +101,7 @@
       if (d.admin_token) el("admin-token").value = d.admin_token;
       if (d.site_name) el("site-name").value = d.site_name;
       if (d.site_subtitle) el("site-subtitle").value = d.site_subtitle;
+      syncDriverUI();
       refreshPreview();
     })
     .catch(function () { refreshPreview(); });
@@ -93,7 +124,15 @@
     fetch("/setup/test-db", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(f),
+      body: JSON.stringify({
+        db_driver: f.driver,
+        db_host: f.host,
+        db_port: f.port,
+        db_user: f.user,
+        db_password: f.password,
+        db_name: f.database,
+        db_sslmode: f.sslmode,
+      }),
     })
       .then(function (r) { return r.json().catch(function () { return { success: false, message: "响应解析失败" }; }); })
       .then(function (res) {
@@ -116,6 +155,7 @@
 
     var f = dbFields();
     var payload = {
+      db_driver: f.driver,
       db_host: f.host,
       db_port: f.port,
       db_user: f.user,

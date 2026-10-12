@@ -21,9 +21,9 @@ func testStore(t *testing.T) *Store {
 		t.Skipf("postgres unavailable: %v", err)
 	}
 	t.Cleanup(func() {
-		s.db.Exec(`DELETE FROM UserRequestLogs`)
-		s.db.Exec(`DELETE FROM UserAuditLogs`)
-		s.db.Exec(`DELETE FROM Users`)
+		s.exec(`DELETE FROM UserRequestLogs`)
+		s.exec(`DELETE FROM UserAuditLogs`)
+		s.exec(`DELETE FROM Users`)
 		s.Close()
 	})
 	return s

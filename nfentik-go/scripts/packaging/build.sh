@@ -35,6 +35,12 @@ install -m 0644 "$ASSETS_DIR/nfentik-go.service" "$PKG_ROOT/nfentik-go.service"
 install -m 0755 "$ROOT_DIR/scripts/packaging/install.sh" "$PKG_ROOT/install.sh"
 install -m 0644 "$ASSETS_DIR/README.md" "$PKG_ROOT/README.md"
 
+# 打包 gojieba 词典：gojieba 默认按编译机上的源码路径找词典，把二进制部署到
+# 没有 Go 模块缓存的机器时会因缺词而启动失败，因此随包附带 dict/，由程序在
+# 可执行文件同级目录自动加载。
+GOJIEBA_DIR="$(cd "$ROOT_DIR" && go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba)"
+cp -r "$GOJIEBA_DIR/deps/cppjieba/dict" "$PKG_ROOT/dict"
+
 tar -czf "$OUT_DIR/$NAME.tar.gz" -C "$STAGE" nfentik-go
 sha256sum "$OUT_DIR/$NAME.tar.gz" > "$OUT_DIR/$NAME.tar.gz.sha256"
 

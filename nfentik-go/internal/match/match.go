@@ -9,6 +9,8 @@
 package match
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -38,8 +40,66 @@ var (
 	trailingPuncts = "，。！？、；：\u300c\u300d\u300e\u300f（）【】"
 )
 
+// jiebaDictFiles are the dictionary files gojieba needs, in the order its
+// NewJieba constructor expects them.
+var jiebaDictFiles = []string{
+	"jieba.dict.utf8",
+	"hmm_model.utf8",
+	"user.dict.utf8",
+	"idf.utf8",
+	"stop_words.utf8",
+}
+
 // jieba holds a singleton segmenter because loading the dictionary is expensive.
-var jieba = gojieba.NewJieba()
+var jieba = newSegmenter()
+
+// newSegmenter builds the singleton segmenter.
+//
+// gojieba resolves its dictionaries from the path of its own source file at
+// build time (via runtime.Caller), which only exists on the machine that
+// compiled the binary. That makes a released binary tied to the build host and
+// unusable on a machine without the Go module cache - notably a cross-compiled
+// Windows build, whose compiled-in path is a Linux path.
+//
+// To keep releases portable, the dictionary is looked up in this order:
+//  1. the JIEBA_DICT_DIR environment variable,
+//  2. a "dict" directory next to the running executable (shipped in release packages),
+//  3. gojieba's compiled-in default (the build host module cache).
+func newSegmenter() *gojieba.Jieba {
+	if dir := resolveDictDir(); dir != "" {
+		paths := make([]string, len(jiebaDictFiles))
+		for i, name := range jiebaDictFiles {
+			paths[i] = filepath.Join(dir, name)
+		}
+		return gojieba.NewJieba(paths...)
+	}
+	return gojieba.NewJieba()
+}
+
+// resolveDictDir returns the first usable dictionary directory, or "" to fall
+// back to gojieba's compiled-in default.
+func resolveDictDir() string {
+	if dir := strings.TrimSpace(os.Getenv("JIEBA_DICT_DIR")); dir != "" && isDictDir(dir) {
+		return dir
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "dict")
+		if isDictDir(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// isDictDir reports whether dir contains every dictionary file.
+func isDictDir(dir string) bool {
+	for _, name := range jiebaDictFiles {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return false
+		}
+	}
+	return true
+}
 
 // CloseSegmenter releases the jieba dictionary. Call once on shutdown.
 func CloseSegmenter() {

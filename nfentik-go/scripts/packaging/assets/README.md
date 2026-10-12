@@ -8,17 +8,23 @@
 nfentik-go              # 预编译二进制（linux/amd64）
 config/
   config.example.json   # 引导配置示例（数据库 / Redis 连接串）
+dict/                   # gojieba 中文分词词典（程序启动时自动加载）
 install.sh              # 一键安装脚本（复制到 /opt/nfentik 并安装 systemd 服务）
 nfentik-go.service      # systemd 服务单元
 README.md               # 本文件
 ```
 
+> `dict` 目录必须与二进制保持同级，程序启动时会自动加载其中的中文分词词典。`install.sh` 会自动复制该目录，手动安装时也请一并复制。如需把词典放到别处，可用环境变量 `JIEBA_DICT_DIR` 指向词典目录。
+
 ## 运行时依赖
 
 | 组件 | 是否必需 | 最低版本 | 用途 |
 | --- | --- | --- | --- |
-| PostgreSQL | 必需 | 13+ | 题库、用户、日志、配置的持久化存储 |
+| PostgreSQL | 二选一 | 13+ | 题库、用户、日志、配置的持久化存储 |
+| MySQL / MariaDB | 二选一 | MySQL 5.7+ / MariaDB 10.2+ | 同上，连接串用 `mysql://` |
 | Redis | 可选 | 5+ | 查询缓存与日志队列；缺失时自动退化为直连数据库 |
+
+数据库引擎由 `DATABASE_URL` 或 `config/config.json` 中的连接串前缀自动识别：`postgres://` 或 `mysql://`。
 
 安装数据库（Debian / Ubuntu）：
 
@@ -33,6 +39,17 @@ sudo apt-get install -y postgresql redis-server
 sudo -u postgres psql -c "CREATE USER nfentik WITH PASSWORD 'nfentik';"
 sudo -u postgres psql -c "CREATE DATABASE nfentik OWNER nfentik;"
 ```
+
+使用 MySQL / MariaDB 时，改用 `mysql` 客户端：
+
+```sql
+CREATE DATABASE nfentik CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'nfentik'@'%' IDENTIFIED BY 'nfentik';
+GRANT ALL PRIVILEGES ON nfentik.* TO 'nfentik'@'%';
+FLUSH PRIVILEGES;
+```
+
+对应连接串为 `mysql://nfentik:nfentik@127.0.0.1:3306/nfentik`。
 
 ## 安装
 

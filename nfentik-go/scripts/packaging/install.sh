@@ -21,6 +21,12 @@ mkdir -p "$INSTALL_DIR/config"
 echo "复制二进制..."
 install -m 0755 "$SCRIPT_DIR/nfentik-go" "$INSTALL_DIR/nfentik-go"
 
+if [ -d "$SCRIPT_DIR/dict" ]; then
+  echo "复制中文分词词典..."
+  mkdir -p "$INSTALL_DIR/dict"
+  cp -r "$SCRIPT_DIR/dict/." "$INSTALL_DIR/dict/"
+fi
+
 if [ ! -f "$INSTALL_DIR/config/config.json" ]; then
   if [ -f "$SCRIPT_DIR/config/config.example.json" ]; then
     install -m 0600 "$SCRIPT_DIR/config/config.example.json" "$INSTALL_DIR/config/config.json"

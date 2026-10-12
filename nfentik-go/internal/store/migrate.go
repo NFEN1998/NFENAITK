@@ -242,43 +242,27 @@ func (s *Store) Inspect() (IntegrityReport, error) {
 	report := IntegrityReport{TargetVersion: targetVersion()}
 
 	// Which core tables are missing.
-	rows, err := s.db.Query(
-		`SELECT t.name FROM unnest($1::text[]) AS t(name)
-		 WHERE NOT EXISTS (
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = current_schema() AND lower(table_name) = t.name)`,
-		pqArray(coreTables),
-	)
-	if err != nil {
-		return report, fmt.Errorf("检查缺失表: %w", err)
-	}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return report, err
+	for _, table := range coreTables {
+		exists, err := s.tableExists(table)
+		if err != nil {
+			return report, fmt.Errorf("检查缺失表: %w", err)
 		}
-		report.MissingTables = append(report.MissingTables, name)
+		if !exists {
+			report.MissingTables = append(report.MissingTables, table)
+		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return report, err
-	}
-	rows.Close()
 	report.Empty = len(report.MissingTables) == len(coreTables)
 
 	// Which expected columns are missing from the tables that do exist.
+	var err error
 	report.MissingColumns, err = s.missingColumns()
 	if err != nil {
 		return report, err
 	}
 
 	// Version table and recorded migrations.
-	var hasVersion bool
-	if err := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-		 WHERE table_schema = current_schema() AND lower(table_name) = 'schemamigrations')`,
-	).Scan(&hasVersion); err != nil {
+	hasVersion, err := s.tableExists("schemamigrations")
+	if err != nil {
 		return report, fmt.Errorf("检查版本表: %w", err)
 	}
 	report.HasVersionTable = hasVersion
@@ -316,43 +300,78 @@ func (s *Store) missingColumns() ([]ColumnIssue, error) {
 	var issues []ColumnIssue
 	for table, cols := range coreColumns {
 		// Rows for missing tables are reported by the table check; skip them.
-		var exists bool
-		if err := s.db.QueryRow(
-			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-			 WHERE table_schema = current_schema() AND lower(table_name) = $1)`,
-			table,
-		).Scan(&exists); err != nil {
+		exists, err := s.tableExists(table)
+		if err != nil {
 			return nil, fmt.Errorf("检查表 %s: %w", table, err)
 		}
 		if !exists {
 			continue
 		}
-		rows, err := s.db.Query(
-			`SELECT c.name FROM unnest($1::text[]) AS c(name)
-			 WHERE NOT EXISTS (
-				SELECT 1 FROM information_schema.columns
-				WHERE table_schema = current_schema() AND lower(table_name) = $2
-				  AND lower(column_name) = c.name)`,
-			pqArray(cols), table,
-		)
+		present, err := s.listColumns(table)
 		if err != nil {
 			return nil, fmt.Errorf("检查列 %s: %w", table, err)
 		}
-		for rows.Next() {
-			var col string
-			if err := rows.Scan(&col); err != nil {
-				rows.Close()
-				return nil, err
+		for _, col := range cols {
+			if !present[col] {
+				issues = append(issues, ColumnIssue{Table: table, Column: col})
 			}
-			issues = append(issues, ColumnIssue{Table: table, Column: col})
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
 	}
 	return issues, nil
+}
+
+// tableExists reports whether a table (case-insensitive) exists in the active
+// schema.
+func (s *Store) tableExists(table string) (bool, error) {
+	var n int
+	err := s.queryRow(`SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = `+s.dialect.currentSchemaExpr()+` AND lower(table_name) = $1`,
+		strings.ToLower(table)).Scan(&n)
+	return n > 0, err
+}
+
+// columnExists reports whether a column (case-insensitive) exists in a table.
+func (s *Store) columnExists(table, column string) (bool, error) {
+	var n int
+	err := s.queryRow(`SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = `+s.dialect.currentSchemaExpr()+`
+		  AND lower(table_name) = $1 AND lower(column_name) = $2`,
+		strings.ToLower(table), strings.ToLower(column)).Scan(&n)
+	return n > 0, err
+}
+
+// listColumns returns the lowercased column names of a table as a set.
+func (s *Store) listColumns(table string) (map[string]bool, error) {
+	rows, err := s.query(`SELECT lower(column_name) FROM information_schema.columns
+		WHERE table_schema = `+s.dialect.currentSchemaExpr()+` AND lower(table_name) = $1`,
+		strings.ToLower(table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
+// indexExists reports whether a named index exists in the active schema.
+func (s *Store) indexExists(name string) (bool, error) {
+	var n int
+	if s.dialect.isPostgres() {
+		err := s.queryRow(`SELECT COUNT(*) FROM pg_class c
+			JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+			WHERE c.relname = $1 AND nsp.nspname = current_schema()`, name).Scan(&n)
+		return n > 0, err
+	}
+	err := s.queryRow(`SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND index_name = $1`, name).Scan(&n)
+	return n > 0, err
 }
 
 // targetVersion returns the highest migration version known to this build.
@@ -364,16 +383,6 @@ func targetVersion() int {
 		}
 	}
 	return best
-}
-
-// pqArray renders a Go string slice as a PostgreSQL text[] literal. It is used
-// for the small, static core-table list only.
-func pqArray(items []string) string {
-	parts := make([]string, len(items))
-	for i, it := range items {
-		parts[i] = `"` + strings.ReplaceAll(it, `"`, `""`) + `"`
-	}
-	return "{" + strings.Join(parts, ",") + "}"
 }
 
 // migrate applies every pending migration in order, after an integrity check.
@@ -390,6 +399,9 @@ func pqArray(items []string) string {
 func (s *Store) migrate() error {
 	if err := s.ensureMigrationTable(); err != nil {
 		return err
+	}
+	if s.dialect.isMySQL() {
+		return s.migrateMySQL()
 	}
 
 	// Read-only integrity report, logged before any change so the startup log
@@ -459,6 +471,168 @@ func (s *Store) migrate() error {
 	return s.ensureQuestionHash()
 }
 
+// migrateMySQL sets up a MySQL database. Because MySQL lacks ADD COLUMN IF NOT
+// EXISTS and CREATE INDEX IF NOT EXISTS, the schema is created and repaired
+// with explicit information_schema checks rather than replayed DDL statements.
+// Every known migration is then recorded as applied so Inspect and
+// SchemaVersion agree with the PostgreSQL path.
+func (s *Store) migrateMySQL() error {
+	if report, err := s.Inspect(); err != nil {
+		log.Printf("数据库完整性检测失败: %v", err)
+	} else {
+		logIntegrityReport(report)
+	}
+	if err := s.ensureSchemaMySQL(); err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		if err := s.recordMigration(m); err != nil {
+			return err
+		}
+	}
+	if err := s.ensureRootFolder(); err != nil {
+		return err
+	}
+	return s.ensureQuestionHash()
+}
+
+// mysqlTableDDL creates every table on a fresh MySQL database. Indexes are
+// declared inline so a fresh install needs no extra steps. The statements are
+// idempotent (CREATE TABLE IF NOT EXISTS).
+var mysqlTableDDL = []string{
+	`CREATE TABLE IF NOT EXISTS Folders (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		Name VARCHAR(255) NOT NULL,
+		ParentId BIGINT DEFAULT 0,
+		CreateTime DATETIME DEFAULT NOW(),
+		PRIMARY KEY (Id)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS AIResponses (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		Question TEXT NOT NULL,
+		Options TEXT,
+		QuestionType VARCHAR(64),
+		Answer MEDIUMTEXT NOT NULL,
+		CreateTime DATETIME DEFAULT NOW(),
+		FolderId BIGINT DEFAULT 0,
+		FolderName VARCHAR(255) DEFAULT '默认文件夹',
+		IsAi TINYINT(1) DEFAULT 1,
+		IsPendingCorrection TINYINT(1) DEFAULT 0,
+		QuestionHash VARCHAR(64),
+		PRIMARY KEY (Id),
+		KEY idx_airesponses_folder (FolderId),
+		KEY idx_airesponses_pending (IsPendingCorrection),
+		KEY idx_airesponses_created (CreateTime),
+		KEY idx_airesponses_question_hash (QuestionHash)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS RequestLogs (
+		LogId BIGINT NOT NULL AUTO_INCREMENT,
+		RequestId VARCHAR(64) NOT NULL,
+		Timestamp VARCHAR(32) NOT NULL,
+		Method VARCHAR(16) NOT NULL,
+		Path VARCHAR(1024) NOT NULL,
+		Status INT,
+		ResponseTime BIGINT,
+		RequestBody MEDIUMTEXT,
+		ResponseBody MEDIUMTEXT,
+		Headers MEDIUMTEXT,
+		Ip VARCHAR(64),
+		UserAgent VARCHAR(512),
+		Stage VARCHAR(32) NOT NULL,
+		PRIMARY KEY (LogId),
+		KEY idx_request_logs_request_id (RequestId)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS DailyRequestCounts (
+		Day VARCHAR(10) NOT NULL,
+		Count BIGINT NOT NULL DEFAULT 0,
+		PRIMARY KEY (Day)
+	)` + mysqlTableOptions,
+	"CREATE TABLE IF NOT EXISTS AppSettings (" +
+		"`Key` VARCHAR(255) NOT NULL, " +
+		"`Value` MEDIUMTEXT NOT NULL, " +
+		"UpdateTime DATETIME DEFAULT NOW(), " +
+		"PRIMARY KEY (`Key`)" +
+		")" + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS Users (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		Token VARCHAR(128) NOT NULL,
+		PlanType VARCHAR(32) NOT NULL DEFAULT 'duration',
+		PlanCode VARCHAR(64) NOT NULL DEFAULT 'monthly',
+		PlanLabel VARCHAR(128) NOT NULL DEFAULT '',
+		StartAt VARCHAR(32) NOT NULL DEFAULT '',
+		ExpireAt VARCHAR(32),
+		TotalCount BIGINT,
+		UsedCount BIGINT NOT NULL DEFAULT 0,
+		RemainCount BIGINT,
+		Note VARCHAR(255) NOT NULL DEFAULT '',
+		Enabled TINYINT(1) NOT NULL DEFAULT 1,
+		CreatedAt DATETIME DEFAULT NOW(),
+		UpdatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (Id),
+		UNIQUE KEY idx_users_token (Token)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS UserRequestLogs (
+		LogId BIGINT NOT NULL AUTO_INCREMENT,
+		UserId BIGINT NOT NULL,
+		Token VARCHAR(128) NOT NULL DEFAULT '',
+		Timestamp VARCHAR(32) NOT NULL,
+		Question TEXT,
+		Options TEXT,
+		Answer TEXT,
+		Source VARCHAR(64),
+		Status VARCHAR(32),
+		ResponseTime BIGINT,
+		PRIMARY KEY (LogId),
+		KEY idx_user_logs_user (UserId, LogId)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS UserAuditLogs (
+		AuditId BIGINT NOT NULL AUTO_INCREMENT,
+		Action VARCHAR(64) NOT NULL,
+		UserId BIGINT,
+		UserToken VARCHAR(128) NOT NULL DEFAULT '',
+		Detail TEXT NOT NULL,
+		Actor VARCHAR(64) NOT NULL DEFAULT 'admin',
+		CreatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (AuditId),
+		KEY idx_user_audits_created (CreatedAt)
+	)` + mysqlTableOptions,
+}
+
+// mysqlColumnRepairs lists columns a partially created MySQL database might be
+// missing. Types match the CREATE TABLE definitions above.
+var mysqlColumnRepairs = []columnRepair{
+	{Table: "folders", Column: "parentid", DDL: "ParentId BIGINT DEFAULT 0"},
+	{Table: "folders", Column: "createtime", DDL: "CreateTime DATETIME DEFAULT NOW()"},
+	{Table: "airesponses", Column: "questiontype", DDL: "QuestionType VARCHAR(64)"},
+	{Table: "airesponses", Column: "createtime", DDL: "CreateTime DATETIME DEFAULT NOW()"},
+	{Table: "airesponses", Column: "folderid", DDL: "FolderId BIGINT DEFAULT 0"},
+	{Table: "airesponses", Column: "foldername", DDL: "FolderName VARCHAR(255) DEFAULT '默认文件夹'"},
+	{Table: "airesponses", Column: "isai", DDL: "IsAi TINYINT(1) DEFAULT 1"},
+	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection TINYINT(1) DEFAULT 0"},
+	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash VARCHAR(64)"},
+	{Table: "userrequestlogs", Column: "options", DDL: "Options TEXT"},
+	{Table: "userrequestlogs", Column: "answer", DDL: "Answer TEXT"},
+}
+
+// ensureSchemaMySQL creates any missing tables, columns and indexes.
+func (s *Store) ensureSchemaMySQL() error {
+	for _, ddl := range mysqlTableDDL {
+		if _, err := s.exec(ddl); err != nil {
+			return fmt.Errorf("初始化 MySQL 表结构失败: %w", err)
+		}
+	}
+	for _, fix := range mysqlColumnRepairs {
+		if !fix.required(s) {
+			continue
+		}
+		if _, err := s.exec("ALTER TABLE " + fix.Table + " ADD COLUMN " + fix.DDL); err != nil {
+			return fmt.Errorf("补齐字段 %s.%s 失败: %w", fix.Table, fix.Column, err)
+		}
+		log.Printf("已补齐缺失字段 %s.%s", fix.Table, fix.Column)
+	}
+	return nil
+}
+
 // logIntegrityReport prints a human readable summary of the startup check.
 func logIntegrityReport(r IntegrityReport) {
 	switch {
@@ -505,7 +679,7 @@ func (s *Store) repairSchema(report IntegrityReport) error {
 				if !isCreateTable(stmt) {
 					continue
 				}
-				if _, err := s.db.Exec(stmt); err != nil {
+				if _, err := s.exec(stmt); err != nil {
 					return fmt.Errorf("修复表结构失败: %w", err)
 				}
 			}
@@ -519,7 +693,7 @@ func (s *Store) repairSchema(report IntegrityReport) error {
 		if !fix.required(s) {
 			continue
 		}
-		if _, err := s.db.Exec(`ALTER TABLE ` + fix.Table + ` ADD COLUMN IF NOT EXISTS ` + fix.DDL); err != nil {
+		if _, err := s.exec(`ALTER TABLE ` + fix.Table + ` ADD COLUMN IF NOT EXISTS ` + fix.DDL); err != nil {
 			return fmt.Errorf("补齐字段 %s.%s 失败: %w", fix.Table, fix.Column, err)
 		}
 		log.Printf("已补齐缺失字段 %s.%s", fix.Table, fix.Column)
@@ -546,12 +720,7 @@ type columnRepair struct {
 // required reports whether the column is currently missing, so we only log and
 // execute the repair when it is actually needed.
 func (c columnRepair) required(s *Store) bool {
-	var exists bool
-	err := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		 WHERE table_schema=current_schema() AND lower(table_name)=$1 AND lower(column_name)=$2)`,
-		c.Table, c.Column,
-	).Scan(&exists)
+	exists, err := s.columnExists(c.Table, c.Column)
 	return err == nil && !exists
 }
 
@@ -573,19 +742,29 @@ var columnRepairs = []columnRepair{
 }
 
 func (s *Store) ensureMigrationTable() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS SchemaMigrations (
-		Version INTEGER PRIMARY KEY,
-		Name TEXT NOT NULL,
-		AppliedAt TIMESTAMP DEFAULT NOW()
-	)`)
-	if err != nil {
+	var ddl string
+	if s.dialect.isMySQL() {
+		ddl = `CREATE TABLE IF NOT EXISTS SchemaMigrations (
+			Version INTEGER NOT NULL,
+			Name VARCHAR(128) NOT NULL,
+			AppliedAt DATETIME DEFAULT NOW(),
+			PRIMARY KEY (Version)
+		)` + mysqlTableOptions
+	} else {
+		ddl = `CREATE TABLE IF NOT EXISTS SchemaMigrations (
+			Version INTEGER PRIMARY KEY,
+			Name TEXT NOT NULL,
+			AppliedAt TIMESTAMP DEFAULT NOW()
+		)`
+	}
+	if _, err := s.exec(ddl); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) appliedVersions() (map[int]bool, error) {
-	rows, err := s.db.Query(`SELECT Version FROM SchemaMigrations`)
+	rows, err := s.query(`SELECT Version FROM SchemaMigrations`)
 	if err != nil {
 		return nil, err
 	}
@@ -604,11 +783,7 @@ func (s *Store) appliedVersions() (map[int]bool, error) {
 // hasLegacySchema reports whether the database already contains the core tables
 // but no recorded migrations, meaning it predates the migration system.
 func (s *Store) hasLegacySchema() (bool, error) {
-	var exists bool
-	err := s.db.QueryRow(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables
-		WHERE table_schema = current_schema() AND lower(table_name) = 'airesponses')`).Scan(&exists)
-	return exists, err
+	return s.tableExists("airesponses")
 }
 
 // baselineVersion returns the highest migration marked as a baseline.
@@ -631,12 +806,12 @@ func (s *Store) applyMigration(m migration) error {
 	defer tx.Rollback()
 
 	for _, stmt := range m.Statements {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := execOn(s.dialect, tx, stmt); err != nil {
 			return fmt.Errorf("迁移 %03d %s 执行失败: %w", m.Version, m.Name, err)
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO SchemaMigrations (Version, Name) VALUES ($1, $2)
-		ON CONFLICT (Version) DO NOTHING`, m.Version, m.Name); err != nil {
+	if _, err := execOn(s.dialect, tx, `INSERT INTO SchemaMigrations (Version, Name) VALUES ($1, $2)`+
+		s.dialect.recordVersionSuffix(), m.Version, m.Name); err != nil {
 		return fmt.Errorf("记录迁移 %03d 失败: %w", m.Version, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -648,19 +823,26 @@ func (s *Store) applyMigration(m migration) error {
 // recordMigration marks a migration as applied without executing it. Used when
 // baselining an existing database.
 func (s *Store) recordMigration(m migration) error {
-	_, err := s.db.Exec(`INSERT INTO SchemaMigrations (Version, Name) VALUES ($1, $2)
-		ON CONFLICT (Version) DO NOTHING`, m.Version, m.Name)
+	_, err := s.exec(`INSERT INTO SchemaMigrations (Version, Name) VALUES ($1, $2)`+
+		s.dialect.recordVersionSuffix(), m.Version, m.Name)
 	return err
 }
 
-// ensureRootFolder creates the id 0 root folder and keeps the sequence ahead of
-// it so generated ids never collide with the root row.
+// ensureRootFolder creates the id 0 root folder and, on PostgreSQL, keeps the
+// sequence ahead of it so generated ids never collide with the root row. MySQL
+// handles that through AUTO_INCREMENT plus NO_AUTO_VALUE_ON_ZERO.
 func (s *Store) ensureRootFolder() error {
-	if _, err := s.db.Exec(`INSERT INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)
+	if s.dialect.isMySQL() {
+		if _, err := s.exec(`INSERT IGNORE INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)`); err != nil {
+			return fmt.Errorf("ensure root folder: %w", err)
+		}
+		return nil
+	}
+	if _, err := s.exec(`INSERT INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)
 		ON CONFLICT (Id) DO NOTHING`); err != nil {
 		return fmt.Errorf("ensure root folder: %w", err)
 	}
-	if _, err := s.db.Exec(`SELECT setval(pg_get_serial_sequence('folders', 'id'),
+	if _, err := s.exec(`SELECT setval(pg_get_serial_sequence('folders', 'id'),
 		COALESCE((SELECT MAX(id) FROM folders), 0) + 1, false)`); err != nil {
 		return fmt.Errorf("sync folders sequence: %w", err)
 	}
@@ -668,10 +850,14 @@ func (s *Store) ensureRootFolder() error {
 }
 
 // ensureTrigram enables the pg_trgm extension and its GIN index when the
-// database permits it. Failure is non-fatal: the query path degrades to the
-// bounded prefix probe.
+// database permits it. It is a no-op on MySQL, whose fuzzy candidates use the
+// bounded prefix probe. Failure is non-fatal: the query path degrades to that
+// same prefix probe.
 func (s *Store) ensureTrigram() error {
-	if _, err := s.db.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
+	if s.dialect.isMySQL() {
+		return nil
+	}
+	if _, err := s.exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
 		// A concurrent creator can win the race and surface a duplicate-key
 		// error even though the extension now exists; verify before giving up.
 		if !s.trigramAvailable() {
@@ -679,18 +865,14 @@ func (s *Store) ensureTrigram() error {
 			return nil
 		}
 	}
-	var exists bool
-	if err := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM pg_class c
-			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = 'idx_airesponses_question_trgm' AND n.nspname = current_schema())`,
-	).Scan(&exists); err != nil {
+	exists, err := s.indexExists("idx_airesponses_question_trgm")
+	if err != nil {
 		log.Printf("检查 trigram 索引失败，使用前缀回退: %v", err)
 		return nil
 	}
 	if !exists {
 		log.Printf("创建 trigram GIN 索引（CONCURRENTLY）")
-		if _, err := s.db.Exec(
+		if _, err := s.exec(
 			`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_trgm
 				ON AIResponses USING gin (Question gin_trgm_ops)`,
 		); err != nil {
@@ -705,7 +887,7 @@ func (s *Store) ensureTrigram() error {
 // trigramAvailable reports whether the pg_trgm extension is installed.
 func (s *Store) trigramAvailable() bool {
 	var ok bool
-	err := s.db.QueryRow(
+	err := s.queryRow(
 		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')`,
 	).Scan(&ok)
 	return err == nil && ok
@@ -715,7 +897,7 @@ func (s *Store) trigramAvailable() bool {
 // diagnostics endpoint.
 func (s *Store) SchemaVersion() (int, error) {
 	var v sql.NullInt64
-	err := s.db.QueryRow(`SELECT MAX(Version) FROM SchemaMigrations`).Scan(&v)
+	err := s.queryRow(`SELECT MAX(Version) FROM SchemaMigrations`).Scan(&v)
 	if err != nil {
 		return 0, err
 	}
@@ -733,13 +915,13 @@ func (s *Store) ensureQuestionHash() error {
 	// Skip the (potentially expensive) backfill scan once the column is fully
 	// populated. A count with a WHERE ... IS NULL LIMIT would still scan, so we
 	// probe for a single residual row.
-	var pending bool
-	if err := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM AIResponses WHERE QuestionHash IS NULL LIMIT 1)`,
-	).Scan(&pending); err != nil {
+	var pendingCount int
+	if err := s.queryRow(
+		`SELECT COUNT(*) FROM AIResponses WHERE QuestionHash IS NULL`,
+	).Scan(&pendingCount); err != nil {
 		return fmt.Errorf("检查 QuestionHash 回填: %w", err)
 	}
-	if pending {
+	if pendingCount > 0 {
 		if err := s.backfillQuestionHash(); err != nil {
 			return err
 		}
@@ -753,7 +935,7 @@ func (s *Store) backfillQuestionHash() error {
 	const batchSize = 2000
 	log.Printf("开始回填 QuestionHash（分批进行）")
 	for {
-		rows, err := s.db.Query(
+		rows, err := s.query(
 			`SELECT Id, Question FROM AIResponses WHERE QuestionHash IS NULL ORDER BY Id LIMIT $1`,
 			batchSize,
 		)
@@ -788,7 +970,7 @@ func (s *Store) backfillQuestionHash() error {
 			return err
 		}
 		for _, it := range items {
-			if _, err := tx.Exec(
+			if _, err := execOn(s.dialect, tx,
 				`UPDATE AIResponses SET QuestionHash = $1 WHERE Id = $2`,
 				match.QuestionHash(it.question), it.id,
 			); err != nil {
@@ -806,19 +988,24 @@ func (s *Store) backfillQuestionHash() error {
 // intentionally avoided: duplicate questions are tolerated by the matcher, which
 // scores every candidate sharing a hash.
 func (s *Store) ensureQuestionHashIndex() error {
-	var exists bool
-	if err := s.db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM pg_class c
-			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = 'idx_airesponses_question_hash' AND n.nspname = current_schema())`,
-	).Scan(&exists); err != nil {
+	exists, err := s.indexExists("idx_airesponses_question_hash")
+	if err != nil {
 		return err
 	}
 	if exists {
 		return nil
 	}
+	if s.dialect.isMySQL() {
+		log.Printf("创建 QuestionHash 索引")
+		if _, err := s.exec(
+			`CREATE INDEX idx_airesponses_question_hash ON AIResponses (QuestionHash)`,
+		); err != nil {
+			return fmt.Errorf("创建 QuestionHash 索引失败: %w", err)
+		}
+		return nil
+	}
 	log.Printf("创建 QuestionHash 索引（CONCURRENTLY）")
-	if _, err := s.db.Exec(
+	if _, err := s.exec(
 		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_hash
 			ON AIResponses (QuestionHash)`,
 	); err != nil {
