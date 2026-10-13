@@ -110,6 +110,66 @@ func TestLookupAnswerFallback(t *testing.T) {
 	}
 }
 
+func TestLookupAutoAdaptsAnswer(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		answerPath string
+		want       string
+	}{
+		{"data string", `{"code":1,"msg":"success","data":"北京","answer":"北京"}`, "", "北京"},
+		{"nested data.answer", `{"data":{"answer":"A"}}`, "", "A"},
+		{"top-level answer", `{"answer":"B"}`, "", "B"},
+		{"result.content", `{"result":{"content":"C"}}`, "", "C"},
+		{"array join", `{"data":["甲","乙"]}`, "", "甲###乙"},
+		{"case-insensitive key", `{"Answer":"Z"}`, "", "Z"},
+		{"explicit path wins", `{"data":{"answer":"X","other":"Y"}}`, "data.answer", "X"},
+		{"explicit path falls back to auto", `{"data":{"answer":"X"}}`, "data.missing", "X"},
+		{"status only is a miss", `{"success":true,"message":"ok","code":1}`, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			c := NewClient()
+			res, err := c.Lookup(context.Background(), Source{
+				URL: srv.URL, Method: "GET", AnswerPath: tc.answerPath,
+			}, Query{Title: "x"})
+			if tc.want == "" {
+				if !errors.Is(err, ErrNoAnswer) {
+					t.Fatalf("err = %v, want ErrNoAnswer", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Lookup: %v", err)
+			}
+			if res.Answer != tc.want {
+				t.Fatalf("answer = %q, want %q", res.Answer, tc.want)
+			}
+		})
+	}
+}
+
+func TestLookupAutoDetectsQuestion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":1,"q":"地球的卫星是","data":"月球"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient()
+	res, err := c.Lookup(context.Background(), Source{URL: srv.URL, Method: "GET"}, Query{Title: "地球的卫星是"})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if res.Answer != "月球" || res.Question != "地球的卫星是" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
 func TestLookupNoAnswer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"other":1}}`))

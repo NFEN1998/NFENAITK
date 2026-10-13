@@ -62,8 +62,8 @@ type Source struct {
     QueryParams    map[string]string `json:"queryParams"`    // GET 参数模板
     BodyTemplate   string            `json:"bodyTemplate"`   // POST JSON/表单模板
     ContentType    string            `json:"contentType"`    // application/json | form
-    AnswerPath     string            `json:"answerPath"`     // 点号路径，如 data.answer
-    QuestionPath   string            `json:"questionPath"`   // 可选，用于校验
+    AnswerPath     string            `json:"answerPath"`     // 可选，点号路径；留空则自动识别
+    QuestionPath   string            `json:"questionPath"`   // 可选，留空则自动识别回显题目
     TimeoutSeconds int               `json:"timeoutSeconds"` // 默认 10
     Trust          bool              `json:"trust"`          // 跳过相似度校验
     WriteBack      bool              `json:"writeBack"`
@@ -102,7 +102,7 @@ func (s Settings) Enabled() []Source
 
 模板渲染：`URL`、`QueryParams` 的值、`BodyTemplate` 中支持占位符 `{question}`、`{options}`、`{type}`，其中 `{options}`/`{type}` 缺失时替换为空串，并对 URL 场景做百分号编码。
 
-响应提取：`AnswerPath` 为空时按 `data.answer` → `answer` → `data` 依次尝试；路径按 `.` 分段在 `map[string]any` 中下钻，最终值若为字符串直接使用，若为数字/布尔则转字符串。
+响应提取：`AnswerPath` 优先；为空或未取到答案时自动识别——对响应 JSON 做广度优先遍历，命中常见答案键（`answer/anwser/correctAnswer/correct/data/result/content/text/value/output/body/detail/solution` 等），取最浅、最靠前的有效值，支持嵌套对象、数组（多值用 `###` 连接）与数字答案，键名大小写不敏感，并排除 `code/status/msg/message/success/time/total/calls/type` 等状态字段、过滤 `success/ok/成功` 等占位词（最大深度 5）。题目回显同样自动识别（键 `q/question/query/title` 等），未配置 `QuestionPath` 时也能做相似度校验。
 
 ### 2. 配置读写 `internal/config`
 

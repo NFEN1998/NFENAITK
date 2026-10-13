@@ -42,9 +42,11 @@
 
 1. THE System SHALL 支持在请求地址、请求参数与请求体中引用占位符 `{question}`、`{options}`、`{type}`。
 2. THE System SHALL 支持 `GET`（query 参数）与 `POST`（JSON 或表单）两种请求方式。
-3. WHEN 题库源配置了响应答案提取路径, THE System SHALL 按该路径从 JSON 响应中提取答案字符串。
-4. WHEN 题库源未配置响应答案提取路径, THE System SHALL 依次尝试常见字段 `data.answer`、`answer`、`data`。
-5. IF 第三方响应不是合法 JSON 或提取路径不存在, THE System SHALL 将该次查询视为未命中并记录原因。
+3. WHEN 题库源配置了响应答案提取路径, THE System SHALL 优先按该路径从 JSON 响应中提取答案字符串。
+4. WHEN 题库源未配置响应答案提取路径或所配置路径未取到答案, THE System SHALL 自动识别响应中的答案字段，按常见键名自浅至深查找，并支持嵌套对象、数组与数字答案。
+5. WHEN 题库源未配置题目回显路径, THE System SHALL 自动识别响应中回显的题目字段以用于答案校验。
+6. IF 响应中不存在可识别的答案字段, THE System SHALL 将该次查询视为未命中。
+7. IF 第三方响应不是合法 JSON, THE System SHALL 将该次查询视为未命中并记录原因。
 
 ### Requirement 3：查询链路接入
 

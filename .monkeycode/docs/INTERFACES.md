@@ -118,7 +118,7 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 }
 ```
 
-保存时校验：`name` 与 `url` 非空、`url` 为合法 http/https。占位符 `{question}`、`{options}`、`{type}` 在地址、参数与请求体中替换；`answerPath` 为空时按 `data.answer` → `answer` → `data` 回退提取。
+保存时校验：`name` 与 `url` 非空、`url` 为合法 http/https。占位符 `{question}`、`{options}`、`{type}` 在地址、参数与请求体中替换；`answerPath` 优先，留空或未取到答案时自动识别响应中的答案字段（支持嵌套对象、数组、数字与常见键名，并排除状态字段），`questionPath` 留空时自动识别回显题目用于校验。
 
 测试接口 `POST /api/admin/external-banks/test`：
 
@@ -131,5 +131,5 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 ## 客户端集成契约
 
 - OCS 用户脚本：把查询地址指向 `http://<服务器>:<端口>/query`，并把令牌填入配置。
-- 第三方题库：只需返回 JSON，通过 `answerPath` 指定答案字段即可接入。
+- 第三方题库：只需返回 JSON，答案会自动识别；如需精确指定字段，可填 `answerPath`。
 - AI 模型：兼容 OpenAI 的 `/v1/chat/completions`（含流式）接口。

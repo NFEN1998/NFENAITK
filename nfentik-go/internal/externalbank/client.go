@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,8 +117,12 @@ func (c *Client) Lookup(ctx context.Context, src Source, q Query) (Result, error
 	}
 
 	result := Result{Answer: extractAnswer(decoded, src.AnswerPath)}
-	if src.QuestionPath != "" {
+	if strings.TrimSpace(src.QuestionPath) != "" {
 		result.Question = valueToString(lookupPath(decoded, src.QuestionPath))
+	} else {
+		// No explicit question path: try to discover an echoed question so the
+		// answer can still be verified against the query.
+		result.Question = autoExtractQuestion(decoded)
 	}
 	if strings.TrimSpace(result.Answer) == "" {
 		return Result{}, ErrNoAnswer
@@ -162,18 +167,153 @@ func jsonStringEscape(v string) string {
 	return v
 }
 
-// extractAnswer reads the answer from the decoded JSON. An empty path falls
-// back to the common shapes data.answer, answer and data.
+// extractAnswer reads the answer from the decoded JSON. An explicit path wins;
+// when it is empty, or yields nothing, the answer is auto-detected from the
+// response shape so arbitrary third-party formats can be consumed without
+// hand-configuring a path.
 func extractAnswer(root any, path string) string {
 	if strings.TrimSpace(path) != "" {
-		return valueToString(lookupPath(root, path))
+		if s := valueToString(lookupPath(root, path)); strings.TrimSpace(s) != "" {
+			return s
+		}
 	}
-	for _, fallback := range []string{"data.answer", "answer", "data"} {
-		if v := valueToString(lookupPath(root, fallback)); v != "" {
-			return v
+	return autoExtractAnswer(root)
+}
+
+// autoExtractAnswer searches the response tree for a value under a well-known
+// answer key, preferring the shallowest and left-most match.
+func autoExtractAnswer(root any) string {
+	return searchByKeys(root, answerKeys, autoMaxDepth)
+}
+
+// autoExtractQuestion searches for an echoed question under a well-known key.
+func autoExtractQuestion(root any) string {
+	return searchByKeys(root, questionKeys, autoMaxDepth)
+}
+
+const autoMaxDepth = 5
+
+// answerKeys are the keys commonly used to carry an answer. Container values
+// under these keys are still traversed, so nested shapes like data.answer work.
+var answerKeys = []string{
+	"answer", "anwser", "answertext", "answer_text", "answerstr",
+	"correctanswer", "correct_answer", "correct", "correctanswertext",
+	"data", "result", "results", "content", "text", "value", "output", "body",
+	"detail", "details", "answers", "solution",
+}
+
+// questionKeys are the keys commonly used to echo the query back.
+var questionKeys = []string{"q", "question", "query", "title", "questiontext", "question_text"}
+
+// metaKeys are bookkeeping keys whose values must never be mistaken for an
+// answer (status codes, timings, counters and the like).
+var metaKeys = map[string]bool{
+	"code": true, "status": true, "state": true, "msg": true, "message": true,
+	"errmsg": true, "error": true, "err": true, "errcode": true, "errno": true,
+	"success": true, "ok": true, "time": true, "timestamp": true, "date": true,
+	"total": true, "calls": true, "count": true, "page": true, "pagesize": true,
+	"type": true, "id": true, "requestid": true, "traceid": true, "cost": true,
+	"elapsed": true, "spend": true, "took": true, "duration": true, "token": true,
+}
+
+// searchByKeys performs a breadth-first search for the first value held under
+// any of keys. It descends through objects and arrays (skipping meta subtrees)
+// up to maxDepth levels.
+func searchByKeys(root any, keys []string, maxDepth int) string {
+	type item struct {
+		value any
+		depth int
+	}
+	queue := []item{{root, 0}}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth > maxDepth {
+			continue
+		}
+		switch node := current.value.(type) {
+		case map[string]any:
+			// Direct (and case-insensitive) hits at this level, tried in the
+			// configured key order for determinism.
+			for _, wanted := range keys {
+				if raw, ok := node[wanted]; ok {
+					if s := stringifyAnswer(raw); s != "" {
+						return s
+					}
+				}
+			}
+			for key, raw := range node {
+				lower := strings.ToLower(key)
+				for _, wanted := range keys {
+					if lower == wanted {
+						if s := stringifyAnswer(raw); s != "" {
+							return s
+						}
+					}
+				}
+			}
+			for _, key := range sortedKeys(node) {
+				if metaKeys[strings.ToLower(key)] {
+					continue
+				}
+				queue = append(queue, item{node[key], current.depth + 1})
+			}
+		case []any:
+			for _, element := range node {
+				queue = append(queue, item{element, current.depth + 1})
+			}
 		}
 	}
 	return ""
+}
+
+// stringifyAnswer renders a scalar (or a list of scalars) as an answer string.
+// Objects return "" so the search continues into them.
+func stringifyAnswer(raw any) string {
+	switch value := raw.(type) {
+	case string:
+		return filterStatusWord(strings.TrimSpace(value))
+	case float64:
+		return valueToString(value)
+	case []any:
+		parts := make([]string, 0, len(value))
+		for _, element := range value {
+			if s := stringifyAnswer(element); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		switch len(parts) {
+		case 0:
+			return ""
+		case 1:
+			return parts[0]
+		default:
+			return strings.Join(parts, "###")
+		}
+	default:
+		return ""
+	}
+}
+
+// filterStatusWord drops boolean/status-like placeholders so they are not
+// treated as answers. Real answers are returned unchanged.
+func filterStatusWord(value string) string {
+	switch strings.ToLower(value) {
+	case "", "success", "ok", "true", "false", "null", "none", "nil",
+		"成功", "失败", "操作成功":
+		return ""
+	}
+	return value
+}
+
+// sortedKeys returns a map's keys in sorted order for deterministic traversal.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // lookupPath walks a dotted path through nested JSON objects.

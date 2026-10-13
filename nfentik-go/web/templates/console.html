@@ -9,7 +9,7 @@
 </head>
 <body>
 <div id="app" data-has-token="{{if .HasToken}}1{{else}}0{{end}}" data-multiuser="{{if .MultiUser}}1{{else}}0{{end}}">
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <span class="logo">Z</span>
       <div>
@@ -37,12 +37,18 @@
       <span id="conn-text">未连接</span>
     </div>
   </aside>
+  <div id="nav-backdrop" class="nav-backdrop"></div>
 
   <main class="main">
     <header class="topbar">
-      <div class="topbar-title">
-        <h1 id="view-title">概览</h1>
-        <p id="view-subtitle" class="muted small">运行概览与近 14 天请求量</p>
+      <div class="topbar-left">
+        <button id="nav-toggle" class="nav-toggle" type="button" aria-label="打开菜单" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-title">
+          <h1 id="view-title">概览</h1>
+          <p id="view-subtitle" class="muted small">运行概览与近 14 天请求量</p>
+        </div>
       </div>
       <div class="topbar-actions">
         <button id="refresh-btn" class="btn ghost">刷新</button>
@@ -363,7 +369,7 @@
 
     <section id="view-external" class="view">
       <div class="toolbar">
-        <span class="muted">本地题库未命中时，按优先级依次调用下列第三方题库；命中即回写并返回，全部未命中再走 AI。</span>
+        <span class="muted">本地题库未命中时，按优先级依次调用下列第三方题库；命中即回写并返回，全部未命中再走 AI。答案路径留空时自动识别响应中的答案字段。</span>
         <span class="spacer"></span>
         <button id="ext-add" class="btn">新增源</button>
         <button id="ext-save" class="btn primary">保存配置</button>
