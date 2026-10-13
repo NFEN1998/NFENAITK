@@ -921,6 +921,45 @@ func (s *Store) insertBankResponse(question, answer string, options, questionTyp
 	return id, nil
 }
 
+// ImportQuestion inserts a question pulled from an external source (for example
+// a MOGO import). Rows that already exist for the same normalized question,
+// options and folder are skipped. It does not invalidate the query cache per
+// row; the caller does that once when a bulk import finishes.
+func (s *Store) ImportQuestion(question, options, answer, questionType string, folderID int64, source string) (bool, error) {
+	question = strings.TrimSpace(question)
+	answer = strings.TrimSpace(answer)
+	if question == "" || answer == "" {
+		return false, nil
+	}
+	target, err := s.targetFolder(folderID)
+	if err != nil {
+		return false, err
+	}
+	var opts *string
+	if strings.TrimSpace(options) != "" {
+		opts = &options
+	}
+	var qtype *string
+	if strings.TrimSpace(questionType) != "" {
+		qtype = &questionType
+	}
+	hash := match.QuestionHash(question)
+	existing, err := s.idByLookup(hash, opts, target)
+	if err != nil {
+		return false, err
+	}
+	if existing != 0 {
+		return false, nil
+	}
+	if _, err := s.insertReturningID(`INSERT INTO AIResponses
+		(Question, Options, Answer, QuestionType, FolderId, IsAi, IsPendingCorrection, CreateTime, QuestionHash, Source)
+		VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), $6, $7)`,
+		question, opts, answer, qtype, target, hash, source); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // idByLookup returns the id of the row matching the question hash, the exact
 // stored options and the folder, or zero when none exists.
 func (s *Store) idByLookup(questionHash string, options *string, folderID int64) (int64, error) {

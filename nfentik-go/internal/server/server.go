@@ -41,6 +41,9 @@ type Server struct {
 	pendingMu sync.Mutex
 	pending   map[string]*pendingCall
 
+	importMu  sync.Mutex
+	importJob *mogoImportJob
+
 	maxLogs int
 }
 

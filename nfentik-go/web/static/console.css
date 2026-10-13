@@ -473,3 +473,9 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 .confirm-body { width: min(440px, 92vw); }
 .confirm-body h3 { margin: 0 0 10px; }
 .confirm-msg { margin: 0; color: #374151; line-height: 1.6; }
+
+/* ---- definition grid ---- */
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.kv:last-child { border-bottom: 0; }
+.kv span { color: var(--muted); }
+.kv strong { font-weight: 600; word-break: break-all; }

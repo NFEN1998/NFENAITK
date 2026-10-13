@@ -127,6 +127,34 @@ func TestInsertExternalResponseStoresSource(t *testing.T) {
 	_, _ = s.exec(`DELETE FROM AIResponses WHERE Id = $1`, id)
 }
 
+// TestImportQuestionDeduplicates ensures a repeated import row is skipped and
+// the imported row carries the import source tag.
+func TestImportQuestionDeduplicates(t *testing.T) {
+	s := testStore(t)
+	question := "导入去重测试 unique import dedupe"
+
+	created, err := s.ImportQuestion(question, "A\nB", "A", "单选题", 0, "import:mogo")
+	if err != nil || !created {
+		t.Fatalf("first import: created=%v err=%v", created, err)
+	}
+	again, err := s.ImportQuestion(question, "A\nB", "A", "单选题", 0, "import:mogo")
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if again {
+		t.Fatalf("second import should have been skipped")
+	}
+
+	var source string
+	if err := s.queryRow(`SELECT Source FROM AIResponses WHERE Question = $1`, question).Scan(&source); err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if source != "import:mogo" {
+		t.Fatalf("source = %q, want import:mogo", source)
+	}
+	_, _ = s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
+}
+
 // TestRejectsEmptyQuestion ensures a blank question is never persisted, which
 // would otherwise let a third-party bank plant an answer with no question.
 func TestRejectsEmptyQuestion(t *testing.T) {

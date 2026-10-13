@@ -108,7 +108,7 @@
   var titles = {
     dashboard: "概览", questions: "题库", folders: "文件夹", pending: "待修正",
     models: "模型配置", users: "用户管理", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
-    external: "第三方题库",
+    external: "第三方题库", import: "导入题库",
   };
 
   var subtitles = {
@@ -116,6 +116,7 @@
     questions: "本地题库的题目、来源与状态管理",
     folders: "按文件夹组织题库内容",
     pending: "被标记为待修正的题目",
+    import: "从 MOGO 控制台按增量方式导入题库",
     models: "配置 AI 供应商、模型与调用优先级",
     external: "本地未命中时按优先级调用的第三方题库",
     users: "用户令牌、套餐与配额管理",
@@ -139,6 +140,7 @@
     if (view === "questions") loadQuestions();
     if (view === "folders") loadFolders();
     if (view === "pending") loadPending();
+    if (view === "import") loadImportPanel();
     if (view === "models") loadModelConfig();
     if (view === "external") loadExternalBanks();
     if (view === "users") loadUsers();
@@ -1135,6 +1137,72 @@
       result.textContent = res.success ? ("成功，答案：" + (res.answer || "")) : (res.message || "失败");
     });
   }
+
+  // ------------------------------------------------------------ import (MOGO)
+
+  var importTimer = null;
+
+  function fillImportFolders() {
+    api("/folders").then(function (data) {
+      if (!data.success) return;
+      var sel = qs("imp-folder");
+      sel.innerHTML = '<option value="0">默认文件夹</option>' + (data.folders || []).map(function (f) {
+        return '<option value="' + f.id + '">' + esc(f.name) + "</option>";
+      }).join("");
+    });
+  }
+
+  function loadImportPanel() {
+    fillImportFolders();
+    refreshImportStatus();
+  }
+
+  function refreshImportStatus() {
+    api("/import/mogo/status").then(function (data) {
+      if (!data.success) return;
+      var st = data.state || {};
+      if (st.baseUrl && !qs("imp-base").value) qs("imp-base").value = st.baseUrl;
+      qs("imp-running").textContent = st.running ? "运行中…" : "未运行";
+      qs("imp-imported").textContent = st.imported || 0;
+      qs("imp-skipped").textContent = st.skipped || 0;
+      qs("imp-scanned").textContent = st.scanned || 0;
+      qs("imp-total").textContent = st.total || "-";
+      qs("imp-current").textContent = st.currentId || "-";
+      qs("imp-maxid").textContent = st.maxId || "-";
+      qs("imp-last").textContent = data.last_run || "-";
+      qs("imp-error").textContent = st.error || "";
+      qs("imp-start").disabled = !!st.running;
+      qs("imp-stop").disabled = !st.running;
+      clearTimeout(importTimer);
+      if (st.running) importTimer = setTimeout(refreshImportStatus, 1200);
+    });
+  }
+
+  qs("imp-start").addEventListener("click", function () {
+    var payload = {
+      base_url: qs("imp-base").value.trim(),
+      a_key: qs("imp-key").value.trim(),
+      folder_id: Number(qs("imp-folder").value) || 0,
+      item: Number(qs("imp-item").value) || 100,
+      mode: qs("imp-backfill").checked ? "backfill" : "incremental",
+    };
+    if (!payload.base_url) { toast("请填写 MOGO 地址", "error"); return; }
+    if (!payload.a_key) { toast("请填写 aKey", "error"); return; }
+    qs("imp-status").textContent = "启动中…";
+    api("/import/mogo/start", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
+      qs("imp-status").textContent = "";
+      if (!res.success) { toast(res.message || "启动失败", "error"); return; }
+      toast("导入已开始", "success");
+      refreshImportStatus();
+    });
+  });
+
+  qs("imp-stop").addEventListener("click", function () {
+    api("/import/mogo/stop", { method: "POST" }).then(function (res) {
+      toast(res.message || "已请求停止");
+      refreshImportStatus();
+    });
+  });
 
   // ----------------------------------------------------------------------- logs
 

@@ -85,6 +85,7 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | GET / PUT | `/api/admin/model-config` | 模型配置读写 |
 | GET / PUT | `/api/admin/external-banks` | 第三方题库配置读写 |
 | POST | `/api/admin/external-banks/test` | 第三方题库连通性测试 |
+| — | `/api/admin/import/mogo` | 从 MOGO 控制台增量/全量导入题库 |
 | GET | `/api/admin/stats` | 概览统计（含数据库结构版本） |
 | — | `/api/admin/users` | 用户增删改查、续费、重置令牌 |
 | GET | `/console` | 管理控制台页面 |
@@ -127,6 +128,24 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 ```
 
 成功返回 `{"success": true, "answer": "...", "question": "..."}`，失败返回 `{"success": false, "message": "..."}`。日志中的 `Authorization`、`X-Api-Key` 等敏感请求头在写入前会脱敏。
+
+### MOGO 题库导入
+
+从自有的 MOGO 控制台题库增量导入题目到本地题库，接口位于 `/api/admin/import/mogo` 下：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/admin/import/mogo/status` | 查询导入进度与增量游标 |
+| POST | `/api/admin/import/mogo/start` | 开始导入 |
+| POST | `/api/admin/import/mogo/stop` | 停止导入 |
+
+开始请求体：
+
+```json
+{ "base_url": "http://<mogo-host>:9988", "a_key": "<aKey>", "folder_id": 0, "item": 100, "mode": "incremental" }
+```
+
+`mode` 为 `incremental`（默认，仅导入比上次更新的数据，首次运行等价于回填）或 `backfill`（忽略游标重新扫描），`folder_id` 为导入目标文件夹，`item` 为每页条数。导入采用 MOGO 递增 id 作游标，按 id 倒序拉取并去重写入，来源标记为 `import:mogo`。单次仅允许一个任务运行。
 
 ## 客户端集成契约
 
