@@ -17,18 +17,21 @@
         <small>题库控制台</small>
       </div>
     </div>
-    <nav class="nav">
-      <button class="nav-item active" data-view="dashboard">概览</button>
-      <button class="nav-item" data-view="questions">题库</button>
-      <button class="nav-item" data-view="folders">文件夹</button>
-      <button class="nav-item" data-view="pending">待修正</button>
-      <button class="nav-item" data-view="models">模型配置</button>
-      <button class="nav-item" data-view="external">第三方题库</button>
-      <button class="nav-item" data-view="users">用户管理</button>
-      <button class="nav-item" data-view="ocs">OCS 配置</button>
-      <button class="nav-item" data-view="settings">系统设置</button>
-      <button class="nav-item" data-view="logs">请求日志</button>
-    </nav>
+      <nav class="nav">
+        <div class="nav-group">内容</div>
+        <button class="nav-item active" data-view="dashboard">概览</button>
+        <button class="nav-item" data-view="questions">题库</button>
+        <button class="nav-item" data-view="folders">文件夹</button>
+        <button class="nav-item" data-view="pending">待修正</button>
+        <div class="nav-group">智能接入</div>
+        <button class="nav-item" data-view="models">模型配置</button>
+        <button class="nav-item" data-view="external">第三方题库</button>
+        <button class="nav-item" data-view="ocs">OCS 配置</button>
+        <div class="nav-group">系统</div>
+        <button class="nav-item" data-view="users">用户管理</button>
+        <button class="nav-item" data-view="settings">系统设置</button>
+        <button class="nav-item" data-view="logs">请求日志</button>
+      </nav>
     <div class="sidebar-foot">
       <span id="conn-dot" class="dot"></span>
       <span id="conn-text">未连接</span>
@@ -37,7 +40,10 @@
 
   <main class="main">
     <header class="topbar">
-      <h1 id="view-title">概览</h1>
+      <div class="topbar-title">
+        <h1 id="view-title">概览</h1>
+        <p id="view-subtitle" class="muted small">运行概览与近 14 天请求量</p>
+      </div>
       <div class="topbar-actions">
         <button id="refresh-btn" class="btn ghost">刷新</button>
         <button id="logout-btn" class="btn ghost hidden">退出</button>

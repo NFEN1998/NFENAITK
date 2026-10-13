@@ -63,6 +63,19 @@
     external: "第三方题库",
   };
 
+  var subtitles = {
+    dashboard: "运行概览与近 14 天请求量",
+    questions: "本地题库的题目、来源与状态管理",
+    folders: "按文件夹组织题库内容",
+    pending: "被标记为待修正的题目",
+    models: "配置 AI 供应商、模型与调用优先级",
+    external: "本地未命中时按优先级调用的第三方题库",
+    users: "用户令牌、套餐与配额管理",
+    ocs: "生成 OCS 用户脚本所需的查询配置",
+    settings: "站点、网络、缓存与安全设置",
+    logs: "实时与历史的请求审计日志",
+  };
+
   function switchView(view) {
     state.view = view;
     document.querySelectorAll(".nav-item").forEach(function (btn) {
@@ -72,6 +85,8 @@
       sec.classList.toggle("active", sec.id === "view-" + view);
     });
     qs("view-title").textContent = titles[view] || view;
+    var sub = qs("view-subtitle");
+    if (sub) sub.textContent = subtitles[view] || "";
     if (view === "dashboard") loadDashboard();
     if (view === "questions") loadQuestions();
     if (view === "folders") loadFolders();
