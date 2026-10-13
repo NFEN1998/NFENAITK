@@ -913,7 +913,6 @@
     qs("s-model-timeout").value = s.modelResponseTimeout || 60;
     qs("s-heartbeat-timeout").value = s.modelHeartbeatTimeout || 6;
     qs("s-admin-token").value = s.adminToken || "";
-    qs("s-multiuser-enabled").checked = !!(s.multiUser && s.multiUser.enabled);
     qs("s-users-enabled").checked = s.usersEnabled !== false;
     qs("s-require-token").checked = !!s.requireTokenForQuery;
     qs("s-ulog-days").value = s.userLogRetentionDays || 30;
@@ -939,8 +938,6 @@
     s.modelResponseTimeout = Number(qs("s-model-timeout").value) || 60;
     s.modelHeartbeatTimeout = Number(qs("s-heartbeat-timeout").value) || 6;
     s.adminToken = qs("s-admin-token").value.trim();
-    s.multiUser = s.multiUser || { users: [] };
-    s.multiUser.enabled = qs("s-multiuser-enabled").checked;
     s.usersEnabled = qs("s-users-enabled").checked;
     s.requireTokenForQuery = qs("s-require-token").checked;
     s.userLogRetentionDays = Number(qs("s-ulog-days").value) || 30;

@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/static/console.css">
 </head>
 <body>
-<div id="app" data-has-token="{{if .HasToken}}1{{else}}0{{end}}" data-multiuser="{{if .MultiUser}}1{{else}}0{{end}}">
+<div id="app" data-has-token="{{if .HasToken}}1{{else}}0{{end}}">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
       <span class="logo">Z</span>
@@ -303,7 +303,6 @@
             <label>管理令牌 adminToken（为空时不校验管理接口）</label>
             <input id="s-admin-token" type="text" placeholder="留空则管理接口无需令牌">
           </div>
-          <label class="checkbox"><input type="checkbox" id="s-multiuser-enabled"> 启用多用户</label>
         </div>
 
         <div class="card">

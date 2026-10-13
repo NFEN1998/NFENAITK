@@ -10,7 +10,6 @@ type consoleData struct {
 	Title      string
 	SiteName   string
 	HasToken   bool
-	MultiUser  bool
 	Version    string
 	DataPath   string
 	ServerPort int
@@ -23,7 +22,6 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		Title:      settings.SiteName + " 管理控制台",
 		SiteName:   settings.SiteName,
 		HasToken:   settings.AdminToken != "",
-		MultiUser:  settings.MultiUser.Enabled,
 		Version:    "go",
 		DataPath:   s.DataPath(),
 		ServerPort: settings.Network.ServerPort,
