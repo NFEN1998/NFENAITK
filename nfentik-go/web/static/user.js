@@ -4,6 +4,15 @@
   var app = document.getElementById("app");
   var state = { token: "", user: null, status: "", plans: [], planMap: {}, logPage: 1, logPageSize: 20, logTotal: 0 };
 
+  // siteName comes from the system setting, injected by the page template, so
+  // the generated OCS config carries the configured question bank name.
+  function readSiteName() {
+    var m = document.querySelector('meta[name="app-site-name"]');
+    return m && m.content ? m.content : "nfentik";
+  }
+
+  var siteName = readSiteName();
+
   function qs(id) { return document.getElementById(id); }
 
   function esc(text) {
@@ -205,7 +214,7 @@
   function ocsConfigObject() {
     var base = window.location.origin.replace(/\/+$/, "");
     return [{
-      name: "NFENAI题库",
+      name: siteName,
       homepage: base,
       url: base + "/query",
       method: "get",

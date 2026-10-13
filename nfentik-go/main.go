@@ -81,7 +81,7 @@ func run(port int, bind string, lanAccess bool) error {
 		return fmt.Errorf("连接数据库失败: %w", err)
 	}
 	defer st.Close()
-	log.Printf("已连接 PostgreSQL: %s", redactDSN(dsn))
+	log.Printf("已连接数据库: %s", redactDSN(dsn))
 
 	// First run after an upgrade: pull settings out of any legacy files. The
 	// bootstrap file is (re)written so the connection strings survive the next
@@ -130,7 +130,7 @@ func run(port int, bind string, lanAccess bool) error {
 			log.Printf("已连接 Redis，查询缓存与日志队列已启用")
 		}
 	} else {
-		log.Printf("未启用 Redis，直接读写 PostgreSQL")
+		log.Printf("未启用 Redis，直接读写数据库")
 	}
 
 	srv, err := server.New(server.Deps{

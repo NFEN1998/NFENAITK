@@ -190,7 +190,7 @@ nfentik-go.exe -port 3000 -lan
 
 ```
 引导配置: /opt/nfentik/config/config.json
-已连接 PostgreSQL: postgres://nfentik:***@127.0.0.1:5432/nfentik?sslmode=disable
+已连接数据库: postgres://nfentik:***@127.0.0.1:5432/nfentik?sslmode=disable
 配置已从数据库加载
 ```
 

@@ -15,6 +15,15 @@
     live: true,
   };
 
+  // siteName mirrors the system setting so generated OCS config carries the
+  // configured question bank name instead of a hard-coded one.
+  function readSiteName() {
+    var m = document.querySelector('meta[name="app-site-name"]');
+    return m && m.content ? m.content : "nfentik";
+  }
+
+  var siteName = readSiteName();
+
   function qs(id) { return document.getElementById(id); }
 
   function headers() {
@@ -773,6 +782,10 @@
       var s = data.settings;
       qs("s-editor").value = JSON.stringify(s, null, 2);
       settingsJSON = s;
+      if (s.siteName) {
+        siteName = s.siteName;
+        if (state.view === "ocs") renderOCS();
+      }
       ensurePlans(function () { fillSettingsForm(s); });
       loadFolderOptions(s);
     });
@@ -901,7 +914,7 @@
   function ocsConfigObject(baseURL, token) {
     var base = String(baseURL || window.location.origin).replace(/\/+$/, "");
     return [{
-      name: "NFENAI题库",
+      name: siteName,
       homepage: base,
       url: base + "/query",
       method: "get",
