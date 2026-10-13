@@ -21,7 +21,56 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  function toast(message) { if (message) window.alert(message); }
+  // toast shows a styled, auto-dismissing notification.
+  function toast(message, type) {
+    if (!message) return;
+    var host = document.getElementById("toast-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "toast-host";
+      host.className = "toast-host";
+      document.body.appendChild(host);
+    }
+    var el = document.createElement("div");
+    el.className = "toast" + (type ? " " + type : "");
+    el.setAttribute("role", type === "error" ? "alert" : "status");
+    el.innerHTML = '<span class="toast-dot"></span><span class="toast-msg"></span><button type="button" class="toast-x" aria-label="关闭">×</button>';
+    el.querySelector(".toast-msg").textContent = String(message);
+    host.appendChild(el);
+    var timer = setTimeout(remove, type === "error" ? 5600 : 3200);
+    function remove() {
+      clearTimeout(timer);
+      if (!el.parentNode) return;
+      el.classList.add("leaving");
+      el.addEventListener("animationend", function () { el.remove(); }, { once: true });
+      setTimeout(function () { if (el.parentNode) el.remove(); }, 400);
+    }
+    el.querySelector(".toast-x").addEventListener("click", remove);
+  }
+
+  // confirmDialog shows a styled confirmation modal and resolves to a boolean.
+  function confirmDialog(message, opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var wrap = document.createElement("div");
+      wrap.className = "modal-overlay";
+      wrap.innerHTML =
+        '<div class="modal-card">' +
+        "<h2>" + esc(opts.title || "确认操作") + "</h2>" +
+        '<p class="muted">' + esc(message) + "</p>" +
+        '<div class="modal-actions">' +
+        '<button type="button" class="btn ghost" data-act="cancel">' + esc(opts.cancelText || "取消") + "</button>" +
+        '<button type="button" class="btn ' + (opts.danger ? "danger" : "primary") + '" data-act="ok">' + esc(opts.okText || "确定") + "</button>" +
+        "</div></div>";
+      document.body.appendChild(wrap);
+      function done(value) { wrap.remove(); resolve(value); }
+      wrap.addEventListener("click", function (e) {
+        var btn = e.target.closest("button[data-act]");
+        if (btn) { done(btn.dataset.act === "ok"); return; }
+        if (e.target === wrap) done(false);
+      });
+    });
+  }
 
   function headers() {
     var h = { "Content-Type": "application/json" };
@@ -318,10 +367,10 @@
 
   // ------------------------------------------------------------------ reset token
 
-  qs("user-reset-token").addEventListener("click", function () {
-    if (!window.confirm("重置后旧令牌立即失效，需要重新登录并更新 OCS 配置。确定继续？")) return;
+  qs("user-reset-token").addEventListener("click", async function () {
+    if (!(await confirmDialog("重置后旧令牌立即失效，需要重新登录并更新 OCS 配置。确定继续？", { danger: true, okText: "重置" }))) return;
     api("/reset-token", { method: "POST" }).then(function (res) {
-      if (!res.success) { toast(res.message); return; }
+      if (!res.success) { toast(res.message, "error"); return; }
       state.token = res.token;
       try { sessionStorage.setItem("nfentik_usertoken", state.token); } catch (e) {}
       renderOCS();

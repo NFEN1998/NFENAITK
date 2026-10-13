@@ -50,9 +50,57 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  function toast(message) {
+  // toast shows a styled, auto-dismissing notification. type is one of
+  // "success" | "error" | "warn" | "info" (default).
+  function toast(message, type) {
     if (!message) return;
-    window.alert(message);
+    var host = document.getElementById("toast-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "toast-host";
+      host.className = "toast-host";
+      document.body.appendChild(host);
+    }
+    var el = document.createElement("div");
+    el.className = "toast" + (type ? " " + type : "");
+    el.setAttribute("role", type === "error" ? "alert" : "status");
+    el.innerHTML = '<span class="toast-dot"></span><span class="toast-msg"></span><button type="button" class="toast-x" aria-label="关闭">×</button>';
+    el.querySelector(".toast-msg").textContent = String(message);
+    host.appendChild(el);
+
+    var timer = setTimeout(remove, type === "error" ? 5600 : 3200);
+    function remove() {
+      clearTimeout(timer);
+      if (!el.parentNode) return;
+      el.classList.add("leaving");
+      el.addEventListener("animationend", function () { el.remove(); }, { once: true });
+      setTimeout(function () { if (el.parentNode) el.remove(); }, 400);
+    }
+    el.querySelector(".toast-x").addEventListener("click", remove);
+  }
+
+  // confirmDialog shows a styled confirmation modal and resolves to a boolean.
+  function confirmDialog(message, opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var wrap = document.createElement("div");
+      wrap.className = "modal confirm-modal";
+      wrap.innerHTML =
+        '<div class="modal-body confirm-body">' +
+        '<h3>' + esc(opts.title || "确认操作") + "</h3>" +
+        '<p class="confirm-msg">' + esc(message) + "</p>" +
+        '<div class="modal-actions">' +
+        '<button type="button" class="btn ghost" data-act="cancel">' + esc(opts.cancelText || "取消") + "</button>" +
+        '<button type="button" class="btn ' + (opts.danger ? "danger" : "primary") + '" data-act="ok">' + esc(opts.okText || "确定") + "</button>" +
+        "</div></div>";
+      document.body.appendChild(wrap);
+      function done(value) { wrap.remove(); resolve(value); }
+      wrap.addEventListener("click", function (e) {
+        var btn = e.target.closest("button[data-act]");
+        if (btn) { done(btn.dataset.act === "ok"); return; }
+        if (e.target === wrap) done(false);
+      });
+    });
   }
 
   // ---------------------------------------------------------------- navigation
@@ -100,9 +148,33 @@
   }
 
   document.querySelectorAll(".nav-item").forEach(function (btn) {
-    btn.addEventListener("click", function () { switchView(btn.dataset.view); });
+    btn.addEventListener("click", function () {
+      switchView(btn.dataset.view);
+      setDrawer(false);
+    });
   });
   qs("refresh-btn").addEventListener("click", function () { switchView(state.view); });
+
+  // ---- mobile navigation drawer ----
+  var sidebar = qs("sidebar");
+  var navToggle = qs("nav-toggle");
+  var navBackdrop = qs("nav-backdrop");
+
+  function setDrawer(open) {
+    if (!sidebar) return;
+    sidebar.classList.toggle("open", open);
+    if (navBackdrop) navBackdrop.classList.toggle("show", open);
+    if (navToggle) navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  if (navToggle) {
+    navToggle.addEventListener("click", function () {
+      setDrawer(!sidebar.classList.contains("open"));
+    });
+  }
+  if (navBackdrop) navBackdrop.addEventListener("click", function () { setDrawer(false); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") setDrawer(false); });
+  window.addEventListener("resize", function () { if (window.innerWidth > 720) setDrawer(false); });
 
   // ------------------------------------------------------------------ dashboard
 
@@ -222,10 +294,11 @@
     });
   }
 
-  function deleteQuestion(id) {
-    if (!window.confirm("确定删除题目 #" + id + " 吗？")) return;
+  async function deleteQuestion(id) {
+    if (!(await confirmDialog("确定删除题目 #" + id + " 吗？", { danger: true, okText: "删除" }))) return;
     api("/questions/" + id, { method: "DELETE" }).then(function (res) {
-      if (!res.success) { toast(res.message); return; }
+      if (!res.success) { toast(res.message, "error"); return; }
+      toast("已删除题目 #" + id, "success");
       loadQuestions();
     });
   }
@@ -333,10 +406,10 @@
       });
     });
     el.querySelectorAll("[data-remove]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        if (!window.confirm("删除该文件夹？其子文件夹也会被删除。")) return;
+      btn.addEventListener("click", async function () {
+        if (!(await confirmDialog("删除该文件夹？其子文件夹也会被删除。", { danger: true, okText: "删除" }))) return;
         api("/folders/" + btn.dataset.remove, { method: "DELETE" })
-          .then(function (res) { if (!res.success) { toast(res.message); return; } loadFolders(); });
+          .then(function (res) { if (!res.success) { toast(res.message, "error"); return; } toast("已删除文件夹", "success"); loadFolders(); });
       });
     });
   }
@@ -607,10 +680,10 @@
       });
     });
     host.querySelectorAll("[data-del-platform]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
+      btn.addEventListener("click", async function () {
         var pi = Number(btn.dataset.delPlatform);
         var p = modelConfig.platforms[pi];
-        if (!window.confirm("删除平台「" + (p.displayName || p.name || p.id) + "」及其模型？")) return;
+        if (!(await confirmDialog("删除平台「" + (p.displayName || p.name || p.id) + "」及其模型？", { danger: true, okText: "删除" }))) return;
         modelConfig.platforms.splice(pi, 1);
         renderModelForm();
       });
@@ -1153,9 +1226,9 @@
     state.live = this.checked;
     if (state.live) startStream();
   });
-  qs("l-clear").addEventListener("click", function () {
-    if (!window.confirm("清空全部请求日志？")) return;
-    api("/logs/clear", { method: "DELETE" }).then(function () { logState.page = 1; loadLogs(); });
+  qs("l-clear").addEventListener("click", async function () {
+    if (!(await confirmDialog("清空全部请求日志？", { danger: true, okText: "清空" }))) return;
+    api("/logs/clear", { method: "DELETE" }).then(function () { toast("已清空请求日志", "success"); logState.page = 1; loadLogs(); });
   });
 
   // Detail modal for a single log entry.
@@ -1562,7 +1635,7 @@
     qs("modal").classList.remove("hidden");
   }
 
-  qs("u-table").addEventListener("click", function (e) {
+  qs("u-table").addEventListener("click", async function (e) {
     var btn = e.target.closest("button[data-act]");
     if (!btn) return;
     var id = btn.getAttribute("data-id");
@@ -1573,9 +1646,10 @@
     if (act === "renew") { openRenewUser(u); return; }
     if (act === "note") { openNoteUser(u); return; }
     if (act === "reset") {
-      if (!window.confirm("重置「" + shortToken(u.token) + "」的令牌？旧令牌将立即失效。")) return;
+      if (!(await confirmDialog("重置「" + shortToken(u.token) + "」的令牌？旧令牌将立即失效。", { danger: true, okText: "重置" }))) return;
       api("/users/" + id + "/reset-token", { method: "POST" }).then(function (res) {
-        if (!res.success) { toast(res.message); return; }
+        if (!res.success) { toast(res.message, "error"); return; }
+        toast("已重置令牌", "success");
         openDetail("新令牌", '<p class="muted small">请立即复制并告知用户，旧令牌已失效。</p><pre class="editor">' + esc(res.token) + "</pre>");
         loadUsers();
       });
@@ -1583,15 +1657,17 @@
     }
     if (act === "enable" || act === "disable") {
       api("/users/" + id, { method: "PUT", body: JSON.stringify({ enabled: act === "enable" }) }).then(function (res) {
-        if (!res.success) { toast(res.message); return; }
+        if (!res.success) { toast(res.message, "error"); return; }
+        toast(act === "enable" ? "已启用用户" : "已停用用户", "success");
         loadUsers();
       });
       return;
     }
     if (act === "delete") {
-      if (!window.confirm("删除用户「" + shortToken(u.token) + "」及其调用记录？此操作不可恢复。")) return;
+      if (!(await confirmDialog("删除用户「" + shortToken(u.token) + "」及其调用记录？此操作不可恢复。", { danger: true, okText: "删除" }))) return;
       api("/users/" + id, { method: "DELETE" }).then(function (res) {
-        if (!res.success) { toast(res.message); return; }
+        if (!res.success) { toast(res.message, "error"); return; }
+        toast("已删除用户", "success");
         loadUsers();
       });
     }
