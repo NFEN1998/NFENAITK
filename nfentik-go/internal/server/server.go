@@ -41,8 +41,9 @@ type Server struct {
 	pendingMu sync.Mutex
 	pending   map[string]*pendingCall
 
-	importMu  sync.Mutex
-	importJob *mogoImportJob
+	importMu   sync.Mutex
+	importOnce sync.Once
+	importJob  *mogoImportJob
 
 	maxLogs int
 }
@@ -128,6 +129,7 @@ func New(deps Deps) (*Server, error) {
 	if deps.Store != nil {
 		deps.Store.OnChange(s.invalidateQueryCache)
 	}
+	s.startMogoScheduler()
 	return s, nil
 }
 

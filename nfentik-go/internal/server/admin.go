@@ -38,8 +38,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.adminModelConfig(w, r)
 	case "external-banks":
 		s.adminExternalBanks(w, r, parts[1:])
-	case "import":
-		s.adminImport(w, r, parts[1:])
+	case "mogo":
+		s.adminMogo(w, r, parts[1:])
 	case "stats":
 		s.adminStats(w, r)
 	case "users":

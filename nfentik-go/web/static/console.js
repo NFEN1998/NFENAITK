@@ -140,7 +140,7 @@
     if (view === "questions") loadQuestions();
     if (view === "folders") loadFolders();
     if (view === "pending") loadPending();
-    if (view === "import") loadImportPanel();
+    if (view === "import") loadMogoPanel();
     if (view === "models") loadModelConfig();
     if (view === "external") loadExternalBanks();
     if (view === "users") loadUsers();
@@ -1140,69 +1140,184 @@
 
   // ------------------------------------------------------------ import (MOGO)
 
-  var importTimer = null;
+  var mogoSources = [];
+  var mogoFolderMap = {};
+  var mogoTimer = null;
 
-  function fillImportFolders() {
+  function mogoScheduleText(s) {
+    s = s || {};
+    if (s.type === "interval") return "每 " + (s.everyMinutes || 0) + " 分钟";
+    if (s.type === "daily") return "每天 " + (s.atTime || "00:00");
+    return "手动";
+  }
+
+  function mogoFolderName(id) {
+    return mogoFolderMap[id] || (Number(id) === 0 ? "默认文件夹" : ("#" + id));
+  }
+
+  function mogoSourceById(id) {
+    for (var i = 0; i < mogoSources.length; i++) {
+      if (mogoSources[i].id === id) return mogoSources[i];
+    }
+    return null;
+  }
+
+  function loadMogoPanel() {
     api("/folders").then(function (data) {
-      if (!data.success) return;
-      var sel = qs("imp-folder");
-      sel.innerHTML = '<option value="0">默认文件夹</option>' + (data.folders || []).map(function (f) {
-        return '<option value="' + f.id + '">' + esc(f.name) + "</option>";
-      }).join("");
+      if (data.success) {
+        mogoFolderMap = {};
+        (data.folders || []).forEach(function (f) { mogoFolderMap[f.id] = f.name; });
+      }
+      return api("/mogo/sources");
+    }).then(function (data) {
+      if (!data || !data.success) return;
+      mogoSources = data.sources || [];
+      renderMogoTable();
+      refreshMogoStatus();
     });
   }
 
-  function loadImportPanel() {
-    fillImportFolders();
-    refreshImportStatus();
+  function renderMogoTable() {
+    var body = qs("ms-table").querySelector("tbody");
+    if (!mogoSources.length) {
+      body.innerHTML = '<tr><td colspan="7" class="muted">尚未配置 MOGO 源</td></tr>';
+      return;
+    }
+    body.innerHTML = mogoSources.map(function (s) {
+      return '<tr data-id="' + esc(s.id) + '">' +
+        "<td>" + esc(s.name) + "</td>" +
+        '<td class="mono small">' + esc(s.baseUrl) + "</td>" +
+        "<td>" + esc(mogoFolderName(s.folderId)) + "</td>" +
+        "<td>" + esc(mogoScheduleText(s.schedule)) + "</td>" +
+        "<td>" + (s.enabled ? '<span class="pill s2">启用</span>' : '<span class="pill disabled">停用</span>') + "</td>" +
+        '<td class="small">' + (s.lastRun ? esc(s.lastRun) + " · 导入 " + (s.lastImported || 0) : "-") +
+        (s.lastError ? '<br><span class="error small">' + esc(s.lastError) + "</span>" : "") + "</td>" +
+        '<td><div class="row-actions">' +
+        '<button class="btn small primary" data-act="run">运行</button>' +
+        '<button class="btn small ghost" data-act="edit">编辑</button>' +
+        '<button class="btn small ghost" data-act="test">测试</button>' +
+        '<button class="btn small danger" data-act="del">删除</button>' +
+        "</div></td></tr>";
+    }).join("");
   }
 
-  function refreshImportStatus() {
-    api("/import/mogo/status").then(function (data) {
+  function openMogoEditor(src) {
+    src = src || {
+      item: 50, mode: "incremental", enabled: true,
+      schedule: { type: "manual", everyMinutes: 60, atTime: "03:00" },
+      throttle: { pageDelayMs: 1500, rowDelayMs: 0, maxPerRun: 0 },
+    };
+    var folderOptions = [{ value: "0", label: "默认文件夹" }].concat(Object.keys(mogoFolderMap).map(function (k) {
+      return { value: String(k), label: mogoFolderMap[k] };
+    }));
+    openModal(src.id ? ("编辑源 · " + src.name) : "新增 MOGO 源", [
+      { name: "name", label: "名称", type: "text", value: src.name || "" },
+      { name: "baseUrl", label: "MOGO 地址", type: "text", value: src.baseUrl || "" },
+      { name: "aKey", label: "aKey", type: "text", value: src.aKey || "" },
+      { name: "folderId", label: "目标文件夹", options: folderOptions, value: String(src.folderId || 0) },
+      { name: "item", label: "每页条数（1-500）", type: "number", value: String(src.item || 50) },
+      { name: "mode", label: "模式", options: [{ value: "incremental", label: "增量" }, { value: "backfill", label: "回填全部" }], value: src.mode || "incremental" },
+      { name: "schedType", label: "计划", options: [{ value: "manual", label: "手动" }, { value: "interval", label: "间隔" }, { value: "daily", label: "每天定点" }], value: (src.schedule && src.schedule.type) || "manual" },
+      { name: "everyMinutes", label: "间隔分钟（间隔模式）", type: "number", value: String((src.schedule && src.schedule.everyMinutes) || 60) },
+      { name: "atTime", label: "每天时间 HH:MM（定点模式）", type: "text", value: (src.schedule && src.schedule.atTime) || "03:00" },
+      { name: "pageDelayMs", label: "每页间隔毫秒（限速）", type: "number", value: String((src.throttle && src.throttle.pageDelayMs) || 1500) },
+      { name: "rowDelayMs", label: "每行间隔毫秒", type: "number", value: String((src.throttle && src.throttle.rowDelayMs) || 0) },
+      { name: "maxPerRun", label: "单次上限条数（0 不限）", type: "number", value: String((src.throttle && src.throttle.maxPerRun) || 0) },
+      { name: "enabled", label: "启用", options: [{ value: "1", label: "启用" }, { value: "0", label: "停用" }], value: src.enabled ? "1" : "0" },
+    ], function (v) {
+      var obj = {
+        id: src.id || "",
+        name: v.name.trim(),
+        baseUrl: v.baseUrl.trim(),
+        aKey: v.aKey.trim(),
+        folderId: Number(v.folderId) || 0,
+        item: Number(v.item) || 50,
+        mode: v.mode,
+        enabled: v.enabled === "1",
+        schedule: { type: v.schedType, everyMinutes: Number(v.everyMinutes) || 0, atTime: v.atTime.trim() },
+        throttle: { pageDelayMs: Number(v.pageDelayMs) || 0, rowDelayMs: Number(v.rowDelayMs) || 0, maxPerRun: Number(v.maxPerRun) || 0 },
+        maxId: src.maxId || 0,
+        lastRun: src.lastRun || "",
+        lastImported: src.lastImported || 0,
+        lastError: src.lastError || "",
+      };
+      if (!obj.name) { toast("请填写名称", "error"); return; }
+      if (!obj.baseUrl) { toast("请填写 MOGO 地址", "error"); return; }
+      if (!obj.aKey) { toast("请填写 aKey", "error"); return; }
+      var list = mogoSources.slice();
+      var idx = -1;
+      for (var i = 0; i < list.length; i++) { if (list[i].id === obj.id) idx = i; }
+      if (idx >= 0) list[idx] = obj; else list.push(obj);
+      api("/mogo/sources", { method: "PUT", body: JSON.stringify({ sources: list }) }).then(function (res) {
+        if (!res.success) { toast(res.message || "保存失败", "error"); return; }
+        toast("已保存", "success");
+        closeModal();
+        loadMogoPanel();
+      });
+    });
+  }
+
+  qs("ms-table").addEventListener("click", async function (e) {
+    var btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    var tr = btn.closest("tr");
+    var id = tr.getAttribute("data-id");
+    var src = mogoSourceById(id);
+    if (!src) return;
+    var act = btn.getAttribute("data-act");
+    if (act === "edit") { openMogoEditor(src); return; }
+    if (act === "test") {
+      api("/mogo/test", { method: "POST", body: JSON.stringify({ base_url: src.baseUrl, a_key: src.aKey }) }).then(function (res) {
+        toast(res.message || (res.success ? "连接成功" : "连接失败"), res.success ? "success" : "error");
+      });
+      return;
+    }
+    if (act === "run") {
+      api("/mogo/sources/" + encodeURIComponent(id) + "/run", { method: "POST" }).then(function (res) {
+        if (!res.success) { toast(res.message || "启动失败", "error"); return; }
+        toast("导入已开始", "success");
+        refreshMogoStatus();
+      });
+      return;
+    }
+    if (act === "del") {
+      if (!(await confirmDialog("删除源「" + src.name + "」？", { danger: true, okText: "删除" }))) return;
+      var list = mogoSources.filter(function (s) { return s.id !== id; });
+      api("/mogo/sources", { method: "PUT", body: JSON.stringify({ sources: list }) }).then(function (res) {
+        if (!res.success) { toast(res.message || "删除失败", "error"); return; }
+        toast("已删除", "success");
+        loadMogoPanel();
+      });
+    }
+  });
+
+  qs("ms-add").addEventListener("click", function () { openMogoEditor(null); });
+  qs("ms-refresh").addEventListener("click", loadMogoPanel);
+  qs("ms-stop").addEventListener("click", function () {
+    api("/mogo/stop", { method: "POST" }).then(function (res) {
+      toast(res.message || "已请求停止");
+      refreshMogoStatus();
+    });
+  });
+
+  function refreshMogoStatus() {
+    api("/mogo/status").then(function (data) {
       if (!data.success) return;
       var st = data.state || {};
-      if (st.baseUrl && !qs("imp-base").value) qs("imp-base").value = st.baseUrl;
-      qs("imp-running").textContent = st.running ? "运行中…" : "未运行";
-      qs("imp-imported").textContent = st.imported || 0;
-      qs("imp-skipped").textContent = st.skipped || 0;
-      qs("imp-scanned").textContent = st.scanned || 0;
-      qs("imp-total").textContent = st.total || "-";
-      qs("imp-current").textContent = st.currentId || "-";
-      qs("imp-maxid").textContent = st.maxId || "-";
-      qs("imp-last").textContent = data.last_run || "-";
-      qs("imp-error").textContent = st.error || "";
-      qs("imp-start").disabled = !!st.running;
-      qs("imp-stop").disabled = !st.running;
-      clearTimeout(importTimer);
-      if (st.running) importTimer = setTimeout(refreshImportStatus, 1200);
+      qs("ms-running").textContent = st.running ? "运行中…" : "未运行";
+      qs("ms-source").textContent = st.sourceName || "-";
+      qs("ms-imported").textContent = st.imported || 0;
+      qs("ms-skipped").textContent = st.skipped || 0;
+      qs("ms-scanned").textContent = st.scanned || 0;
+      qs("ms-total").textContent = st.total || "-";
+      qs("ms-current").textContent = st.currentId || "-";
+      qs("ms-maxid").textContent = st.maxId || "-";
+      qs("ms-error").textContent = st.error || "";
+      qs("ms-stop-wrap").style.display = st.running ? "" : "none";
+      clearTimeout(mogoTimer);
+      if (st.running) mogoTimer = setTimeout(refreshMogoStatus, 1200);
     });
   }
-
-  qs("imp-start").addEventListener("click", function () {
-    var payload = {
-      base_url: qs("imp-base").value.trim(),
-      a_key: qs("imp-key").value.trim(),
-      folder_id: Number(qs("imp-folder").value) || 0,
-      item: Number(qs("imp-item").value) || 100,
-      mode: qs("imp-backfill").checked ? "backfill" : "incremental",
-    };
-    if (!payload.base_url) { toast("请填写 MOGO 地址", "error"); return; }
-    if (!payload.a_key) { toast("请填写 aKey", "error"); return; }
-    qs("imp-status").textContent = "启动中…";
-    api("/import/mogo/start", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
-      qs("imp-status").textContent = "";
-      if (!res.success) { toast(res.message || "启动失败", "error"); return; }
-      toast("导入已开始", "success");
-      refreshImportStatus();
-    });
-  });
-
-  qs("imp-stop").addEventListener("click", function () {
-    api("/import/mogo/stop", { method: "POST" }).then(function (res) {
-      toast(res.message || "已请求停止");
-      refreshImportStatus();
-    });
-  });
 
   // ----------------------------------------------------------------------- logs
 

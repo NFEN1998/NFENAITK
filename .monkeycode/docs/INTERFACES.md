@@ -85,7 +85,7 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | GET / PUT | `/api/admin/model-config` | 模型配置读写 |
 | GET / PUT | `/api/admin/external-banks` | 第三方题库配置读写 |
 | POST | `/api/admin/external-banks/test` | 第三方题库连通性测试 |
-| — | `/api/admin/import/mogo` | 从 MOGO 控制台增量/全量导入题库 |
+| — | `/api/admin/mogo` | MOGO 多源题库导入（源管理、计划、限速、运行进度） |
 | GET | `/api/admin/stats` | 概览统计（含数据库结构版本） |
 | — | `/api/admin/users` | 用户增删改查、续费、重置令牌 |
 | GET | `/console` | 管理控制台页面 |
@@ -131,21 +131,41 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 
 ### MOGO 题库导入
 
-从自有的 MOGO 控制台题库增量导入题目到本地题库，接口位于 `/api/admin/import/mogo` 下：
+从自有的 MOGO 控制台题库导入题目到本地题库，支持配置多个源、按计划定时增量导入，并对导入限速。接口位于 `/api/admin/mogo` 下：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/admin/import/mogo/status` | 查询导入进度与增量游标 |
-| POST | `/api/admin/import/mogo/start` | 开始导入 |
-| POST | `/api/admin/import/mogo/stop` | 停止导入 |
+| GET | `/api/admin/mogo/sources` | 列出已配置的源 |
+| PUT | `/api/admin/mogo/sources` | 覆盖保存源列表 |
+| POST | `/api/admin/mogo/sources/{id}/run` | 立即运行某个源 |
+| POST | `/api/admin/mogo/stop` | 停止当前导入任务 |
+| GET | `/api/admin/mogo/status` | 当前任务进度 |
+| POST | `/api/admin/mogo/test` | 测试某个源连通性 |
 
-开始请求体：
+源配置字段（`sources` 数组元素）：
 
 ```json
-{ "base_url": "http://<mogo-host>:9988", "a_key": "<aKey>", "folder_id": 0, "item": 100, "mode": "incremental" }
+{
+  "id": "mogo-1",
+  "name": "MOGO 主库",
+  "enabled": true,
+  "baseUrl": "http://<mogo-host>:9988",
+  "aKey": "<aKey>",
+  "folderId": 0,
+  "item": 50,
+  "mode": "incremental",
+  "schedule": { "type": "manual", "everyMinutes": 60, "atTime": "03:00" },
+  "throttle": { "pageDelayMs": 1500, "rowDelayMs": 0, "maxPerRun": 0 },
+  "maxId": 0,
+  "lastRun": "",
+  "lastImported": 0
+}
 ```
 
-`mode` 为 `incremental`（默认，仅导入比上次更新的数据，首次运行等价于回填）或 `backfill`（忽略游标重新扫描），`folder_id` 为导入目标文件夹，`item` 为每页条数。导入采用 MOGO 递增 id 作游标，按 id 倒序拉取并去重写入，来源标记为 `import:mogo`。单次仅允许一个任务运行。
+- `mode`：`incremental`（仅导入比游标更新的数据，首次等价回填）或 `backfill`。
+- `schedule.type`：`manual`（仅手动）/ `interval`（每 `everyMinutes` 分钟）/ `daily`（每天 `atTime` 时刻）。调度由服务端每 30 秒检查一次，同一时刻只运行一个任务。
+- `throttle`：`pageDelayMs` 每页间隔、`rowDelayMs` 每行间隔、`maxPerRun` 单次上限（0 不限），用于控制对 MOGO 的压力。
+- 导入采用 MOGO 递增 id 作游标、按 id 倒序拉取并去重写入，来源标记 `import:mogo`；`maxId`/`lastRun`/`lastImported` 为持久化的运行游标。
 
 ## 客户端集成契约
 

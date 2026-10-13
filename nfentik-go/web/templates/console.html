@@ -369,39 +369,36 @@
     </section>
 
     <section id="view-import" class="view">
-      <div class="card">
-        <h2>从 MOGO 导入题库</h2>
-        <p class="muted small">从你自己的 MOGO 控制台增量导入题目到本地题库（新增优先）。首次导入会回填全部，之后每次只导入新增；可随时停止。</p>
-        <div class="grid-2">
-          <div class="field"><label>MOGO 地址</label><input id="imp-base" type="text" placeholder="http://8.134.186.10:9988"></div>
-          <div class="field"><label>aKey</label><input id="imp-key" type="text" placeholder="访问密钥"></div>
-        </div>
-        <div class="grid-2">
-          <div class="field"><label>目标文件夹</label><select id="imp-folder"></select></div>
-          <div class="field"><label>每页条数</label><input id="imp-item" type="number" min="1" max="500" value="100"></div>
-        </div>
-        <div class="field">
-          <label class="checkbox"><input type="checkbox" id="imp-backfill"> 回填全部（忽略增量游标，重新扫描整个题库）</label>
-        </div>
-        <div class="toolbar">
-          <button id="imp-start" class="btn primary">开始导入</button>
-          <button id="imp-stop" class="btn ghost">停止</button>
-          <span id="imp-status" class="muted small"></span>
-        </div>
+      <div class="toolbar">
+        <span class="muted">配置多个 MOGO 题库源，可手动导入或按计划定时增量导入；导入带限速，尽量不影响 MOGO 运行。</span>
+        <span class="spacer"></span>
+        <button id="ms-refresh" class="btn ghost">刷新</button>
+        <button id="ms-add" class="btn primary">新增源</button>
       </div>
-      <div class="card">
-        <h2>进度</h2>
+      <div class="table-wrap">
+        <table id="ms-table">
+          <thead><tr>
+            <th>名称</th><th>地址</th><th>目标文件夹</th><th>计划</th><th>状态</th><th>上次导入</th><th>操作</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>当前进度</h2>
         <div class="grid-2">
-          <div class="kv"><span>状态</span><strong id="imp-running">未运行</strong></div>
-          <div class="kv"><span>已导入</span><strong id="imp-imported">0</strong></div>
-          <div class="kv"><span>已跳过（已存在）</span><strong id="imp-skipped">0</strong></div>
-          <div class="kv"><span>已扫描</span><strong id="imp-scanned">0</strong></div>
-          <div class="kv"><span>题库总数</span><strong id="imp-total">-</strong></div>
-          <div class="kv"><span>当前 id</span><strong id="imp-current" class="mono">-</strong></div>
-          <div class="kv"><span>增量游标 (maxId)</span><strong id="imp-maxid" class="mono">-</strong></div>
-          <div class="kv"><span>最近一次</span><strong id="imp-last">-</strong></div>
+          <div class="kv"><span>任务</span><strong id="ms-running">未运行</strong></div>
+          <div class="kv"><span>来源</span><strong id="ms-source">-</strong></div>
+          <div class="kv"><span>已导入</span><strong id="ms-imported">0</strong></div>
+          <div class="kv"><span>已跳过（已存在）</span><strong id="ms-skipped">0</strong></div>
+          <div class="kv"><span>已扫描</span><strong id="ms-scanned">0</strong></div>
+          <div class="kv"><span>题库总数</span><strong id="ms-total">-</strong></div>
+          <div class="kv"><span>当前 id</span><strong id="ms-current" class="mono">-</strong></div>
+          <div class="kv"><span>游标 (maxId)</span><strong id="ms-maxid" class="mono">-</strong></div>
         </div>
-        <div id="imp-error" class="error"></div>
+        <div id="ms-error" class="error"></div>
+        <div class="toolbar" id="ms-stop-wrap" style="display:none;">
+          <button id="ms-stop" class="btn ghost">停止当前导入</button>
+        </div>
       </div>
     </section>
 
