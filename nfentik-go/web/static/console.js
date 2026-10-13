@@ -315,11 +315,13 @@
       { name: "question", label: "题目", type: "textarea", value: "" },
       { name: "options", label: "选项", type: "textarea", value: "" },
       { name: "answer", label: "答案", type: "textarea", value: "" },
+      { name: "question_type", label: "题型", options: [{ value: "", label: "未指定" }].concat(QUESTION_TYPE_OPTIONS), value: "" },
     ], function (values) {
       api("/questions", {
         method: "POST",
         body: JSON.stringify({
           question: values.question, options: values.options, answer: values.answer,
+          question_type: values.question_type,
         }),
       }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
