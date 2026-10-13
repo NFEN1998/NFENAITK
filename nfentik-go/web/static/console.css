@@ -429,7 +429,7 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
     font-size: 12px; font-weight: 600; line-height: 1.7;
   }
   #u-table td[data-label="令牌"] .token-cell { flex: 1; min-width: 0; }
-  #u-table td[data-label="备注"].clamp { max-width: none; }
+  #u-table td[data-label="备注"] .clamp { max-width: none; }
   #u-table td[data-label="操作"] { flex-wrap: wrap; }
   #u-table td[data-label="操作"].row-actions { display: flex; }
   #u-table td[data-label="操作"] .btn { flex: 1 1 auto; }
@@ -510,7 +510,7 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
     content: attr(data-label); flex: 0 0 56px; color: var(--muted);
     font-size: 12px; font-weight: 600; line-height: 1.7;
   }
-  #q-table td.clamp { max-width: none; -webkit-line-clamp: unset; }
+  #q-table td .clamp { display: block; max-width: none; -webkit-line-clamp: unset; }
   #q-table td.row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   #q-table td.row-actions .btn { flex: 1 1 auto; }
 }

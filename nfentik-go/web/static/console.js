@@ -243,8 +243,8 @@
         ? '<span class="pill pending">待修正</span>' : '<span class="muted">正常</span>';
       return "<tr>" +
         '<td data-label="ID">' + item.id + "</td>" +
-        '<td data-label="题目" class="clamp">' + esc(item.question) + "</td>" +
-        '<td data-label="答案" class="clamp">' + esc(item.answer) + "</td>" +
+        '<td data-label="题目"><span class="clamp">' + esc(item.question) + "</span></td>" +
+        '<td data-label="答案"><span class="clamp">' + esc(item.answer) + "</span></td>" +
         '<td data-label="题型" class="nowrap">' + esc(questionTypeLabel(item.question_type)) + "</td>" +
         '<td data-label="来源">' + source + "</td>" +
         '<td data-label="状态">' + status + "</td>" +
@@ -1471,7 +1471,7 @@
       return '<tr class="user-row">' +
         '<td data-label="ID">' + u.id + "</td>" +
         '<td data-label="令牌"><span class="mono small token-cell">' + esc(u.token) + "</span></td>" +
-        '<td data-label="备注" class="clamp">' + esc(u.note || "") + "</td>" +
+        '<td data-label="备注"><span class="clamp">' + esc(u.note || "") + "</span></td>" +
         '<td data-label="套餐">' + esc(planLabel(u.plan_code)) + "</td>" +
         '<td data-label="状态">' + userStatusPill(u.status) + "</td>" +
         '<td data-label="剩余">' + esc(userRemainText(u)) + "</td>" +
