@@ -123,17 +123,108 @@ func normalizeURLs(text string) string {
 }
 
 // NormalizeQuestion reduces a question to lowercase letters and digits, dropping
-// whitespace and punctuation, so questions that differ only in formatting
-// compare as equal.
+// whitespace and text punctuation, so questions that differ only in formatting
+// compare as equal. Formula symbols (operators and grouping) are preserved
+// because they change the meaning of an expression: without them "3+3=" and
+// "3×3=" would collapse onto the same digest and return each other's answers.
 func NormalizeQuestion(text string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(normalizeURLs(text)) {
 		if r >= 0xFF01 && r <= 0xFF5E {
 			r -= 0xFEE0
 		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || isFormulaSymbol(r) {
 			b.WriteRune(r)
 		}
+	}
+	return b.String()
+}
+
+// NormalizerVersion identifies the current NormalizeQuestion algorithm. Bump it
+// whenever normalization changes so stored question digests are recomputed once
+// on the next startup (see Store.ensureQuestionHash).
+const NormalizerVersion = 2
+
+// isMathOperator reports whether r is an operator that changes the value of a
+// numeric expression. It is the discriminator used to keep "3+3=" and "3×3="
+// apart; parentheses and the equals sign are excluded because they are often
+// decorative (blank markers, equation formatting) rather than meaningful.
+func isMathOperator(r rune) bool {
+	switch r {
+	case '+', '-', '*', '/', '×', '÷', '^', '%', '≠', '≤', '≥', '<', '>':
+		return true
+	default:
+		return false
+	}
+}
+
+// isFormulaSymbol reports whether r is preserved during normalization: math
+// operators plus grouping parentheses, whose presence changes a formula. The
+// equals sign is treated as formatting so "3+3=" and "3+3" still compare equal.
+func isFormulaSymbol(r rune) bool {
+	return isMathOperator(r) || r == '(' || r == ')'
+}
+
+// operatorsCompatible reports whether two strings may be treated as fuzzy
+// matches. When both look like numeric expressions (a digit together with an
+// operator) their operator multisets must agree, so a plus question never
+// fuzzy-matches a multiplication row. Plain prose and decorative parentheses
+// are left untouched.
+func operatorsCompatible(a, b string) bool {
+	if !looksLikeExpression(a) || !looksLikeExpression(b) {
+		return true
+	}
+	return equalOperatorCounts(operatorCounts(a), operatorCounts(b))
+}
+
+// looksLikeExpression reports whether s contains both a digit and an operator,
+// the shape of an arithmetic or comparison expression.
+func looksLikeExpression(s string) bool {
+	hasDigit, hasOperator := false, false
+	for _, r := range foldWidth(s) {
+		if unicode.IsDigit(r) {
+			hasDigit = true
+		}
+		if isMathOperator(r) {
+			hasOperator = true
+		}
+	}
+	return hasDigit && hasOperator
+}
+
+// operatorCounts tallies the math operators in s after width folding.
+func operatorCounts(s string) map[rune]int {
+	counts := map[rune]int{}
+	for _, r := range foldWidth(s) {
+		if isMathOperator(r) {
+			counts[r]++
+		}
+	}
+	return counts
+}
+
+// equalOperatorCounts compares two operator tallies.
+func equalOperatorCounts(a, b map[rune]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for r, n := range a {
+		if b[r] != n {
+			return false
+		}
+	}
+	return true
+}
+
+// foldWidth lowercases s and maps full-width ASCII forms to their half-width
+// equivalents so "＋" compares equal to "+".
+func foldWidth(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 0xFF01 && r <= 0xFF5E {
+			r -= 0xFEE0
+		}
+		b.WriteRune(r)
 	}
 	return b.String()
 }
@@ -293,6 +384,11 @@ func Score(query, candidate string) (float64, bool) {
 	}
 	if nq == nc {
 		return 1.0, true
+	}
+	// A numeric expression must never fuzzy-match one that carries different
+	// operators (e.g. "3+3=" against "3×3=").
+	if !operatorsCompatible(nq, nc) {
+		return 0, false
 	}
 	charSim := levenshteinSimilarity(nq, nc)
 	if charSim < 0.72 {

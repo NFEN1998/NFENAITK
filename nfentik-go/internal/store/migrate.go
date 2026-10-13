@@ -2,8 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/nfentik/nfentik-go/internal/match"
@@ -886,6 +888,12 @@ func (s *Store) SchemaVersion() (int, error) {
 // block reads or writes. CONCURRENTLY cannot run inside a transaction, so the
 // single statements below are issued on the pool directly.
 func (s *Store) ensureQuestionHash() error {
+	// Recompute every digest once when the normalization algorithm changes.
+	// Stored hashes from an older algorithm no longer match lookups computed
+	// with the current one, so a stale version forces a single rehash pass.
+	if err := s.ensureQuestionHashVersion(); err != nil {
+		return err
+	}
 	// Skip the (potentially expensive) backfill scan once the column is fully
 	// populated. A count with a WHERE ... IS NULL LIMIT would still scan, so we
 	// probe for a single residual row.
@@ -903,6 +911,81 @@ func (s *Store) ensureQuestionHash() error {
 	return s.ensureQuestionHashIndex()
 }
 
+// questionHashVersionKey stores the NormalizeQuestion version used to build the
+// QuestionHash column. When the algorithm changes the stored value falls behind
+// and every row is rehashed exactly once.
+const questionHashVersionKey = "question_hash_version"
+
+// ensureQuestionHashVersion rehashes the whole bank when the stored
+// normalization version is missing or older than match.NormalizerVersion, then
+// records the current version.
+func (s *Store) ensureQuestionHashVersion() error {
+	raw, found, err := s.GetSetting(questionHashVersionKey)
+	if err != nil {
+		return fmt.Errorf("读取 QuestionHash 版本: %w", err)
+	}
+	if found && decodeNormalizerVersion(raw) == match.NormalizerVersion {
+		return nil
+	}
+	if err := s.rehashQuestionHash(); err != nil {
+		return err
+	}
+	return s.SetSetting(questionHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion)))
+}
+
+// decodeNormalizerVersion parses the stored version, tolerating both a bare
+// number and a quoted string form. An unparsable value reports version 0 so it
+// triggers a rehash.
+func decodeNormalizerVersion(raw json.RawMessage) int {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// pendingHash is one row awaiting a recomputed digest.
+type pendingHash struct {
+	id       int64
+	question string
+}
+
+// rehashQuestionHash recomputes QuestionHash for every row in bounded, key
+// ordered batches. It is used when the normalization algorithm changes and,
+// unlike backfillQuestionHash, does not restrict itself to NULL digests.
+func (s *Store) rehashQuestionHash() error {
+	const batchSize = 2000
+	log.Printf("归一化算法已更新，开始重算 QuestionHash（分批进行）")
+	lastID := int64(0)
+	for {
+		rows, err := s.query(
+			`SELECT Id, Question FROM AIResponses WHERE Id > $1 ORDER BY Id LIMIT $2`,
+			lastID, batchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("读取待重算题目: %w", err)
+		}
+		items, err := scanPendingHash(rows)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			log.Printf("QuestionHash 重算完成")
+			return nil
+		}
+		if err := s.writeQuestionHashBatch(items); err != nil {
+			return err
+		}
+		lastID = items[len(items)-1].id
+	}
+}
+
 // backfillQuestionHash fills QuestionHash for every row still missing one. Rows
 // are processed in key-ordered batches so each UPDATE touches a bounded set.
 func (s *Store) backfillQuestionHash() error {
@@ -916,46 +999,52 @@ func (s *Store) backfillQuestionHash() error {
 		if err != nil {
 			return fmt.Errorf("读取待回填题目: %w", err)
 		}
-		type pending struct {
-			id       int64
-			question string
-		}
-		var items []pending
-		for rows.Next() {
-			var it pending
-			if err := rows.Scan(&it.id, &it.question); err != nil {
-				rows.Close()
-				return err
-			}
-			items = append(items, it)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+		items, err := scanPendingHash(rows)
+		if err != nil {
 			return err
 		}
-		rows.Close()
 		if len(items) == 0 {
 			log.Printf("QuestionHash 回填完成")
 			return nil
 		}
-
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		for _, it := range items {
-			if _, err := execOn(s.dialect, tx,
-				`UPDATE AIResponses SET QuestionHash = $1 WHERE Id = $2`,
-				match.QuestionHash(it.question), it.id,
-			); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("回填题目 %d 失败: %w", it.id, err)
-			}
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.writeQuestionHashBatch(items); err != nil {
 			return err
 		}
 	}
+}
+
+// scanPendingHash reads the (id, question) pairs from a batch query, closing the
+// rows before returning.
+func scanPendingHash(rows *sql.Rows) ([]pendingHash, error) {
+	defer rows.Close()
+	var items []pendingHash
+	for rows.Next() {
+		var it pendingHash
+		if err := rows.Scan(&it.id, &it.question); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// writeQuestionHashBatch stores recomputed digests for one batch inside a single
+// transaction.
+func (s *Store) writeQuestionHashBatch(items []pendingHash) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if _, err := execOn(s.dialect, tx,
+			`UPDATE AIResponses SET QuestionHash = $1 WHERE Id = $2`,
+			match.QuestionHash(it.question), it.id,
+		); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("回填题目 %d 失败: %w", it.id, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // ensureQuestionHashIndex creates the lookup index if it is missing. Unique is

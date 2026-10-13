@@ -166,6 +166,62 @@ func TestRejectsEmptyQuestion(t *testing.T) {
 	}
 }
 
+// TestQueryDistinguishesOperators guards the fix for the bug where "3+3=" and
+// "3×3=" collapsed onto the same normalized question and returned each other's
+// answers. The two questions differ only in the operator, so they must stay
+// distinct through both insert dedup and the exact-match query stage.
+func TestQueryDistinguishesOperators(t *testing.T) {
+	s := testStore(t)
+
+	plusQ := "98127634+123="
+	timesQ := "98127634×123="
+	if _, err := s.AddQuestion(plusQ, nil, strp("答案加"), nil, false); err != nil {
+		t.Fatalf("add plus: %v", err)
+	}
+	if _, err := s.AddQuestion(timesQ, nil, strp("答案乘"), nil, false); err != nil {
+		t.Fatalf("add times: %v", err)
+	}
+	defer s.exec(`DELETE FROM AIResponses WHERE Question IN ($1, $2)`, plusQ, timesQ)
+
+	plusHits, err := s.Query(plusQ, nil, match.Score)
+	if err != nil {
+		t.Fatalf("query plus: %v", err)
+	}
+	if len(plusHits) == 0 || plusHits[0].Answer != "答案加" {
+		t.Fatalf("plus query returned %+v, want answer 答案加", plusHits)
+	}
+
+	timesHits, err := s.Query(timesQ, nil, match.Score)
+	if err != nil {
+		t.Fatalf("query times: %v", err)
+	}
+	if len(timesHits) == 0 || timesHits[0].Answer != "答案乘" {
+		t.Fatalf("times query returned %+v, want answer 答案乘", timesHits)
+	}
+}
+
+// TestQueryRejectsDifferentOperatorFuzzy covers the fallback path: when only the
+// multiplication row exists, a plus query must not fuzzy-match it.
+func TestQueryRejectsDifferentOperatorFuzzy(t *testing.T) {
+	s := testStore(t)
+
+	timesQ := "98765432×123="
+	if _, err := s.AddQuestion(timesQ, nil, strp("答案乘"), nil, false); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	defer s.exec(`DELETE FROM AIResponses WHERE Question = $1`, timesQ)
+
+	hits, err := s.Query("98765432+123=", nil, match.Score)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	for _, h := range hits {
+		if h.Answer == "答案乘" {
+			t.Fatalf("plus query fuzzy-matched the multiplication row: %+v", h)
+		}
+	}
+}
+
 // TestInsertAIResponseAllowsDifferentOptions verifies that the same question
 // with different options is stored as a distinct entry.
 func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {
