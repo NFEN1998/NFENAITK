@@ -806,6 +806,9 @@ func (s *Store) GetQuestion(id int64) (Question, error) {
 
 // AddQuestion inserts a manual question, optionally bypassing the blank-answer guard.
 func (s *Store) AddQuestion(question string, options *string, answerStr, questionType *string, folderID int64, isAI bool) (Question, error) {
+	if strings.TrimSpace(question) == "" {
+		return Question{}, errors.New("题目不能为空")
+	}
 	answer := ""
 	if answerStr != nil {
 		answer = *answerStr
@@ -845,6 +848,9 @@ func (s *Store) InsertExternalResponse(question, answer string, options, questio
 // folder so a repeated answer never creates a duplicate, and records the source
 // (ai, external:<name>, ...) for auditing.
 func (s *Store) insertBankResponse(question, answer string, options, questionType *string, folderID int64, isAI bool, source string) (int64, error) {
+	if strings.TrimSpace(question) == "" {
+		return 0, errors.New("题目为空，不保存")
+	}
 	if strings.TrimSpace(answer) == "" {
 		return 0, errors.New("AI处理结果答案为空，不保存题目")
 	}

@@ -156,6 +156,15 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	origin := s.origin(r)
 	ip := clientIP(r)
 
+	// A blank question cannot be looked up and must never be written back (a
+	// third-party bank may still return an answer for an empty query). Reject it
+	// before any cache, bank, third-party or AI work happens.
+	if strings.TrimSpace(req.Title) == "" {
+		resp := errorResponse("题目不能为空")
+		writeJSON(w, http.StatusBadRequest, resp)
+		return
+	}
+
 	// Capture the body token (if any) and strip it before the request is
 	// logged so the secret is never persisted.
 	bodyToken := strings.TrimSpace(req.Token)

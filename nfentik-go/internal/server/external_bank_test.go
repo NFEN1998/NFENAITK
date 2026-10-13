@@ -132,6 +132,14 @@ func TestExternalBankTrustModeAcceptsAnyQuestion(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsEmptyTitle(t *testing.T) {
+	srv, _ := testServer(t)
+	code, payload := srv.queryWithToken(t, "   ", "")
+	if code != http.StatusBadRequest {
+		t.Fatalf("code = %d (%v), want 400", code, payload)
+	}
+}
+
 func TestAdminExternalBanksValidation(t *testing.T) {
 	srv, _ := testServer(t)
 	defer srv.store.DeleteSetting("external_banks")

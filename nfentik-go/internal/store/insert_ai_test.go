@@ -127,6 +127,18 @@ func TestInsertExternalResponseStoresSource(t *testing.T) {
 	_, _ = s.exec(`DELETE FROM AIResponses WHERE Id = $1`, id)
 }
 
+// TestRejectsEmptyQuestion ensures a blank question is never persisted, which
+// would otherwise let a third-party bank plant an answer with no question.
+func TestRejectsEmptyQuestion(t *testing.T) {
+	s := testStore(t)
+	if _, err := s.AddQuestion("   ", nil, strp("a"), nil, 0, false); err == nil {
+		t.Fatalf("AddQuestion accepted an empty question")
+	}
+	if _, err := s.InsertExternalResponse("  ", "a", nil, nil, 0, "external:x"); err == nil {
+		t.Fatalf("InsertExternalResponse accepted an empty question")
+	}
+}
+
 // TestInsertAIResponseAllowsDifferentOptions verifies that the same question
 // with different options is stored as a distinct entry.
 func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {
