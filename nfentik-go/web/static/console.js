@@ -232,7 +232,7 @@
   function renderQuestions(items) {
     var tbody = qs("q-table").querySelector("tbody");
     if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="muted">暂无题目</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">暂无题目</td></tr>';
       return;
     }
     tbody.innerHTML = items.map(function (item) {
@@ -242,15 +242,15 @@
       var status = item.is_pending_correction
         ? '<span class="pill pending">待修正</span>' : '<span class="muted">正常</span>';
       return "<tr>" +
-        "<td>" + item.id + "</td>" +
-        '<td class="clamp">' + esc(item.question) + "</td>" +
-        '<td class="clamp">' + esc(item.answer) + "</td>" +
-        "<td>" + esc(questionTypeLabel(item.question_type)) + "</td>" +
-        "<td>" + source + "</td>" +
-        "<td>" + status + "</td>" +
-        '<td class="row-actions">' +
-          '<button class="btn ghost" data-edit="' + item.id + '">编辑</button> ' +
-          '<button class="btn danger" data-del="' + item.id + '">删除</button>' +
+        '<td data-label="ID">' + item.id + "</td>" +
+        '<td data-label="题目" class="clamp">' + esc(item.question) + "</td>" +
+        '<td data-label="答案" class="clamp">' + esc(item.answer) + "</td>" +
+        '<td data-label="题型" class="nowrap">' + esc(questionTypeLabel(item.question_type)) + "</td>" +
+        '<td data-label="来源">' + source + "</td>" +
+        '<td data-label="状态">' + status + "</td>" +
+        '<td data-label="操作" class="row-actions">' +
+          '<button class="btn ghost small" data-edit="' + item.id + '">编辑</button>' +
+          '<button class="btn danger small" data-del="' + item.id + '">删除</button>' +
         "</td>" +
       "</tr>";
     }).join("");

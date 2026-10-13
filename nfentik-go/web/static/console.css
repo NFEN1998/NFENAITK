@@ -479,3 +479,38 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 .kv:last-child { border-bottom: 0; }
 .kv span { color: var(--muted); }
 .kv strong { font-weight: 600; word-break: break-all; }
+
+/* ---- question table polish ---- */
+.nowrap { white-space: nowrap; }
+#q-table .row-actions { flex-wrap: nowrap; }
+#q-table th:nth-child(1), #q-table td:nth-child(1) { width: 64px; }
+#q-table th:nth-child(3), #q-table td:nth-child(3) { min-width: 140px; }
+#q-table th:nth-child(4), #q-table td:nth-child(4) { white-space: nowrap; width: 72px; }
+#q-table th:nth-child(5), #q-table td:nth-child(5) { white-space: nowrap; width: 72px; }
+#q-table th:nth-child(6), #q-table td:nth-child(6) { white-space: nowrap; width: 88px; }
+#q-table th:nth-child(7), #q-table td:nth-child(7) { width: 150px; }
+
+/* On narrow screens the question list becomes stacked cards so every field and
+   action stays readable without horizontal scrolling (mirrors the user list). */
+@media (max-width: 720px) {
+  #q-table { min-width: 0; }
+  #q-table thead { display: none; }
+  #q-table, #q-table tbody, #q-table tr, #q-table td { display: block; width: 100%; }
+  #q-table tr {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 6px 10px; margin-bottom: 10px;
+  }
+  #q-table td {
+    display: flex; align-items: flex-start; gap: 10px;
+    border: none; border-bottom: 1px dashed var(--line); padding: 7px 0;
+    width: auto; white-space: normal;
+  }
+  #q-table tr td:last-child { border-bottom: none; }
+  #q-table td::before {
+    content: attr(data-label); flex: 0 0 56px; color: var(--muted);
+    font-size: 12px; font-weight: 600; line-height: 1.7;
+  }
+  #q-table td.clamp { max-width: none; -webkit-line-clamp: unset; }
+  #q-table td.row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  #q-table td.row-actions .btn { flex: 1 1 auto; }
+}
