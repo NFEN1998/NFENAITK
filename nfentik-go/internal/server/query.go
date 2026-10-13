@@ -11,10 +11,15 @@ import (
 	"time"
 
 	"github.com/nfentik/nfentik-go/internal/ai"
+	"github.com/nfentik/nfentik-go/internal/externalbank"
 	"github.com/nfentik/nfentik-go/internal/match"
 	"github.com/nfentik/nfentik-go/internal/plan"
 	"github.com/nfentik/nfentik-go/internal/store"
 )
+
+// externalVerifyThreshold is the minimum similarity between the query and a
+// third-party returned question required before the answer is trusted.
+const externalVerifyThreshold = 0.72
 
 // QueryRequest is the payload sent by the OCS userscript.
 type QueryRequest struct {
@@ -394,6 +399,27 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 		return queryResult{status: http.StatusOK, entry: entry, source: "bank"}
 	}
 
+	// Stage: third-party question banks. Each enabled source is tried in priority
+	// order; the first answer that passes verification is returned and, when the
+	// source opts in, written back to the local bank and cache. Only when every
+	// source misses or fails does the chain fall through to the AI models.
+	if banks := s.externalSources(); len(banks) > 0 {
+		for _, src := range banks {
+			result, err := s.lookupExternal(ctx, src, req)
+			if err != nil {
+				if !errors.Is(err, externalbank.ErrNoAnswer) {
+					s.PublishError("external bank %s: %v", src.Name, err)
+				}
+				continue
+			}
+			answer, ok := s.acceptExternal(src, req, result)
+			if !ok {
+				continue
+			}
+			return s.respondExternal(req, src, answer, hasURL)
+		}
+	}
+
 	settings, err := s.ModelSettings()
 	if err != nil {
 		return queryResult{status: http.StatusInternalServerError, errMsg: "模型配置读取失败: " + err.Error(), source: "ai"}
@@ -469,6 +495,79 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 		s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 	}
 	return queryResult{status: http.StatusOK, entry: entry, source: "ai"}
+}
+
+// externalSources parses the stored third-party bank configuration and returns
+// the enabled sources in priority order. A read or parse error is logged and
+// treated as "no sources" so the query chain is never blocked by bad config.
+func (s *Server) externalSources() []externalbank.Source {
+	raw, err := s.config.ExternalBanks()
+	if err != nil {
+		s.PublishError("read external banks: %v", err)
+		return nil
+	}
+	settings, err := externalbank.Parse(raw)
+	if err != nil {
+		s.PublishError("parse external banks: %v", err)
+		return nil
+	}
+	return settings.Enabled()
+}
+
+// lookupExternal performs one third-party source lookup.
+func (s *Server) lookupExternal(ctx context.Context, src externalbank.Source, req QueryRequest) (externalbank.Result, error) {
+	client := s.external
+	if client == nil {
+		client = externalbank.NewClient()
+	}
+	return client.Lookup(ctx, src, externalbank.Query{Title: req.Title, Options: req.Options, Type: req.Type})
+}
+
+// acceptExternal decides whether a third-party answer can be trusted. Empty and
+// unreliable answers are always discarded; the returned question is validated
+// against the query with the local matcher unless the source opts into trust
+// mode.
+func (s *Server) acceptExternal(src externalbank.Source, req QueryRequest, result externalbank.Result) (string, bool) {
+	answer := strings.TrimSpace(result.Answer)
+	if answer == "" {
+		return "", false
+	}
+	if _, bad := ai.IsUnreliableAnswer(answer); bad {
+		return "", false
+	}
+	if !src.Trust && strings.TrimSpace(result.Question) != "" {
+		if score, ok := match.Score(req.Title, result.Question); !ok || score < externalVerifyThreshold {
+			return "", false
+		}
+	}
+	return answer, true
+}
+
+// respondExternal writes a third-party hit back to the local bank when the
+// source asks for it, caches the result and builds the shared query result.
+func (s *Server) respondExternal(req QueryRequest, src externalbank.Source, answer string, hasURL bool) queryResult {
+	source := "external:" + src.Name
+	entry := bankAnswer{
+		Question: req.Title,
+		Answer:   answer,
+		IsAI:     false,
+	}
+	if src.WriteBack {
+		id, err := s.store.InsertExternalResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID(), source)
+		if err != nil {
+			s.PublishError("store external answer: %v", err)
+		} else {
+			entry.ID = id
+		}
+	}
+	if s.cache != nil && !hasURL {
+		ttl := s.queryCacheTTL()
+		if src.CacheTTL > 0 {
+			ttl = time.Duration(src.CacheTTL) * time.Second
+		}
+		s.cache.SetQuery(req.Title, req.Options, entry, ttl)
+	}
+	return queryResult{status: http.StatusOK, entry: entry, source: source}
 }
 
 // queryCacheTTL resolves the configured query cache lifetime.

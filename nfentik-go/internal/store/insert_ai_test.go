@@ -92,6 +92,41 @@ func TestQueryMatchesInsertedQuestion(t *testing.T) {
 	}
 }
 
+// TestInsertExternalResponseStoresSource verifies third-party answers are
+// deduplicated and tagged with their source while staying out of the AI bucket.
+func TestInsertExternalResponseStoresSource(t *testing.T) {
+	s := testStore(t)
+
+	question := "第三方题库来源测试 unique external source"
+	options := strp("A. 甲 B. 乙")
+	id, err := s.InsertExternalResponse(question, "甲", options, nil, 0, "external:demo")
+	if err != nil {
+		t.Fatalf("insert external: %v", err)
+	}
+	again, err := s.InsertExternalResponse(question, "甲", options, nil, 0, "external:demo")
+	if err != nil {
+		t.Fatalf("second insert external: %v", err)
+	}
+	if again != id {
+		t.Fatalf("second insert returned %d, want reuse of %d", again, id)
+	}
+
+	var (
+		source string
+		isAI   bool
+	)
+	if err := s.queryRow(`SELECT Source, IsAi FROM AIResponses WHERE Id = $1`, id).Scan(&source, &isAI); err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if source != "external:demo" {
+		t.Fatalf("source = %q, want external:demo", source)
+	}
+	if isAI {
+		t.Fatalf("external row must not be marked as ai")
+	}
+	_, _ = s.exec(`DELETE FROM AIResponses WHERE Id = $1`, id)
+}
+
 // TestInsertAIResponseAllowsDifferentOptions verifies that the same question
 // with different options is stored as a distinct entry.
 func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {

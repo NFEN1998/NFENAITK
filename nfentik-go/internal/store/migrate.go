@@ -173,6 +173,15 @@ var migrations = []migration{
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS QuestionHash TEXT`,
 		},
 	},
+	{
+		Version: 6,
+		Name:    "answer_source",
+		// Records where an answer came from (ai, external:<name>, ...) so the
+		// console can show provenance. Existing rows keep an empty source.
+		Statements: []string{
+			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS Source TEXT`,
+		},
+	},
 }
 
 // coreTables are the tables every release expects. They are folded into the
@@ -195,7 +204,7 @@ var coreTables = []string{
 // bookkeeping alone.
 var coreColumns = map[string][]string{
 	"folders":            {"id", "name", "parentid", "createtime"},
-	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "folderid", "foldername", "isai", "ispendingcorrection", "questionhash"},
+	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "folderid", "foldername", "isai", "ispendingcorrection", "questionhash", "source"},
 	"requestlogs":        {"logid", "requestid", "timestamp", "method", "path", "status", "responsetime", "requestbody", "responsebody", "headers", "ip", "useragent", "stage"},
 	"dailyrequestcounts": {"day", "count"},
 	"appsettings":        {"key", "value", "updatetime"},
@@ -519,6 +528,7 @@ var mysqlTableDDL = []string{
 		IsAi TINYINT(1) DEFAULT 1,
 		IsPendingCorrection TINYINT(1) DEFAULT 0,
 		QuestionHash VARCHAR(64),
+		Source VARCHAR(64) DEFAULT '',
 		PRIMARY KEY (Id),
 		KEY idx_airesponses_folder (FolderId),
 		KEY idx_airesponses_pending (IsPendingCorrection),
@@ -610,6 +620,7 @@ var mysqlColumnRepairs = []columnRepair{
 	{Table: "airesponses", Column: "isai", DDL: "IsAi TINYINT(1) DEFAULT 1"},
 	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection TINYINT(1) DEFAULT 0"},
 	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash VARCHAR(64)"},
+	{Table: "airesponses", Column: "source", DDL: "Source VARCHAR(64) DEFAULT ''"},
 	{Table: "userrequestlogs", Column: "options", DDL: "Options TEXT"},
 	{Table: "userrequestlogs", Column: "answer", DDL: "Answer TEXT"},
 }
@@ -737,6 +748,7 @@ var columnRepairs = []columnRepair{
 	{Table: "airesponses", Column: "isai", DDL: "IsAi BOOLEAN DEFAULT TRUE"},
 	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection BOOLEAN DEFAULT FALSE"},
 	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash TEXT"},
+	{Table: "airesponses", Column: "source", DDL: "Source TEXT"},
 	{Table: "userrequestlogs", Column: "options", DDL: "Options TEXT"},
 	{Table: "userrequestlogs", Column: "answer", DDL: "Answer TEXT"},
 }

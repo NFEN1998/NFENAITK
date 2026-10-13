@@ -429,6 +429,39 @@ func (s *Store) SaveModelConfig(raw json.RawMessage) error {
 	return s.repo.SetSetting("model_config", data)
 }
 
+// ExternalBanks returns the stored third-party question bank configuration
+// document. A missing document yields an empty JSON object.
+func (s *Store) ExternalBanks() (json.RawMessage, error) {
+	raw, found, err := s.repo.GetSetting("external_banks")
+	if err != nil {
+		return nil, err
+	}
+	if !found || len(raw) == 0 {
+		return json.RawMessage("{}"), nil
+	}
+	if !json.Valid(raw) {
+		return nil, errors.New("external banks config is not valid JSON")
+	}
+	return raw, nil
+}
+
+// SaveExternalBanks persists the third-party question bank configuration
+// document.
+func (s *Store) SaveExternalBanks(raw json.RawMessage) error {
+	if !json.Valid(raw) {
+		return errors.New("invalid external banks payload")
+	}
+	var pretty any
+	if err := json.Unmarshal(raw, &pretty); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(pretty, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.repo.SetSetting("external_banks", data)
+}
+
 // TrimSettings removes secrets from a settings copy before it is logged.
 func TrimSettings(settings Settings) Settings {
 	if settings.AdminToken != "" {

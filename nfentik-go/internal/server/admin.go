@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nfentik/nfentik-go/internal/config"
+	"github.com/nfentik/nfentik-go/internal/externalbank"
 	"github.com/nfentik/nfentik-go/internal/store"
 )
 
@@ -35,6 +36,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.adminLogs(w, r, parts[1:])
 	case "model-config":
 		s.adminModelConfig(w, r)
+	case "external-banks":
+		s.adminExternalBanks(w, r, parts[1:])
 	case "stats":
 		s.adminStats(w, r)
 	case "users":
@@ -384,6 +387,101 @@ func (s *Server) adminModelConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// adminExternalBanks reads and writes the third-party question bank
+// configuration, and serves the connectivity test endpoint.
+func (s *Server) adminExternalBanks(w http.ResponseWriter, r *http.Request, rest []string) {
+	if len(rest) > 0 && rest[0] == "test" {
+		s.adminExternalBankTest(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		raw, err := s.config.ExternalBanks()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "config": json.RawMessage(raw)})
+	case http.MethodPut, http.MethodPost:
+		body, err := readBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		if !json.Valid(body) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "配置不是有效的 JSON"})
+			return
+		}
+		settings, err := externalbank.Parse(body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "配置解析失败: " + err.Error()})
+			return
+		}
+		for _, src := range settings.Sources {
+			if strings.TrimSpace(src.Name) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "显示名称不能为空"})
+				return
+			}
+			if strings.TrimSpace(src.URL) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址不能为空"})
+				return
+			}
+			if !externalbank.ValidURL(src.URL) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址无效"})
+				return
+			}
+		}
+		if err := s.config.SaveExternalBanks(body); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// adminExternalBankTest performs one lookup against a candidate source so the
+// operator gets immediate feedback before saving.
+func (s *Server) adminExternalBankTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := readBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	var req struct {
+		Source   externalbank.Source `json:"source"`
+		Question string              `json:"question"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体解析失败"})
+		return
+	}
+	if !externalbank.ValidURL(req.Source.URL) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址无效"})
+		return
+	}
+	if strings.TrimSpace(req.Question) == "" {
+		req.Question = "1+1="
+	}
+	client := s.external
+	if client == nil {
+		client = externalbank.NewClient()
+	}
+	result, err := client.Lookup(r.Context(), req.Source, externalbank.Query{Title: req.Question})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "查询失败: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "message": "查询成功", "answer": result.Answer, "question": result.Question,
+	})
 }
 
 func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,7 @@ import (
 	"github.com/nfentik/nfentik-go/internal/ai"
 	"github.com/nfentik/nfentik-go/internal/cache"
 	"github.com/nfentik/nfentik-go/internal/config"
+	"github.com/nfentik/nfentik-go/internal/externalbank"
 	"github.com/nfentik/nfentik-go/internal/match"
 	"github.com/nfentik/nfentik-go/internal/store"
 )
@@ -31,6 +32,7 @@ type Server struct {
 	config      *config.Store
 	cache       *cache.Client
 	ai          *ai.Client
+	external    *externalbank.Client
 	bus         *Bus
 	tmpl        *template.Template
 	webFS       fs.FS
@@ -112,6 +114,7 @@ func New(deps Deps) (*Server, error) {
 		config:      deps.Config,
 		cache:       deps.Cache,
 		ai:          ai.NewWithLimits(maxAIConcurrency()),
+		external:    externalbank.NewClient(),
 		bus:         NewBus(),
 		tmpl:        tmpl,
 		webFS:       deps.WebFS,

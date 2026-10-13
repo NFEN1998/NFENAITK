@@ -830,6 +830,21 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 
 // InsertAIResponse stores an AI produced answer in the configured folder.
 func (s *Store) InsertAIResponse(question, answer string, options, questionType *string, folderID int64) (int64, error) {
+	return s.insertBankResponse(question, answer, options, questionType, folderID, true, "ai")
+}
+
+// InsertExternalResponse stores a third-party question bank answer. The row is
+// marked as not AI and tagged with the source name so the console can show its
+// provenance.
+func (s *Store) InsertExternalResponse(question, answer string, options, questionType *string, folderID int64, source string) (int64, error) {
+	return s.insertBankResponse(question, answer, options, questionType, folderID, false, source)
+}
+
+// insertBankResponse is the shared guarded insert used by the AI and external
+// bank paths. It reuses an existing row for the same question, options and
+// folder so a repeated answer never creates a duplicate, and records the source
+// (ai, external:<name>, ...) for auditing.
+func (s *Store) insertBankResponse(question, answer string, options, questionType *string, folderID int64, isAI bool, source string) (int64, error) {
 	if strings.TrimSpace(answer) == "" {
 		return 0, errors.New("AI处理结果答案为空，不保存题目")
 	}
@@ -842,7 +857,7 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 	questionHash := match.QuestionHash(question)
 
 	// Reuse an existing row for the same question, options and folder when one
-	// is present, so a repeated AI answer does not create a duplicate. Questions
+	// is present, so a repeated answer does not create a duplicate. Questions
 	// may legitimately repeat across folders, so folder is part of the identity.
 	// The AI path already runs behind single-flight; this guarded insert is the
 	// second line of defence for multi-instance deployments.
@@ -861,13 +876,13 @@ func (s *Store) InsertAIResponse(question, answer string, options, questionType 
 		from = " FROM DUAL"
 	}
 	insertSQL := `INSERT INTO AIResponses
-		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName, QuestionHash)
-		SELECT $1, $2, $3, $4, TRUE, FALSE, NOW(), $5, $6, $7` + from + `
+		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, FolderId, FolderName, QuestionHash, Source)
+		SELECT $1, $2, $3, $4, $5, FALSE, NOW(), $6, $7, $8, $9` + from + `
 		WHERE NOT EXISTS (
 			SELECT 1 FROM AIResponses
-			WHERE QuestionHash = $7 AND ` + s.dialect.nullSafeEqual("Options", "$3") + ` AND FolderId = $5
+			WHERE QuestionHash = $8 AND ` + s.dialect.nullSafeEqual("Options", "$3") + ` AND FolderId = $6
 		)`
-	insertArgs := []any{question, answer, options, questionType, target, folderName, questionHash}
+	insertArgs := []any{question, answer, options, questionType, isAI, target, folderName, questionHash, source}
 
 	lookupExisting := func() (int64, error) {
 		existing, lookupErr := s.idByLookup(questionHash, options, target)

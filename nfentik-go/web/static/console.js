@@ -60,6 +60,7 @@
   var titles = {
     dashboard: "概览", questions: "题库", folders: "文件夹", pending: "待修正",
     models: "模型配置", users: "用户管理", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
+    external: "第三方题库",
   };
 
   function switchView(view) {
@@ -76,6 +77,7 @@
     if (view === "folders") loadFolders();
     if (view === "pending") loadPending();
     if (view === "models") loadModelConfig();
+    if (view === "external") loadExternalBanks();
     if (view === "users") loadUsers();
     if (view === "ocs") loadOCS();
     if (view === "settings") loadSettings();
@@ -950,6 +952,101 @@
   qs("ocs-copy").addEventListener("click", function () {
     copyText(qs("ocs-json").value, "OCS 配置已复制");
   });
+
+  // ----------------------------------------------------------- external banks
+
+  var extState = [];
+
+  function methodOption(value, want) {
+    return (value || "GET").toUpperCase() === want ? " selected" : "";
+  }
+
+  function extRow(src, i) {
+    return '<tr data-index="' + i + '">' +
+      '<td><input type="checkbox" data-field="enabled"' + (src.enabled ? " checked" : "") + "></td>" +
+      '<td><input type="text" data-field="name" value="' + esc(src.name || "") + '"></td>' +
+      '<td><input type="number" data-field="priority" value="' + (src.priority || 0) + '" style="width:80px"></td>' +
+      '<td><select data-field="method"><option' + methodOption(src.method, "GET") + '>GET</option>' +
+      "<option" + methodOption(src.method, "POST") + '>POST</option></select></td>' +
+      '<td><input type="text" data-field="url" value="' + esc(src.url || "") + '" style="min-width:220px"></td>' +
+      '<td><input type="text" data-field="answerPath" value="' + esc(src.answerPath || "") + '" style="width:110px"></td>' +
+      '<td><input type="checkbox" data-field="writeBack"' + (src.writeBack ? " checked" : "") + "></td>" +
+      '<td><input type="checkbox" data-field="trust"' + (src.trust ? " checked" : "") + "></td>" +
+      '<td><button class="btn ghost" data-ext-test="' + i + '">测试</button> ' +
+      '<button class="btn danger" data-ext-del="' + i + '">删除</button></td>' +
+      "</tr>";
+  }
+
+  function renderExternalBanks() {
+    var body = qs("ext-table").querySelector("tbody");
+    body.innerHTML = extState.length
+      ? extState.map(extRow).join("")
+      : '<tr><td colspan="9" class="muted">尚未配置第三方题库</td></tr>';
+  }
+
+  function loadExternalBanks() {
+    api("/external-banks").then(function (data) {
+      if (!data.success) { toast(data.message); return; }
+      var cfg = data.config || {};
+      extState = Array.isArray(cfg.sources) ? cfg.sources : [];
+      renderExternalBanks();
+    });
+  }
+
+  qs("ext-table").addEventListener("change", function (e) {
+    var el = e.target;
+    if (!el.dataset || !el.dataset.field) return;
+    var row = el.closest("tr");
+    var src = extState[Number(row.getAttribute("data-index"))];
+    if (!src) return;
+    var field = el.dataset.field;
+    if (el.type === "checkbox") src[field] = el.checked;
+    else if (field === "priority") src[field] = Number(el.value) || 0;
+    else src[field] = el.value;
+  });
+
+  qs("ext-table").addEventListener("click", function (e) {
+    var del = e.target.closest("[data-ext-del]");
+    if (del) {
+      extState.splice(Number(del.getAttribute("data-ext-del")), 1);
+      renderExternalBanks();
+      return;
+    }
+    var test = e.target.closest("[data-ext-test]");
+    if (test) testExternalSource(Number(test.getAttribute("data-ext-test")));
+  });
+
+  qs("ext-add").addEventListener("click", function () {
+    extState.push({
+      id: "src-" + Date.now(), name: "", enabled: true,
+      priority: (extState.length + 1) * 10, method: "GET", url: "",
+      answerPath: "data.answer", writeBack: true, trust: false, timeoutSeconds: 10,
+    });
+    renderExternalBanks();
+  });
+
+  qs("ext-save").addEventListener("click", function () {
+    api("/external-banks", { method: "PUT", body: JSON.stringify({ sources: extState }) }).then(function (res) {
+      toast(res.success ? "已保存第三方题库配置" : (res.message || "保存失败"));
+      if (res.success) loadExternalBanks();
+    });
+  });
+
+  function testExternalSource(i) {
+    var src = extState[i];
+    if (!src) return;
+    var question = qs("ext-test-question").value.trim() || "1+1=";
+    var result = qs("ext-test-result");
+    result.className = "test-result";
+    result.textContent = "测试中…";
+    api("/external-banks/test", {
+      method: "POST",
+      body: JSON.stringify({ source: src, question: question }),
+    }).then(function (res) {
+      result.className = "test-result " + (res.success ? "ok" : "fail");
+      result.textContent = res.success ? ("成功，答案：" + (res.answer || "")) : (res.message || "失败");
+    });
+  }
 
   // ----------------------------------------------------------------------- logs
 

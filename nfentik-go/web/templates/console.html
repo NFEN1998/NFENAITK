@@ -23,6 +23,7 @@
       <button class="nav-item" data-view="folders">文件夹</button>
       <button class="nav-item" data-view="pending">待修正</button>
       <button class="nav-item" data-view="models">模型配置</button>
+      <button class="nav-item" data-view="external">第三方题库</button>
       <button class="nav-item" data-view="users">用户管理</button>
       <button class="nav-item" data-view="ocs">OCS 配置</button>
       <button class="nav-item" data-view="settings">系统设置</button>
@@ -351,6 +352,32 @@
       <div class="card" style="margin-top:16px;">
         <h2>配置内容</h2>
         <textarea id="ocs-json" class="editor" spellcheck="false" style="min-height:320px;white-space:pre;"></textarea>
+      </div>
+    </section>
+
+    <section id="view-external" class="view">
+      <div class="toolbar">
+        <span class="muted">本地题库未命中时，按优先级依次调用下列第三方题库；命中即回写并返回，全部未命中再走 AI。</span>
+        <span class="spacer"></span>
+        <button id="ext-add" class="btn">新增源</button>
+        <button id="ext-save" class="btn primary">保存配置</button>
+      </div>
+      <div class="table-wrap">
+        <table id="ext-table">
+          <thead><tr>
+            <th>启用</th><th>名称</th><th>优先级</th><th>方法</th><th>地址</th>
+            <th>答案路径</th><th>回写</th><th>信任</th><th>操作</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>连通性测试</h2>
+        <p class="muted small">填入一道测试题目，点击某行的「测试」按钮向该源发起一次真实查询。</p>
+        <div class="toolbar">
+          <input id="ext-test-question" type="text" value="1+1=" placeholder="测试题目">
+          <span id="ext-test-result" class="test-result"></span>
+        </div>
       </div>
     </section>
 
