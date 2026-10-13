@@ -17,11 +17,10 @@ import (
 
 // Network holds the OCS server binding settings.
 type Network struct {
-	ServerPort    int    `json:"serverPort"`
-	EnableLan     bool   `json:"enableLanAccess"`
-	BindAddress   string `json:"bindAddress"`
-	AutoStart     bool   `json:"autoStart"`
-	DefaultFolder int64  `json:"defaultFolderId"`
+	ServerPort  int    `json:"serverPort"`
+	EnableLan   bool   `json:"enableLanAccess"`
+	BindAddress string `json:"bindAddress"`
+	AutoStart   bool   `json:"autoStart"`
 }
 
 // User is a multi-user token entry.
@@ -79,7 +78,6 @@ type Settings struct {
 	EnableNotifications    bool        `json:"enableNotifications"`
 	SuppressNoModelWarning bool        `json:"suppressNoModelWarning"`
 	QuestionSaveDir        string      `json:"questionSaveDir"`
-	QuestionSaveFolderID   *int64      `json:"questionSaveFolderId"`
 	Algorithms             []Algorithm `json:"algorithms"`
 	AdminToken             string      `json:"adminToken"`
 	MultiUser              MultiUser   `json:"multiUser"`

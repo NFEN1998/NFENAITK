@@ -169,14 +169,6 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 
 .pager { display: flex; align-items: center; gap: 12px; margin-top: 14px; justify-content: flex-end; }
 
-/* ---- folder tree ---- */
-.folder-tree { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; box-shadow: var(--shadow-sm); }
-.folder-node { padding: 6px 8px; border-radius: var(--radius-sm); display: flex; align-items: center; gap: 8px; }
-.folder-node:hover { background: var(--panel-2); }
-.folder-node .name { flex: 1; font-weight: 500; }
-.folder-node .count { color: var(--muted); font-size: 12px; }
-.folder-children { margin-left: 18px; border-left: 1px dashed var(--line); padding-left: 8px; }
-
 /* ---- code editors (light, business) ---- */
 .editor {
   width: 100%; min-height: 460px; padding: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -407,7 +399,6 @@ td .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-s
 
   .pager { justify-content: space-between; }
   .pager .btn { flex: 1; }
-  .folder-children { margin-left: 10px; padding-left: 6px; }
 }
 
 @media (max-width: 380px) {

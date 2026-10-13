@@ -212,10 +212,9 @@ func isUniqueViolation(err error) bool {
 // MySQL connection
 // ---------------------------------------------------------------------------
 
-// mysqlInitSQL keeps an explicit 0 as a stored AUTO_INCREMENT value, so the
-// implicit root folder (id 0) survives, while preserving whatever sql_mode the
-// server ships with.
-const mysqlInitSQL = "SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',NO_AUTO_VALUE_ON_ZERO')"
+// mysqlInitSQL is run once on every pooled MySQL connection. It is empty by
+// default; kept as a hook for any future session-level setup.
+const mysqlInitSQL = ""
 
 // initConnector runs a session initialisation statement on every pooled
 // connection and then hands the connection back to database/sql.

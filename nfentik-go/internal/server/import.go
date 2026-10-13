@@ -36,7 +36,6 @@ type mogoSource struct {
 	Enabled      bool         `json:"enabled"`
 	BaseURL      string       `json:"baseUrl"`
 	AKey         string       `json:"aKey"`
-	FolderID     int64        `json:"folderId"`
 	Item         int          `json:"item"`
 	Mode         string       `json:"mode"` // incremental | backfill
 	Schedule     mogoSchedule `json:"schedule"`
@@ -421,7 +420,7 @@ func (s *Server) runMogoSource(ctx context.Context, job *mogoImportJob, src mogo
 			if len(options) == 0 {
 				options = inline
 			}
-			created, err := s.store.ImportQuestion(stem, strings.Join(options, "\n"), row.Answer, row.QuestionType, src.FolderID, "import:mogo")
+			created, err := s.store.ImportQuestion(stem, strings.Join(options, "\n"), row.Answer, row.QuestionType, "import:mogo")
 
 			s.importMu.Lock()
 			if err != nil {

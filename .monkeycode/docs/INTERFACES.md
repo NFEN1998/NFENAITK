@@ -80,7 +80,6 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | --- | --- | --- |
 | GET / PUT | `/api/admin/settings` | 读取/更新系统设置（AppSettings） |
 | — | `/api/admin/questions` | 题目增删改查、移动、复制、待修正标记 |
-| — | `/api/admin/folders` | 文件夹增删改查与移动 |
 | GET / DELETE | `/api/admin/logs`、`/api/admin/logs/clear` | 请求日志查询与清空 |
 | GET / PUT | `/api/admin/model-config` | 模型配置读写 |
 | GET / PUT | `/api/admin/external-banks` | 第三方题库配置读写 |
@@ -151,7 +150,6 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
   "enabled": true,
   "baseUrl": "http://<mogo-host>:9988",
   "aKey": "<aKey>",
-  "folderId": 0,
   "item": 50,
   "mode": "incremental",
   "schedule": { "type": "manual", "everyMinutes": 60, "atTime": "03:00" },

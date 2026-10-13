@@ -396,6 +396,6 @@ func runMigrate(srcPath string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("迁移完成: 文件夹 %d 个, 题目 %d 条, 跳过空答案 %d 条", res.Folders, res.Questions, res.Skipped)
+	log.Printf("迁移完成: 题目 %d 条, 跳过空答案 %d 条", res.Questions, res.Skipped)
 	return nil
 }

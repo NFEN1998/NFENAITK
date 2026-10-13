@@ -21,7 +21,6 @@
         <div class="nav-group">内容</div>
         <button class="nav-item active" data-view="dashboard"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>概览</span></button>
         <button class="nav-item" data-view="questions"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>题库</span></button>
-        <button class="nav-item" data-view="folders"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>文件夹</span></button>
         <button class="nav-item" data-view="pending"><svg viewBox="0 0 24 24"><path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/></svg><span>待修正</span></button>
         <button class="nav-item" data-view="import"><svg viewBox="0 0 24 24"><path d="M12 3v11"/><path d="m8 10 4 4 4-4"/><path d="M5 21h14"/></svg><span>导入题库</span></button>
         <div class="nav-group">智能接入</div>
@@ -74,7 +73,6 @@
     <section id="view-questions" class="view">
       <div class="toolbar">
         <input id="q-search" placeholder="搜索题目或答案">
-        <select id="q-folder"><option value="all">全部文件夹</option></select>
         <select id="q-sort">
           <option value="desc">最新优先</option>
           <option value="asc">最早优先</option>
@@ -93,13 +91,6 @@
         <span id="q-pageinfo">第 1 页</span>
         <button id="q-next" class="btn ghost">下一页</button>
       </div>
-    </section>
-
-    <section id="view-folders" class="view">
-      <div class="toolbar">
-        <button id="f-add-root" class="btn primary">新建根文件夹</button>
-      </div>
-      <div id="folder-tree" class="folder-tree"></div>
     </section>
 
     <section id="view-pending" class="view">
@@ -291,10 +282,6 @@
               <input id="s-heartbeat-timeout" type="number" min="1">
             </div>
           </div>
-          <div class="field">
-            <label>题目保存文件夹</label>
-            <select id="s-save-folder"></select>
-          </div>
         </div>
 
         <div class="card">
@@ -377,7 +364,7 @@
       <div class="table-wrap">
         <table id="ms-table">
           <thead><tr>
-            <th>名称</th><th>地址</th><th>目标文件夹</th><th>计划</th><th>状态</th><th>上次导入</th><th>操作</th>
+            <th>名称</th><th>地址</th><th>计划</th><th>状态</th><th>上次导入</th><th>操作</th>
           </tr></thead>
           <tbody></tbody>
         </table>

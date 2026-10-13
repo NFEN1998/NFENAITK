@@ -8,20 +8,19 @@ import (
 
 func strp(v string) *string { return &v }
 
-// TestInsertAIResponseDeduplicatesSameFolder verifies that storing the same
-// question and options twice in one folder reuses the existing row instead of
-// inserting a duplicate.
-func TestInsertAIResponseDeduplicatesSameFolder(t *testing.T) {
+// TestInsertAIResponseDeduplicates verifies that storing the same question
+// and options twice reuses the existing row instead of inserting a duplicate.
+func TestInsertAIResponseDeduplicates(t *testing.T) {
 	s := testStore(t)
 
 	question := "去重测试题目 unique dedupe"
 	options := strp("A. 甲 B. 乙 C. 丙 D. 丁")
 
-	first, err := s.InsertAIResponse(question, "A", options, nil, 0)
+	first, err := s.InsertAIResponse(question, "A", options, nil)
 	if err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
-	second, err := s.InsertAIResponse(question, "A", options, nil, 0)
+	second, err := s.InsertAIResponse(question, "A", options, nil)
 	if err != nil {
 		t.Fatalf("second insert: %v", err)
 	}
@@ -31,7 +30,7 @@ func TestInsertAIResponseDeduplicatesSameFolder(t *testing.T) {
 
 	var count int
 	if err := s.queryRow(
-		`SELECT COUNT(*) FROM AIResponses WHERE QuestionHash = $1 AND FolderId = 0`,
+		`SELECT COUNT(*) FROM AIResponses WHERE QuestionHash = $1`,
 		match.QuestionHash(question),
 	).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
@@ -48,7 +47,7 @@ func TestAddQuestionPersistsOptionsAndHash(t *testing.T) {
 	s := testStore(t)
 
 	options := strp("A. 一 B. 二")
-	created, err := s.AddQuestion("管理端新增题目 add-question", options, nil, nil, 0, false)
+	created, err := s.AddQuestion("管理端新增题目 add-question", options, nil, nil, false)
 	if err != nil {
 		t.Fatalf("add question: %v", err)
 	}
@@ -75,7 +74,7 @@ func TestQueryMatchesInsertedQuestion(t *testing.T) {
 
 	question := "查询匹配测试题 unique query match"
 	answer := "A"
-	if _, err := s.AddQuestion(question, strp("A. 甲 B. 乙"), &answer, nil, 0, false); err != nil {
+	if _, err := s.AddQuestion(question, strp("A. 甲 B. 乙"), &answer, nil, false); err != nil {
 		t.Fatalf("add question: %v", err)
 	}
 	defer s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
@@ -99,11 +98,11 @@ func TestInsertExternalResponseStoresSource(t *testing.T) {
 
 	question := "第三方题库来源测试 unique external source"
 	options := strp("A. 甲 B. 乙")
-	id, err := s.InsertExternalResponse(question, "甲", options, nil, 0, "external:demo")
+	id, err := s.InsertExternalResponse(question, "甲", options, nil, "external:demo")
 	if err != nil {
 		t.Fatalf("insert external: %v", err)
 	}
-	again, err := s.InsertExternalResponse(question, "甲", options, nil, 0, "external:demo")
+	again, err := s.InsertExternalResponse(question, "甲", options, nil, "external:demo")
 	if err != nil {
 		t.Fatalf("second insert external: %v", err)
 	}
@@ -133,11 +132,11 @@ func TestImportQuestionDeduplicates(t *testing.T) {
 	s := testStore(t)
 	question := "导入去重测试 unique import dedupe"
 
-	created, err := s.ImportQuestion(question, "A\nB", "A", "单选题", 0, "import:mogo")
+	created, err := s.ImportQuestion(question, "A\nB", "A", "单选题", "import:mogo")
 	if err != nil || !created {
 		t.Fatalf("first import: created=%v err=%v", created, err)
 	}
-	again, err := s.ImportQuestion(question, "A\nB", "A", "单选题", 0, "import:mogo")
+	again, err := s.ImportQuestion(question, "A\nB", "A", "单选题", "import:mogo")
 	if err != nil {
 		t.Fatalf("second import: %v", err)
 	}
@@ -159,10 +158,10 @@ func TestImportQuestionDeduplicates(t *testing.T) {
 // would otherwise let a third-party bank plant an answer with no question.
 func TestRejectsEmptyQuestion(t *testing.T) {
 	s := testStore(t)
-	if _, err := s.AddQuestion("   ", nil, strp("a"), nil, 0, false); err == nil {
+	if _, err := s.AddQuestion("   ", nil, strp("a"), nil, false); err == nil {
 		t.Fatalf("AddQuestion accepted an empty question")
 	}
-	if _, err := s.InsertExternalResponse("  ", "a", nil, nil, 0, "external:x"); err == nil {
+	if _, err := s.InsertExternalResponse("  ", "a", nil, nil, "external:x"); err == nil {
 		t.Fatalf("InsertExternalResponse accepted an empty question")
 	}
 }
@@ -173,11 +172,11 @@ func TestInsertAIResponseAllowsDifferentOptions(t *testing.T) {
 	s := testStore(t)
 
 	question := "去重测试题目 不同选项"
-	a, err := s.InsertAIResponse(question, "A", strp("A. 甲 B. 乙"), nil, 0)
+	a, err := s.InsertAIResponse(question, "A", strp("A. 甲 B. 乙"), nil)
 	if err != nil {
 		t.Fatalf("insert a: %v", err)
 	}
-	b, err := s.InsertAIResponse(question, "B", strp("A. 丙 B. 丁"), nil, 0)
+	b, err := s.InsertAIResponse(question, "B", strp("A. 丙 B. 丁"), nil)
 	if err != nil {
 		t.Fatalf("insert b: %v", err)
 	}

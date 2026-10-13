@@ -8,9 +8,7 @@
     page: 1,
     pageSize: 20,
     total: 0,
-    questionFolder: "all",
     sort: "desc",
-    folderMap: {},
     stream: null,
     live: true,
   };
@@ -106,7 +104,7 @@
   // ---------------------------------------------------------------- navigation
 
   var titles = {
-    dashboard: "概览", questions: "题库", folders: "文件夹", pending: "待修正",
+    dashboard: "概览", questions: "题库", pending: "待修正",
     models: "模型配置", users: "用户管理", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
     external: "第三方题库", import: "导入题库",
   };
@@ -114,7 +112,6 @@
   var subtitles = {
     dashboard: "运行概览与近 14 天请求量",
     questions: "本地题库的题目、来源与状态管理",
-    folders: "按文件夹组织题库内容",
     pending: "被标记为待修正的题目",
     import: "从 MOGO 控制台按增量方式导入题库",
     models: "配置 AI 供应商、模型与调用优先级",
@@ -138,7 +135,6 @@
     if (sub) sub.textContent = subtitles[view] || "";
     if (view === "dashboard") loadDashboard();
     if (view === "questions") loadQuestions();
-    if (view === "folders") loadFolders();
     if (view === "pending") loadPending();
     if (view === "import") loadMogoPanel();
     if (view === "models") loadModelConfig();
@@ -214,12 +210,10 @@
     params.set("page", state.page);
     params.set("page_size", state.pageSize);
     params.set("sort", state.sort);
-    if (state.questionFolder !== "all") params.set("folder_id", state.questionFolder);
     var keyword = qs("q-search").value.trim();
 
     var promise = keyword
-      ? api("/questions/search?keyword=" + encodeURIComponent(keyword) +
-          (state.questionFolder !== "all" ? "&folder_id=" + state.questionFolder : ""))
+      ? api("/questions/search?keyword=" + encodeURIComponent(keyword))
           .then(function (data) {
             return data.success
               ? { success: true, items: data.items, total: data.items.length }
@@ -310,7 +304,6 @@
     if (e.key === "Enter") { state.page = 1; loadQuestions(); }
   });
   qs("q-sort").addEventListener("change", function () { state.sort = this.value; loadQuestions(); });
-  qs("q-folder").addEventListener("change", function () { state.questionFolder = this.value; state.page = 1; loadQuestions(); });
   qs("q-prev").addEventListener("click", function () {
     if (state.page > 1) { state.page--; loadQuestions(); }
   });
@@ -327,99 +320,12 @@
         method: "POST",
         body: JSON.stringify({
           question: values.question, options: values.options, answer: values.answer,
-          folder_id: state.questionFolder === "all" ? 0 : Number(state.questionFolder),
         }),
       }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
         closeModal();
         loadQuestions();
       });
-    });
-  });
-
-  // -------------------------------------------------------------------- folders
-
-  function loadFolders() {
-    api("/folders").then(function (data) {
-      if (!data.success) { toast(data.message); return; }
-      state.folderMap = {};
-      (data.folders || []).forEach(function (f) { state.folderMap[f.id] = f; });
-      renderFolderOptions(data.folders || []);
-      renderFolderTree(data.folders || [], data.stats || []);
-    });
-  }
-
-  function renderFolderOptions(folders) {
-    var sel = qs("q-folder");
-    var current = sel.value;
-    sel.innerHTML = '<option value="all">全部文件夹</option>' + folders.map(function (f) {
-      return '<option value="' + f.id + '">' + esc(f.name) + "</option>";
-    }).join("");
-    sel.value = current || "all";
-  }
-
-  function renderFolderTree(folders, stats) {
-    var countMap = {};
-    stats.forEach(function (s) { countMap[s.folder_id] = s.question_count; });
-    var ROOT = "root";
-    var children = {};
-    folders.forEach(function (f) {
-      var key = f.parent_id ? String(f.parent_id) : ROOT;
-      (children[key] = children[key] || []).push(f);
-    });
-
-    function build(key, seen) {
-      var list = children[key] || [];
-      if (!list.length) return "";
-      return '<div class="folder-children">' + list.map(function (f) {
-        var count = countMap[f.id] || 0;
-        var visited = seen ? seen.slice() : [];
-        if (visited.indexOf(f.id) !== -1) return "";
-        visited.push(f.id);
-        return '<div class="folder-node">' +
-          '<span class="name">' + esc(f.name) + "</span>" +
-          '<span class="count">' + count + " 题</span>" +
-          '<button class="btn ghost" data-add-sub="' + f.id + '">子文件夹</button> ' +
-          '<button class="btn ghost" data-rename="' + f.id + '">重命名</button> ' +
-          '<button class="btn danger" data-remove="' + f.id + '">删除</button>' +
-          build(String(f.id), visited) +
-        "</div>";
-      }).join("") + "</div>";
-    }
-
-    var el = qs("folder-tree");
-    el.innerHTML = build(ROOT) || '<p class="muted">暂无文件夹</p>';
-
-    el.querySelectorAll("[data-add-sub]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        openModal("新建子文件夹", [{ name: "name", label: "名称", type: "text", value: "" }], function (values) {
-          api("/folders", { method: "POST", body: JSON.stringify({ name: values.name, parent_id: Number(btn.dataset.addSub) }) })
-            .then(function (res) { if (!res.success) { toast(res.message); return; } closeModal(); loadFolders(); });
-        });
-      });
-    });
-    el.querySelectorAll("[data-rename]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var folder = state.folderMap[btn.dataset.rename];
-        openModal("重命名文件夹", [{ name: "name", label: "名称", type: "text", value: folder ? folder.name : "" }], function (values) {
-          api("/folders/" + btn.dataset.rename, { method: "PUT", body: JSON.stringify({ name: values.name }) })
-            .then(function (res) { if (!res.success) { toast(res.message); return; } closeModal(); loadFolders(); });
-        });
-      });
-    });
-    el.querySelectorAll("[data-remove]").forEach(function (btn) {
-      btn.addEventListener("click", async function () {
-        if (!(await confirmDialog("删除该文件夹？其子文件夹也会被删除。", { danger: true, okText: "删除" }))) return;
-        api("/folders/" + btn.dataset.remove, { method: "DELETE" })
-          .then(function (res) { if (!res.success) { toast(res.message, "error"); return; } toast("已删除文件夹", "success"); loadFolders(); });
-      });
-    });
-  }
-
-  qs("f-add-root").addEventListener("click", function () {
-    openModal("新建根文件夹", [{ name: "name", label: "名称", type: "text", value: "" }], function (values) {
-      api("/folders", { method: "POST", body: JSON.stringify({ name: values.name, parent_id: 0 }) })
-        .then(function (res) { if (!res.success) { toast(res.message); return; } closeModal(); loadFolders(); });
     });
   });
 
@@ -879,22 +785,10 @@
         if (state.view === "ocs") renderOCS();
       }
       ensurePlans(function () { fillSettingsForm(s); });
-      loadFolderOptions(s);
     });
   }
 
   var settingsJSON = {};
-
-  function loadFolderOptions(s) {
-    api("/folders").then(function (data) {
-      if (!data.success) return;
-      var sel = qs("s-save-folder");
-      sel.innerHTML = '<option value="0">默认文件夹</option>' + (data.folders || []).map(function (f) {
-        return '<option value="' + f.id + '">' + esc(f.name) + "</option>";
-      }).join("");
-      if (s.questionSaveFolderId != null) sel.value = String(s.questionSaveFolderId);
-    });
-  }
 
   function fillSettingsForm(s) {
     qs("s-site-name").value = s.siteName || "nfentik";
@@ -945,8 +839,6 @@
     s.userLogGlobalLimit = Number(qs("s-ulog-global").value) || 50000;
     s.userAuditRetentionDays = Number(qs("s-uaudit-days").value) || 90;
     s.defaultPlanCode = qs("s-default-plan").value || "";
-    var folderVal = Number(qs("s-save-folder").value);
-    s.questionSaveFolderId = folderVal > 0 ? folderVal : null;
     return s;
   }
 
@@ -957,7 +849,7 @@
     if (raw) {
       qs("s-editor").value = JSON.stringify(settingsJSON, null, 2);
     } else {
-      try { settingsJSON = JSON.parse(qs("s-editor").value); fillSettingsForm(settingsJSON); loadFolderOptions(settingsJSON); }
+      try { settingsJSON = JSON.parse(qs("s-editor").value); fillSettingsForm(settingsJSON); }
       catch (e) { qs("s-status").textContent = "JSON 格式错误，无法切回可视化: " + e.message; this.checked = true; qs("s-visual").classList.add("hidden"); qs("s-editor").classList.remove("hidden"); }
     }
   });
@@ -1138,7 +1030,6 @@
   // ------------------------------------------------------------ import (MOGO)
 
   var mogoSources = [];
-  var mogoFolderMap = {};
   var mogoTimer = null;
 
   function mogoScheduleText(s) {
@@ -1146,10 +1037,6 @@
     if (s.type === "interval") return "每 " + (s.everyMinutes || 0) + " 分钟";
     if (s.type === "daily") return "每天 " + (s.atTime || "00:00");
     return "手动";
-  }
-
-  function mogoFolderName(id) {
-    return mogoFolderMap[id] || (Number(id) === 0 ? "默认文件夹" : ("#" + id));
   }
 
   function mogoSourceById(id) {
@@ -1160,13 +1047,7 @@
   }
 
   function loadMogoPanel() {
-    api("/folders").then(function (data) {
-      if (data.success) {
-        mogoFolderMap = {};
-        (data.folders || []).forEach(function (f) { mogoFolderMap[f.id] = f.name; });
-      }
-      return api("/mogo/sources");
-    }).then(function (data) {
+    api("/mogo/sources").then(function (data) {
       if (!data || !data.success) return;
       mogoSources = data.sources || [];
       renderMogoTable();
@@ -1177,14 +1058,13 @@
   function renderMogoTable() {
     var body = qs("ms-table").querySelector("tbody");
     if (!mogoSources.length) {
-      body.innerHTML = '<tr><td colspan="7" class="muted">尚未配置 MOGO 源</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="muted">尚未配置 MOGO 源</td></tr>';
       return;
     }
     body.innerHTML = mogoSources.map(function (s) {
       return '<tr data-id="' + esc(s.id) + '">' +
         "<td>" + esc(s.name) + "</td>" +
         '<td class="mono small">' + esc(s.baseUrl) + "</td>" +
-        "<td>" + esc(mogoFolderName(s.folderId)) + "</td>" +
         "<td>" + esc(mogoScheduleText(s.schedule)) + "</td>" +
         "<td>" + (s.enabled ? '<span class="pill s2">启用</span>' : '<span class="pill disabled">停用</span>') + "</td>" +
         '<td class="small">' + (s.lastRun ? esc(s.lastRun) + " · 导入 " + (s.lastImported || 0) : "-") +
@@ -1204,14 +1084,10 @@
       schedule: { type: "manual", everyMinutes: 60, atTime: "03:00" },
       throttle: { pageDelayMs: 1500, rowDelayMs: 0, maxPerRun: 0 },
     };
-    var folderOptions = [{ value: "0", label: "默认文件夹" }].concat(Object.keys(mogoFolderMap).map(function (k) {
-      return { value: String(k), label: mogoFolderMap[k] };
-    }));
     openModal(src.id ? ("编辑源 · " + src.name) : "新增 MOGO 源", [
       { name: "name", label: "名称", type: "text", value: src.name || "" },
       { name: "baseUrl", label: "MOGO 地址", type: "text", value: src.baseUrl || "" },
       { name: "aKey", label: "aKey", type: "text", value: src.aKey || "" },
-      { name: "folderId", label: "目标文件夹", options: folderOptions, value: String(src.folderId || 0) },
       { name: "item", label: "每页条数（1-500）", type: "number", value: String(src.item || 50) },
       { name: "mode", label: "模式", options: [{ value: "incremental", label: "增量" }, { value: "backfill", label: "回填全部" }], value: src.mode || "incremental" },
       { name: "schedType", label: "计划", options: [{ value: "manual", label: "手动" }, { value: "interval", label: "间隔" }, { value: "daily", label: "每天定点" }], value: (src.schedule && src.schedule.type) || "manual" },
@@ -1227,7 +1103,6 @@
         name: v.name.trim(),
         baseUrl: v.baseUrl.trim(),
         aKey: v.aKey.trim(),
-        folderId: Number(v.folderId) || 0,
         item: Number(v.item) || 50,
         mode: v.mode,
         enabled: v.enabled === "1",

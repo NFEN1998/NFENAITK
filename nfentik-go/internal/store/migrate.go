@@ -33,12 +33,6 @@ var migrations = []migration{
 		Name:     "baseline_schema",
 		Baseline: true,
 		Statements: []string{
-			`CREATE TABLE IF NOT EXISTS Folders (
-				Id SERIAL PRIMARY KEY,
-				Name TEXT NOT NULL,
-				ParentId INTEGER DEFAULT 0,
-				CreateTime TIMESTAMP DEFAULT NOW()
-			)`,
 			`CREATE TABLE IF NOT EXISTS AIResponses (
 				Id SERIAL PRIMARY KEY,
 				Question TEXT NOT NULL,
@@ -46,8 +40,6 @@ var migrations = []migration{
 				QuestionType TEXT,
 				Answer TEXT NOT NULL,
 				CreateTime TIMESTAMP DEFAULT NOW(),
-				FolderId INTEGER DEFAULT 0,
-				FolderName TEXT DEFAULT '默认文件夹',
 				IsAi BOOLEAN DEFAULT TRUE,
 				IsPendingCorrection BOOLEAN DEFAULT FALSE
 			)`,
@@ -76,18 +68,13 @@ var migrations = []migration{
 				UpdateTime TIMESTAMP DEFAULT NOW()
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_request_logs_request_id ON RequestLogs(RequestId)`,
-			`CREATE INDEX IF NOT EXISTS idx_airesponses_folder ON AIResponses(FolderId)`,
 			`CREATE INDEX IF NOT EXISTS idx_airesponses_pending ON AIResponses(IsPendingCorrection)`,
 			`CREATE INDEX IF NOT EXISTS idx_airesponses_created ON AIResponses(CreateTime DESC)`,
 			// Columns that were added after the very first release. They are
 			// folded into the baseline so both fresh and legacy databases end up
 			// with the same shape.
-			`ALTER TABLE Folders ADD COLUMN IF NOT EXISTS ParentId INTEGER DEFAULT 0`,
-			`ALTER TABLE Folders ADD COLUMN IF NOT EXISTS CreateTime TIMESTAMP DEFAULT NOW()`,
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS QuestionType TEXT`,
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS CreateTime TIMESTAMP DEFAULT NOW()`,
-			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS FolderId INTEGER DEFAULT 0`,
-			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS FolderName TEXT DEFAULT '默认文件夹'`,
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS IsAi BOOLEAN DEFAULT TRUE`,
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS IsPendingCorrection BOOLEAN DEFAULT FALSE`,
 		},
@@ -187,7 +174,6 @@ var migrations = []migration{
 // coreTables are the tables every release expects. They are folded into the
 // baseline migration, so a healthy database always has them.
 var coreTables = []string{
-	"folders",
 	"airesponses",
 	"requestlogs",
 	"dailyrequestcounts",
@@ -201,7 +187,6 @@ var coreTables = []string{
 // and repair lists to their canonical spelling, so repair DDL matches the real
 // table on engines whose identifiers are case sensitive (MySQL on Linux).
 var canonicalTables = map[string]string{
-	"folders":            "Folders",
 	"airesponses":        "AIResponses",
 	"requestlogs":        "RequestLogs",
 	"dailyrequestcounts": "DailyRequestCounts",
@@ -227,8 +212,7 @@ func canonicalTable(name string) string {
 // (for example after a partial restore), so repair must not rely on version
 // bookkeeping alone.
 var coreColumns = map[string][]string{
-	"folders":            {"id", "name", "parentid", "createtime"},
-	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "folderid", "foldername", "isai", "ispendingcorrection", "questionhash", "source"},
+	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "isai", "ispendingcorrection", "questionhash", "source"},
 	"requestlogs":        {"logid", "requestid", "timestamp", "method", "path", "status", "responsetime", "requestbody", "responsebody", "headers", "ip", "useragent", "stage"},
 	"dailyrequestcounts": {"day", "count"},
 	"appsettings":        {"key", "value", "updatetime"},
@@ -495,10 +479,6 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	// Guarantee the implicit root folder exists and the sequence is in sync.
-	if err := s.ensureRootFolder(); err != nil {
-		return err
-	}
 	// Backfill the question hash column and build its index. Runs in batches so
 	// it stays safe on banks with millions of rows.
 	return s.ensureQuestionHash()
@@ -523,9 +503,6 @@ func (s *Store) migrateMySQL() error {
 			return err
 		}
 	}
-	if err := s.ensureRootFolder(); err != nil {
-		return err
-	}
 	return s.ensureQuestionHash()
 }
 
@@ -533,13 +510,6 @@ func (s *Store) migrateMySQL() error {
 // declared inline so a fresh install needs no extra steps. The statements are
 // idempotent (CREATE TABLE IF NOT EXISTS).
 var mysqlTableDDL = []string{
-	`CREATE TABLE IF NOT EXISTS Folders (
-		Id BIGINT NOT NULL AUTO_INCREMENT,
-		Name VARCHAR(255) NOT NULL,
-		ParentId BIGINT DEFAULT 0,
-		CreateTime DATETIME DEFAULT NOW(),
-		PRIMARY KEY (Id)
-	)` + mysqlTableOptions,
 	`CREATE TABLE IF NOT EXISTS AIResponses (
 		Id BIGINT NOT NULL AUTO_INCREMENT,
 		Question TEXT NOT NULL,
@@ -547,14 +517,11 @@ var mysqlTableDDL = []string{
 		QuestionType VARCHAR(64),
 		Answer MEDIUMTEXT NOT NULL,
 		CreateTime DATETIME DEFAULT NOW(),
-		FolderId BIGINT DEFAULT 0,
-		FolderName VARCHAR(255) DEFAULT '默认文件夹',
 		IsAi TINYINT(1) DEFAULT 1,
 		IsPendingCorrection TINYINT(1) DEFAULT 0,
 		QuestionHash VARCHAR(64),
 		Source VARCHAR(64) DEFAULT '',
 		PRIMARY KEY (Id),
-		KEY idx_airesponses_folder (FolderId),
 		KEY idx_airesponses_pending (IsPendingCorrection),
 		KEY idx_airesponses_created (CreateTime),
 		KEY idx_airesponses_question_hash (QuestionHash)
@@ -635,12 +602,8 @@ var mysqlTableDDL = []string{
 // mysqlColumnRepairs lists columns a partially created MySQL database might be
 // missing. Types match the CREATE TABLE definitions above.
 var mysqlColumnRepairs = []columnRepair{
-	{Table: "folders", Column: "parentid", DDL: "ParentId BIGINT DEFAULT 0"},
-	{Table: "folders", Column: "createtime", DDL: "CreateTime DATETIME DEFAULT NOW()"},
 	{Table: "airesponses", Column: "questiontype", DDL: "QuestionType VARCHAR(64)"},
 	{Table: "airesponses", Column: "createtime", DDL: "CreateTime DATETIME DEFAULT NOW()"},
-	{Table: "airesponses", Column: "folderid", DDL: "FolderId BIGINT DEFAULT 0"},
-	{Table: "airesponses", Column: "foldername", DDL: "FolderName VARCHAR(255) DEFAULT '默认文件夹'"},
 	{Table: "airesponses", Column: "isai", DDL: "IsAi TINYINT(1) DEFAULT 1"},
 	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection TINYINT(1) DEFAULT 0"},
 	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash VARCHAR(64)"},
@@ -763,12 +726,8 @@ func (c columnRepair) required(s *Store) bool {
 // generated from the migration history so newly added columns only need to
 // appear here once.
 var columnRepairs = []columnRepair{
-	{Table: "folders", Column: "parentid", DDL: "ParentId INTEGER DEFAULT 0"},
-	{Table: "folders", Column: "createtime", DDL: "CreateTime TIMESTAMP DEFAULT NOW()"},
 	{Table: "airesponses", Column: "questiontype", DDL: "QuestionType TEXT"},
 	{Table: "airesponses", Column: "createtime", DDL: "CreateTime TIMESTAMP DEFAULT NOW()"},
-	{Table: "airesponses", Column: "folderid", DDL: "FolderId INTEGER DEFAULT 0"},
-	{Table: "airesponses", Column: "foldername", DDL: "FolderName TEXT DEFAULT '默认文件夹'"},
 	{Table: "airesponses", Column: "isai", DDL: "IsAi BOOLEAN DEFAULT TRUE"},
 	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection BOOLEAN DEFAULT FALSE"},
 	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash TEXT"},
@@ -862,27 +821,6 @@ func (s *Store) recordMigration(m migration) error {
 	_, err := s.exec(`INSERT INTO SchemaMigrations (Version, Name) VALUES ($1, $2)`+
 		s.dialect.recordVersionSuffix(), m.Version, m.Name)
 	return err
-}
-
-// ensureRootFolder creates the id 0 root folder and, on PostgreSQL, keeps the
-// sequence ahead of it so generated ids never collide with the root row. MySQL
-// handles that through AUTO_INCREMENT plus NO_AUTO_VALUE_ON_ZERO.
-func (s *Store) ensureRootFolder() error {
-	if s.dialect.isMySQL() {
-		if _, err := s.exec(`INSERT IGNORE INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)`); err != nil {
-			return fmt.Errorf("ensure root folder: %w", err)
-		}
-		return nil
-	}
-	if _, err := s.exec(`INSERT INTO Folders (Id, Name, ParentId) VALUES (0, '默认文件夹', 0)
-		ON CONFLICT (Id) DO NOTHING`); err != nil {
-		return fmt.Errorf("ensure root folder: %w", err)
-	}
-	if _, err := s.exec(`SELECT setval(pg_get_serial_sequence('folders', 'id'),
-		COALESCE((SELECT MAX(id) FROM folders), 0) + 1, false)`); err != nil {
-		return fmt.Errorf("sync folders sequence: %w", err)
-	}
-	return nil
 }
 
 // ensureTrigram enables the pg_trgm extension and its GIN index when the

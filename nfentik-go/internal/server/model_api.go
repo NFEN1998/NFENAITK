@@ -271,7 +271,7 @@ func (s *Server) handleModelResponse(w http.ResponseWriter, r *http.Request) {
 	id := int64(0)
 	if req.Save && strings.TrimSpace(req.Answer) != "" {
 		var err error
-		id, err = s.store.InsertAIResponse(req.Query, req.Answer, req.Options, req.Type, s.saveFolderID())
+		id, err = s.store.InsertAIResponse(req.Query, req.Answer, req.Options, req.Type)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 			return

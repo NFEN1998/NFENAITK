@@ -30,8 +30,6 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.adminSettings(w, r)
 	case "questions":
 		s.adminQuestions(w, r, parts[1:])
-	case "folders":
-		s.adminFolders(w, r, parts[1:])
 	case "logs":
 		s.adminLogs(w, r, parts[1:])
 	case "model-config":
@@ -87,13 +85,7 @@ func (s *Server) adminQuestions(w http.ResponseWriter, r *http.Request, rest []s
 
 	if rest[0] == "search" && r.Method == http.MethodGet {
 		keyword := r.URL.Query().Get("keyword")
-		var folderID *int64
-		if v := r.URL.Query().Get("folder_id"); v != "" {
-			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-				folderID = &id
-			}
-		}
-		items, err := s.store.Search(keyword, folderID)
+		items, err := s.store.Search(keyword)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 			return
@@ -114,32 +106,6 @@ func (s *Server) adminQuestions(w http.ResponseWriter, r *http.Request, rest []s
 			if r.Method == http.MethodPost {
 				pending, _ := strconv.ParseBool(defaultString(r.URL.Query().Get("value"), "true"))
 				if err := s.store.SetPendingCorrection(id, pending); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-					return
-				}
-				writeJSON(w, http.StatusOK, map[string]any{"success": true})
-				return
-			}
-		case "move":
-			if r.Method == http.MethodPost {
-				var req struct {
-					TargetFolderID int64 `json:"target_folder_id"`
-				}
-				_ = decodeJSON(r, &req)
-				if err := s.store.MoveQuestion(id, req.TargetFolderID); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-					return
-				}
-				writeJSON(w, http.StatusOK, map[string]any{"success": true})
-				return
-			}
-		case "copy":
-			if r.Method == http.MethodPost {
-				var req struct {
-					TargetFolderID int64 `json:"target_folder_id"`
-				}
-				_ = decodeJSON(r, &req)
-				if err := s.store.CopyQuestion(id, req.TargetFolderID); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 					return
 				}
@@ -190,13 +156,7 @@ func (s *Server) listQuestions(w http.ResponseWriter, r *http.Request) {
 	pendingOnly := r.URL.Query().Get("pending") == "true"
 	sortOrder := defaultString(r.URL.Query().Get("sort"), "desc")
 
-	var folderID *int64
-	if v := r.URL.Query().Get("folder_id"); v != "" && v != "all" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			folderID = &id
-		}
-	}
-	result, err := s.store.PaginatedQuestions(folderID, pendingOnly, page, pageSize, sortOrder)
+	result, err := s.store.PaginatedQuestions(pendingOnly, page, pageSize, sortOrder)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -212,7 +172,6 @@ func (s *Server) createQuestion(w http.ResponseWriter, r *http.Request) {
 		Options      *string `json:"options"`
 		Answer       *string `json:"answer"`
 		QuestionType *string `json:"question_type"`
-		FolderID     int64   `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
@@ -222,7 +181,7 @@ func (s *Server) createQuestion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "题目内容不能为空"})
 		return
 	}
-	q, err := s.store.AddQuestion(req.Question, req.Options, req.Answer, req.QuestionType, req.FolderID, false)
+	q, err := s.store.AddQuestion(req.Question, req.Options, req.Answer, req.QuestionType, false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -243,91 +202,6 @@ func (s *Server) deleteQuestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "deleted": len(req.IDs)})
-}
-
-func (s *Server) adminFolders(w http.ResponseWriter, r *http.Request, rest []string) {
-	if len(rest) == 0 {
-		switch r.Method {
-		case http.MethodGet:
-			folders, err := s.store.Folders()
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-				return
-			}
-			stats, _ := s.store.FolderStats()
-			writeJSON(w, http.StatusOK, map[string]any{"success": true, "folders": folders, "stats": stats})
-		case http.MethodPost:
-			var req struct {
-				Name     string `json:"name"`
-				ParentID int64  `json:"parent_id"`
-			}
-			if err := decodeJSON(r, &req); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
-				return
-			}
-			if strings.TrimSpace(req.Name) == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "文件夹名称不能为空"})
-				return
-			}
-			id, err := s.store.AddFolder(req.Name, req.ParentID)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-
-	id, err := strconv.ParseInt(rest[0], 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		questions, err := s.store.RecursiveQuestions(id)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-			return
-		}
-		path, _ := s.store.FolderPath(id)
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "items": questions, "path": path})
-	case http.MethodPut:
-		var req struct {
-			Name     *string `json:"name"`
-			ParentID *int64  `json:"parent_id"`
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
-			return
-		}
-		if req.Name != nil {
-			if err := s.store.RenameFolder(id, *req.Name); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-				return
-			}
-		}
-		if req.ParentID != nil {
-			if err := s.store.MoveFolder(id, *req.ParentID); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-				return
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true})
-	case http.MethodDelete:
-		deleteQuestions := r.URL.Query().Get("delete_questions") == "true"
-		if err := s.store.DeleteFolder(id, deleteQuestions); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
 }
 
 func (s *Server) adminLogs(w http.ResponseWriter, r *http.Request, rest []string) {
@@ -493,7 +367,6 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	for _, c := range counts {
 		total += c.Count
 	}
-	folders, _ := s.store.FolderStats()
 	redisStatus := map[string]any{"enabled": false}
 	if s.cache != nil {
 		redisStatus = map[string]any{
@@ -509,7 +382,6 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 		"pending":        pending,
 		"daily":          counts,
 		"total_requests": total,
-		"folder_stats":   folders,
 		"subscribers":    s.bus.SubscriberCount(),
 		"data_path":      s.DataPath(),
 		"redis":          redisStatus,

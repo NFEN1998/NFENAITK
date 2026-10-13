@@ -257,7 +257,7 @@ export DATABASE_URL="postgres://nfentik:nfentik@127.0.0.1:5432/nfentik?sslmode=d
 ./nfentik-go migrate-sqlite -src /path/to/old/database.db
 ```
 
-迁移保留文件夹层级、题目内容、AI 标记与待修正标记，空答案题目会跳过，输出中给出统计。
+迁移保留题目内容、AI 标记与待修正标记，空答案题目会跳过，输出中给出统计（文件夹已移除，旧库的文件夹层级不再保留）。
 
 ## 11. 运维命令
 

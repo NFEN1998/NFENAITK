@@ -487,7 +487,7 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 		return queryResult{status: http.StatusOK, entry: entry, source: "ai"}
 	}
 
-	id, err := s.store.InsertAIResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID())
+	id, err := s.store.InsertAIResponse(req.Title, answer, req.Options, req.Type)
 	if err != nil {
 		s.PublishError("store AI answer: %v", err)
 		id = 0
@@ -562,7 +562,7 @@ func (s *Server) respondExternal(req QueryRequest, src externalbank.Source, answ
 		IsAI:     false,
 	}
 	if src.WriteBack {
-		id, err := s.store.InsertExternalResponse(req.Title, answer, req.Options, req.Type, s.saveFolderID(), source)
+		id, err := s.store.InsertExternalResponse(req.Title, answer, req.Options, req.Type, source)
 		if err != nil {
 			s.PublishError("store external answer: %v", err)
 		} else {
@@ -602,14 +602,6 @@ func (s *Server) invalidateQueryCache() {
 	if s.cache != nil {
 		s.cache.InvalidateQueries()
 	}
-}
-
-func (s *Server) saveFolderID() int64 {
-	settings := s.config.Settings()
-	if settings.QuestionSaveFolderID != nil && *settings.QuestionSaveFolderID > 0 {
-		return *settings.QuestionSaveFolderID
-	}
-	return 0
 }
 
 // renderQuestion formats the question text for the response.
