@@ -197,6 +197,30 @@ var coreTables = []string{
 	"userauditlogs",
 }
 
+// canonicalTables maps the lowercased table names used by the integrity checks
+// and repair lists to their canonical spelling, so repair DDL matches the real
+// table on engines whose identifiers are case sensitive (MySQL on Linux).
+var canonicalTables = map[string]string{
+	"folders":            "Folders",
+	"airesponses":        "AIResponses",
+	"requestlogs":        "RequestLogs",
+	"dailyrequestcounts": "DailyRequestCounts",
+	"appsettings":        "AppSettings",
+	"users":              "Users",
+	"userrequestlogs":    "UserRequestLogs",
+	"userauditlogs":      "UserAuditLogs",
+	"schemamigrations":   "SchemaMigrations",
+}
+
+// canonicalTable returns the canonical spelling for a (possibly lowercased)
+// table name, falling back to the input when unknown.
+func canonicalTable(name string) string {
+	if canonical, ok := canonicalTables[strings.ToLower(name)]; ok {
+		return canonical
+	}
+	return name
+}
+
 // coreColumns maps each core table to the columns every release expects. It is
 // used for integrity checks and for idempotent repair: a column can be missing
 // even when the version table claims the migration that added it was applied
@@ -636,7 +660,7 @@ func (s *Store) ensureSchemaMySQL() error {
 		if !fix.required(s) {
 			continue
 		}
-		if _, err := s.exec("ALTER TABLE " + fix.Table + " ADD COLUMN " + fix.DDL); err != nil {
+		if _, err := s.exec("ALTER TABLE " + canonicalTable(fix.Table) + " ADD COLUMN " + fix.DDL); err != nil {
 			return fmt.Errorf("补齐字段 %s.%s 失败: %w", fix.Table, fix.Column, err)
 		}
 		log.Printf("已补齐缺失字段 %s.%s", fix.Table, fix.Column)
@@ -704,7 +728,7 @@ func (s *Store) repairSchema(report IntegrityReport) error {
 		if !fix.required(s) {
 			continue
 		}
-		if _, err := s.exec(`ALTER TABLE ` + fix.Table + ` ADD COLUMN IF NOT EXISTS ` + fix.DDL); err != nil {
+		if _, err := s.exec(`ALTER TABLE ` + canonicalTable(fix.Table) + ` ADD COLUMN IF NOT EXISTS ` + fix.DDL); err != nil {
 			return fmt.Errorf("补齐字段 %s.%s 失败: %w", fix.Table, fix.Column, err)
 		}
 		log.Printf("已补齐缺失字段 %s.%s", fix.Table, fix.Column)
