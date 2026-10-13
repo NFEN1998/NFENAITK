@@ -150,9 +150,6 @@ func run(port int, bind string, lanAccess bool) error {
 	if bind != "" {
 		addr = bind
 	}
-	if !settings.Network.EnableLan && !lanAccess {
-		addr = "127.0.0.1"
-	}
 	if addr == "" {
 		addr = "0.0.0.0"
 	}
@@ -211,12 +208,9 @@ func serveSetup(assets fs.FS, bootstrap config.BootstrapFile, st *store.Store, c
 		return err
 	}
 
-	addr := "127.0.0.1"
+	addr := "0.0.0.0"
 	if bind != "" {
 		addr = bind
-	}
-	if lanAccess {
-		addr = "0.0.0.0"
 	}
 	if addr == "" {
 		addr = "0.0.0.0"
