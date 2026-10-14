@@ -14,22 +14,33 @@ import (
 	"time"
 )
 
-const maxBodyBytes = 16 << 20
+const (
+	maxBodyBytes = 16 << 20
+	// DefaultRetryDelay is the pause between attempts when a MOGO request fails
+	// with a transient error such as a network fault or a 502/503/504 status.
+	DefaultRetryDelay = 5 * time.Second
+)
 
 // Client talks to one MOGO instance.
 type Client struct {
 	BaseURL string
 	AKey    string
 	HTTP    *http.Client
+	// Retries is the number of extra attempts made after a transient failure
+	// (network error, 408/429 or 5xx). Zero means a single attempt.
+	Retries int
+	// RetryDelay is the pause between attempts. Zero uses DefaultRetryDelay.
+	RetryDelay time.Duration
 }
 
 // NewClient builds a client. baseURL is the MOGO origin (for example
 // http://host:9988); aKey is the site access key.
 func NewClient(baseURL, aKey string) *Client {
 	return &Client{
-		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		AKey:    strings.TrimSpace(aKey),
-		HTTP:    &http.Client{Timeout: 60 * time.Second},
+		BaseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		AKey:       strings.TrimSpace(aKey),
+		HTTP:       &http.Client{Timeout: 60 * time.Second},
+		RetryDelay: DefaultRetryDelay,
 	}
 }
 
@@ -139,27 +150,86 @@ func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byt
 	if encoded := params.Encode(); encoded != "" {
 		endpoint += "?" + encoded
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
 	client := c.HTTP
 	if client == nil {
 		client = http.DefaultClient
 	}
+
+	attempts := c.Retries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	delay := c.RetryDelay
+	if delay <= 0 {
+		delay = DefaultRetryDelay
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		raw, retryable, err := c.doGet(client, req)
+		if err == nil {
+			return raw, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !retryable || attempt == attempts {
+			return nil, err
+		}
+		if err := waitContext(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// doGet runs one request and reports whether the failure is worth retrying.
+func (c *Client) doGet(client *http.Client, req *http.Request) (raw []byte, retryable bool, err error) {
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		// A transport error (timeout, reset, EOF) is transient until the caller
+		// cancels the context.
+		return nil, true, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	raw, err = io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("mogo 返回状态 %d", resp.StatusCode)
+		return nil, isRetryableStatus(resp.StatusCode), fmt.Errorf("mogo 返回状态 %d", resp.StatusCode)
 	}
-	return raw, nil
+	return raw, false, nil
+}
+
+// isRetryableStatus reports whether an HTTP status is a transient server side
+// failure that a retry may resolve (a gateway timeout, for example).
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	}
+	return code >= 500
+}
+
+// waitContext sleeps for d unless ctx is cancelled first.
+func waitContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func indexOf(keys []string) map[string]int {

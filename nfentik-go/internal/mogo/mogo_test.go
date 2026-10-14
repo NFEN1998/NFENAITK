@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestParseOptions(t *testing.T) {
@@ -87,5 +88,70 @@ func TestHeaderRejectsBadKey(t *testing.T) {
 
 	if _, err := NewClient(server.URL, "bad").Header(context.Background()); err == nil {
 		t.Fatalf("expected an error for a rejected key")
+	}
+}
+
+// TestClientRetriesTransientStatus verifies a 504 is retried until it succeeds.
+func TestClientRetriesTransientStatus(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":1,"msg":"ok","data":{"dbType":"question","table_header":["id"],"table_header_key":["id"]}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "secret")
+	client.Retries = 3
+	client.RetryDelay = time.Millisecond
+
+	if _, err := client.Header(context.Background()); err != nil {
+		t.Fatalf("Header after retries: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+}
+
+// TestClientDoesNotRetryClientError verifies a 4xx fails on the first attempt.
+func TestClientDoesNotRetryClientError(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "secret")
+	client.Retries = 5
+	client.RetryDelay = time.Millisecond
+
+	if _, err := client.Header(context.Background()); err == nil {
+		t.Fatalf("expected an error for a 400")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (no retry on 4xx)", attempts)
+	}
+}
+
+// TestClientRetryStopsOnContextCancel verifies a cancelled context aborts the
+// retry wait instead of blocking for the full delay.
+func TestClientRetryStopsOnContextCancel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "secret")
+	client.Retries = 3
+	client.RetryDelay = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Header(ctx); err == nil {
+		t.Fatalf("expected the cancelled context to abort the retry")
 	}
 }

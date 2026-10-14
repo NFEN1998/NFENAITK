@@ -38,12 +38,29 @@ type mogoSource struct {
 	AKey         string       `json:"aKey"`
 	Item         int          `json:"item"`
 	Mode         string       `json:"mode"` // incremental | backfill
+	Retries      int          `json:"retries"`
 	Schedule     mogoSchedule `json:"schedule"`
 	Throttle     mogoThrottle `json:"throttle"`
 	MaxID        int64        `json:"maxId"`
 	LastRun      string       `json:"lastRun"`
 	LastImported int64        `json:"lastImported"`
 	LastError    string       `json:"lastError"`
+}
+
+// defaultMogoRetries is used when a source does not configure its own retry
+// count, so a transient 502/503/504 from the MOGO host is retried by default.
+const defaultMogoRetries = 3
+
+// retryCount resolves the effective number of retries for a source, defaulting
+// and clamping to a sane range.
+func (src *mogoSource) retryCount() int {
+	if src.Retries <= 0 {
+		return defaultMogoRetries
+	}
+	if src.Retries > 10 {
+		return 10
+	}
+	return src.Retries
 }
 
 // mogoImportState is the live progress of the current job.
@@ -217,6 +234,7 @@ func normalizeSource(src *mogoSource) {
 	if src.Throttle.RowDelayMs < 0 {
 		src.Throttle.RowDelayMs = 0
 	}
+	src.Retries = src.retryCount()
 }
 
 func validHTTPURL(raw string) bool {
@@ -366,6 +384,7 @@ func (s *Server) runMogoSource(ctx context.Context, job *mogoImportJob, src mogo
 
 	baseline := src.MaxID
 	client := mogo.NewClient(src.BaseURL, src.AKey)
+	client.Retries = src.retryCount()
 	schema, err := client.Header(ctx)
 	if err != nil {
 		finish("读取字段定义失败: " + err.Error())
