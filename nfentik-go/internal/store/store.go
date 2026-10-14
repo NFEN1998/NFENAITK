@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nfentik/nfentik-go/internal/match"
@@ -58,6 +59,17 @@ type Store struct {
 	// available for ranked fuzzy candidate lookup. When false the query path
 	// falls back to a bounded prefix probe.
 	trigram bool
+
+	// writeMu serializes bank writes so the check-then-insert dedup is atomic
+	// within the process. Without it, a concurrent import and query write-back
+	// can both see "no existing row" and each insert a duplicate with a
+	// different answer.
+	writeMu sync.Mutex
+
+	// uniqueQuestion reports whether the (QuestionHash, OptionsHash) unique
+	// index is present. When it is, inserts use ON CONFLICT DO NOTHING so
+	// duplicates cannot be created even across processes.
+	uniqueQuestion bool
 }
 
 // OnChange registers a callback fired after every bank mutation.
@@ -277,7 +289,9 @@ func (s *Store) queryByHash(title string, queryOptions *string, scorer func(q, c
 		return nil, nil
 	}
 	rows, err := s.query(`SELECT Id, Question, Options, Answer, IsAi, COALESCE(IsPendingCorrection, FALSE)
-		FROM AIResponses WHERE QuestionHash = $1 LIMIT $2`, hash, candidateLimit)
+		FROM AIResponses WHERE QuestionHash = $1
+		ORDER BY COALESCE(IsPendingCorrection, FALSE) ASC, IsAi ASC, Id ASC
+		LIMIT $2`, hash, candidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -442,18 +456,21 @@ func scoreCandidates(title string, queryOptions *string, requireOption bool, can
 	return out
 }
 
-// FindByNormalizedQuestion returns an existing hit whose question is equivalent
-// to title after normalization (case, whitespace and punctuation removed). Used
-// at insert time to avoid storing a duplicate of a question that was just added.
-// The lookup is an indexed probe on QuestionHash, so it stays O(log n) even on
-// banks with tens of millions of rows.
-func (s *Store) FindByNormalizedQuestion(title string) (*QueryHit, error) {
+// FindByNormalizedQuestion returns an existing hit whose question and options
+// are equivalent to the given values after normalization (case, whitespace and
+// punctuation removed). Used at insert time to avoid storing a duplicate of a
+// question that was just added. The lookup is an indexed probe on QuestionHash
+// and OptionsHash, so it stays O(log n) even on banks with tens of millions of
+// rows.
+func (s *Store) FindByNormalizedQuestion(title string, options *string) (*QueryHit, error) {
 	hash := match.QuestionHash(title)
 	if hash == "" {
 		return nil, nil
 	}
 	row := s.queryRow(`SELECT `+hitColumns+` FROM AIResponses
-		WHERE QuestionHash = $1 ORDER BY Id LIMIT 1`, hash)
+		WHERE QuestionHash = $1 AND OptionsHash = $2
+		ORDER BY COALESCE(IsPendingCorrection, FALSE) ASC, IsAi ASC, Id ASC LIMIT 1`,
+		hash, match.OptionsHash(options))
 
 	var (
 		id               int64
@@ -598,7 +615,8 @@ func (s *Store) GetQuestion(id int64) (Question, error) {
 	return q, err
 }
 
-// AddQuestion inserts a manual question, optionally bypassing the blank-answer guard.
+// AddQuestion inserts a manual question, optionally bypassing the blank-answer
+// guard. A row for the same normalized question and options is reused.
 func (s *Store) AddQuestion(question string, options *string, answerStr, questionType *string, isAI bool) (Question, error) {
 	if strings.TrimSpace(question) == "" {
 		return Question{}, errors.New("题目不能为空")
@@ -610,13 +628,13 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 	if isAI && strings.TrimSpace(answer) == "" {
 		return Question{}, errors.New("AI处理结果答案为空，不保存题目")
 	}
-	id, err := s.insertReturningID(`INSERT INTO AIResponses (Question, Options, Answer, QuestionType, IsAi, CreateTime, QuestionHash)
-		VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
-		question, options, answer, questionType, isAI, match.QuestionHash(question))
+	id, created, err := s.storeBankRow(question, answer, options, questionType, isAI, "")
 	if err != nil {
 		return Question{}, err
 	}
-	s.changed()
+	if created {
+		s.changed()
+	}
 	return s.GetQuestion(id)
 }
 
@@ -643,58 +661,20 @@ func (s *Store) insertBankResponse(question, answer string, options, questionTyp
 	if strings.TrimSpace(answer) == "" {
 		return 0, errors.New("AI处理结果答案为空，不保存题目")
 	}
-	questionHash := match.QuestionHash(question)
-
-	if existing, err := s.idByLookup(questionHash, options); err != nil {
+	id, created, err := s.storeBankRow(question, answer, options, questionType, isAI, source)
+	if err != nil {
 		return 0, err
-	} else if existing != 0 {
-		return existing, nil
 	}
-
-	from := ""
-	if s.dialect.isMySQL() {
-		from = " FROM DUAL"
+	if created {
+		s.changed()
 	}
-	insertSQL := `INSERT INTO AIResponses
-		(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, QuestionHash, Source)
-		SELECT $1, $2, $3, $4, $5, FALSE, NOW(), $6, $7` + from + `
-		WHERE NOT EXISTS (
-			SELECT 1 FROM AIResponses
-			WHERE QuestionHash = $6 AND ` + s.dialect.nullSafeEqual("Options", "$3") + `
-		)`
-	insertArgs := []any{question, answer, options, questionType, isAI, questionHash, source}
-
-	lookupExisting := func() (int64, error) {
-		return s.idByLookup(questionHash, options)
-	}
-
-	var id int64
-	if s.dialect.isPostgres() {
-		if err := s.queryRow(insertSQL+` RETURNING Id`, insertArgs...).Scan(&id); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return lookupExisting()
-			}
-			return 0, err
-		}
-	} else {
-		res, err := s.exec(insertSQL, insertArgs...)
-		if err != nil {
-			return 0, err
-		}
-		inserted, _ := res.LastInsertId()
-		if inserted == 0 {
-			return lookupExisting()
-		}
-		id = inserted
-	}
-	s.changed()
 	return id, nil
 }
 
 // ImportQuestion inserts a question pulled from an external source (for example
-// a MOGO import). Rows that already exist for the same normalized question and
-// options are skipped. It does not invalidate the query cache per row; the
-// caller does that once when a bulk import finishes.
+// a MOGO import). It reports false when a row for the same normalized question
+// and options already exists. It does not invalidate the query cache per row;
+// the caller does that once when a bulk import finishes.
 func (s *Store) ImportQuestion(question, options, answer, questionType, source string) (bool, error) {
 	question = strings.TrimSpace(question)
 	answer = strings.TrimSpace(answer)
@@ -709,30 +689,90 @@ func (s *Store) ImportQuestion(question, options, answer, questionType, source s
 	if strings.TrimSpace(questionType) != "" {
 		qtype = &questionType
 	}
-	hash := match.QuestionHash(question)
-	existing, err := s.idByLookup(hash, opts)
-	if err != nil {
-		return false, err
-	}
-	if existing != 0 {
-		return false, nil
-	}
-	if _, err := s.insertReturningID(`INSERT INTO AIResponses
-		(Question, Options, Answer, QuestionType, IsAi, IsPendingCorrection, CreateTime, QuestionHash, Source)
-		VALUES ($1, $2, $3, $4, FALSE, FALSE, NOW(), $5, $6)`,
-		question, opts, answer, qtype, hash, source); err != nil {
-		return false, err
-	}
-	return true, nil
+	_, created, err := s.storeBankRow(question, answer, opts, qtype, false, source)
+	return created, err
 }
 
-// idByLookup returns the id of the row matching the question hash and the exact
-// stored options, or zero when none exists.
-func (s *Store) idByLookup(questionHash string, options *string) (int64, error) {
+// storeBankRow inserts one bank row and reports its id and whether it was newly
+// created. The dedup lookup and the insert run under writeMu so two concurrent
+// writers (an import and a query write-back) cannot both insert the same
+// question. When the unique index is present the insert also uses ON CONFLICT
+// DO NOTHING, which keeps it safe across processes.
+func (s *Store) storeBankRow(question, answer string, options, questionType *string, isAI bool, source string) (int64, bool, error) {
+	questionHash := match.QuestionHash(question)
+	optionsHash := match.OptionsHash(options)
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	if existing, err := s.idByLookup(questionHash, optionsHash); err != nil {
+		return 0, false, err
+	} else if existing != 0 {
+		return existing, false, nil
+	}
+
+	from := ""
+	if s.dialect.isMySQL() {
+		from = " FROM DUAL"
+	}
+	columns := `(Question, Answer, Options, QuestionType, IsAi, IsPendingCorrection, CreateTime, QuestionHash, OptionsHash, Source)`
+	selectValues := `SELECT $1, $2, $3, $4, $5, FALSE, NOW(), $6, $7, $8` + from
+	args := []any{question, answer, options, questionType, isAI, questionHash, optionsHash, source}
+
+	insertSQL := `INSERT INTO AIResponses ` + columns + ` ` + selectValues
+	switch {
+	case s.uniqueQuestion && s.dialect.isPostgres():
+		insertSQL += ` ON CONFLICT (QuestionHash, OptionsHash) DO NOTHING`
+	case s.uniqueQuestion:
+		insertSQL = `INSERT IGNORE INTO AIResponses ` + columns + ` ` + selectValues
+	default:
+		// No unique index yet: guard the insert with NOT EXISTS. writeMu already
+		// serializes writers within this process, so this branch is race free.
+		insertSQL += ` WHERE NOT EXISTS (
+			SELECT 1 FROM AIResponses
+			WHERE QuestionHash = $6 AND OptionsHash = $7
+		)`
+	}
+
+	var id int64
+	if s.dialect.isPostgres() {
+		if err := s.queryRow(insertSQL+` RETURNING Id`, args...).Scan(&id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return s.existingBankRow(questionHash, optionsHash)
+			}
+			return 0, false, err
+		}
+	} else {
+		res, err := s.exec(insertSQL, args...)
+		if err != nil {
+			return 0, false, err
+		}
+		inserted, _ := res.LastInsertId()
+		if inserted == 0 {
+			return s.existingBankRow(questionHash, optionsHash)
+		}
+		id = inserted
+	}
+	return id, true, nil
+}
+
+// existingBankRow re-resolves the id of a row that a concurrent writer inserted
+// first, reporting it as not newly created.
+func (s *Store) existingBankRow(questionHash, optionsHash string) (int64, bool, error) {
+	id, err := s.idByLookup(questionHash, optionsHash)
+	if err != nil {
+		return 0, false, err
+	}
+	return id, false, nil
+}
+
+// idByLookup returns the id of the row matching the normalized question and
+// options hashes, or zero when none exists.
+func (s *Store) idByLookup(questionHash, optionsHash string) (int64, error) {
 	var id int64
 	err := s.queryRow(`SELECT Id FROM AIResponses
-		WHERE QuestionHash = $1 AND `+s.dialect.nullSafeEqual("Options", "$2")+`
-		ORDER BY Id LIMIT 1`, questionHash, options).Scan(&id)
+		WHERE QuestionHash = $1 AND OptionsHash = $2
+		ORDER BY Id LIMIT 1`, questionHash, optionsHash).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

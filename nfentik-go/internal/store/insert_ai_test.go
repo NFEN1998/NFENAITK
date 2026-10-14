@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/nfentik/nfentik-go/internal/match"
@@ -219,6 +220,60 @@ func TestQueryRejectsDifferentOperatorFuzzy(t *testing.T) {
 		if h.Answer == "答案乘" {
 			t.Fatalf("plus query fuzzy-matched the multiplication row: %+v", h)
 		}
+	}
+}
+
+// TestConcurrentWritesKeepOneRow verifies that simultaneous AI write-backs and
+// MOGO-style imports for the same question cannot leave two rows with
+// conflicting answers.
+func TestConcurrentWritesKeepOneRow(t *testing.T) {
+	s := testStore(t)
+	question := "并发写入测试 unique concurrent write"
+	defer s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
+
+	const writers = 16
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				_, _ = s.InsertAIResponse(question, "AI答案", nil, nil)
+			} else {
+				_, _ = s.ImportQuestion(question, "", "导入答案", "", "import:mogo")
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	var count int
+	if err := s.queryRow(`SELECT COUNT(*) FROM AIResponses WHERE Question = $1`, question).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("row count = %d, want 1", count)
+	}
+}
+
+// TestQuestionUniqueIndexEnforced verifies the (QuestionHash, OptionsHash)
+// unique index rejects a duplicate even bypassing the store helpers.
+func TestQuestionUniqueIndexEnforced(t *testing.T) {
+	s := testStore(t)
+	if !s.uniqueQuestion {
+		t.Skip("unique question index unavailable in this environment")
+	}
+	question := "唯一索引测试 unique index"
+	id, err := s.InsertAIResponse(question, "A", nil, nil)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	defer s.exec(`DELETE FROM AIResponses WHERE Id = $1`, id)
+
+	if _, err := s.exec(
+		`INSERT INTO AIResponses (Question, Answer, QuestionHash, OptionsHash) VALUES ($1, $2, $3, $4)`,
+		question, "B", match.QuestionHash(question), match.OptionsHash(nil),
+	); err == nil {
+		t.Fatalf("unique index did not reject a duplicate (QuestionHash, OptionsHash)")
 	}
 }
 

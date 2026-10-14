@@ -171,6 +171,19 @@ var migrations = []migration{
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS Source TEXT`,
 		},
 	},
+	{
+		Version: 7,
+		Name:    "options_hash_uniqueness",
+		// OptionsHash is the normalized options digest. Together with
+		// QuestionHash it forms the uniqueness key that stops concurrent
+		// writers (an import and a query write-back) from inserting the same
+		// question twice with different answers. Only the column is added here;
+		// the backfill, duplicate merge and unique index run in
+		// ensureOptionsHash so they can be batched.
+		Statements: []string{
+			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS OptionsHash TEXT`,
+		},
+	},
 }
 
 // coreTables are the tables every release expects. They are folded into the
@@ -214,7 +227,7 @@ func canonicalTable(name string) string {
 // (for example after a partial restore), so repair must not rely on version
 // bookkeeping alone.
 var coreColumns = map[string][]string{
-	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "isai", "ispendingcorrection", "questionhash", "source"},
+	"airesponses":        {"id", "question", "options", "questiontype", "answer", "createtime", "isai", "ispendingcorrection", "questionhash", "optionshash", "source"},
 	"requestlogs":        {"logid", "requestid", "timestamp", "method", "path", "status", "responsetime", "requestbody", "responsebody", "headers", "ip", "useragent", "stage"},
 	"dailyrequestcounts": {"day", "count"},
 	"appsettings":        {"key", "value", "updatetime"},
@@ -483,7 +496,10 @@ func (s *Store) migrate() error {
 
 	// Backfill the question hash column and build its index. Runs in batches so
 	// it stays safe on banks with millions of rows.
-	return s.ensureQuestionHash()
+	if err := s.ensureQuestionHash(); err != nil {
+		return err
+	}
+	return s.ensureOptionsHash()
 }
 
 // migrateMySQL sets up a MySQL database. Because MySQL lacks ADD COLUMN IF NOT
@@ -505,7 +521,10 @@ func (s *Store) migrateMySQL() error {
 			return err
 		}
 	}
-	return s.ensureQuestionHash()
+	if err := s.ensureQuestionHash(); err != nil {
+		return err
+	}
+	return s.ensureOptionsHash()
 }
 
 // mysqlTableDDL creates every table on a fresh MySQL database. Indexes are
@@ -522,11 +541,13 @@ var mysqlTableDDL = []string{
 		IsAi TINYINT(1) DEFAULT 1,
 		IsPendingCorrection TINYINT(1) DEFAULT 0,
 		QuestionHash VARCHAR(64),
+		OptionsHash VARCHAR(64),
 		Source VARCHAR(64) DEFAULT '',
 		PRIMARY KEY (Id),
 		KEY idx_airesponses_pending (IsPendingCorrection),
 		KEY idx_airesponses_created (CreateTime),
-		KEY idx_airesponses_question_hash (QuestionHash)
+		KEY idx_airesponses_question_hash (QuestionHash),
+		UNIQUE KEY idx_airesponses_question_options (QuestionHash, OptionsHash)
 	)` + mysqlTableOptions,
 	`CREATE TABLE IF NOT EXISTS RequestLogs (
 		LogId BIGINT NOT NULL AUTO_INCREMENT,
@@ -733,6 +754,7 @@ var columnRepairs = []columnRepair{
 	{Table: "airesponses", Column: "isai", DDL: "IsAi BOOLEAN DEFAULT TRUE"},
 	{Table: "airesponses", Column: "ispendingcorrection", DDL: "IsPendingCorrection BOOLEAN DEFAULT FALSE"},
 	{Table: "airesponses", Column: "questionhash", DDL: "QuestionHash TEXT"},
+	{Table: "airesponses", Column: "optionshash", DDL: "OptionsHash TEXT"},
 	{Table: "airesponses", Column: "source", DDL: "Source TEXT"},
 	{Table: "userrequestlogs", Column: "options", DDL: "Options TEXT"},
 	{Table: "userrequestlogs", Column: "answer", DDL: "Answer TEXT"},
@@ -1047,9 +1069,173 @@ func (s *Store) writeQuestionHashBatch(items []pendingHash) error {
 	return tx.Commit()
 }
 
+// ensureOptionsHash backfills the OptionsHash column, merges rows that share a
+// (QuestionHash, OptionsHash) key and creates the unique index that makes
+// concurrent multi-channel inserts safe. Idempotent: it runs after
+// ensureQuestionHash on every startup and does nothing once the index exists.
+func (s *Store) ensureOptionsHash() error {
+	if err := s.backfillOptionsHash(); err != nil {
+		return err
+	}
+	// Merging only needs to run while the unique index is missing; once it
+	// exists the database guarantees there are no duplicates.
+	if exists, err := s.indexExists("idx_airesponses_question_options"); err != nil {
+		return err
+	} else if !exists {
+		s.dedupeBankRows()
+	}
+	return s.ensureOptionsUniqueIndex()
+}
+
+// backfillOptionsHash fills OptionsHash for every row still missing one, in
+// bounded batches.
+func (s *Store) backfillOptionsHash() error {
+	var pending int
+	if err := s.queryRow(
+		`SELECT COUNT(*) FROM AIResponses WHERE OptionsHash IS NULL`,
+	).Scan(&pending); err != nil {
+		return fmt.Errorf("检查 OptionsHash 回填: %w", err)
+	}
+	if pending == 0 {
+		return nil
+	}
+	const batchSize = 2000
+	log.Printf("开始回填 OptionsHash（分批进行）")
+	for {
+		rows, err := s.query(
+			`SELECT Id, COALESCE(Options, '') FROM AIResponses WHERE OptionsHash IS NULL ORDER BY Id LIMIT $1`,
+			batchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("读取待回填选项: %w", err)
+		}
+		items, err := scanPendingOptions(rows)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			log.Printf("OptionsHash 回填完成")
+			return nil
+		}
+		if err := s.writeOptionsHashBatch(items); err != nil {
+			return err
+		}
+	}
+}
+
+// pendingOptions is one row awaiting an options digest.
+type pendingOptions struct {
+	id      int64
+	options string
+}
+
+func scanPendingOptions(rows *sql.Rows) ([]pendingOptions, error) {
+	defer rows.Close()
+	var items []pendingOptions
+	for rows.Next() {
+		var it pendingOptions
+		if err := rows.Scan(&it.id, &it.options); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) writeOptionsHashBatch(items []pendingOptions) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		opts := it.options
+		if _, err := execOn(s.dialect, tx,
+			`UPDATE AIResponses SET OptionsHash = $1 WHERE Id = $2`,
+			match.OptionsHash(&opts), it.id,
+		); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("回填选项 %d 失败: %w", it.id, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// dedupeBankRows merges rows sharing a (QuestionHash, OptionsHash) key, keeping
+// the most authoritative one: not pending correction, not AI, then oldest. It
+// must run before the unique index can be built. A failure is logged and left
+// for the next startup so a data problem never blocks the service; the writer
+// then falls back to the in-process lock.
+func (s *Store) dedupeBankRows() {
+	// Only true (question, options) duplicates matter. Same question text with
+	// different options is a distinct entry and must be left alone.
+	var anyDuplicate int
+	if err := s.queryRow(
+		`SELECT 1 FROM AIResponses
+			GROUP BY QuestionHash, OptionsHash HAVING COUNT(*) > 1 LIMIT 1`,
+	).Scan(&anyDuplicate); err == sql.ErrNoRows {
+		return
+	} else if err != nil {
+		log.Printf("警告: 检查重复题目失败: %v", err)
+		return
+	}
+
+	log.Printf("检测到重复题目，开始合并（保留非待纠正、非 AI、最早的一行）")
+	res, err := s.exec(`DELETE FROM AIResponses WHERE Id IN (
+		SELECT Id FROM (
+			SELECT Id, ROW_NUMBER() OVER (
+				PARTITION BY QuestionHash, OptionsHash
+				ORDER BY COALESCE(IsPendingCorrection, FALSE) ASC, IsAi ASC, Id ASC
+			) AS rn
+			FROM AIResponses
+		) ranked WHERE rn > 1
+	)`)
+	if err != nil {
+		log.Printf("警告: 合并重复题目失败: %v", err)
+		return
+	}
+	if affected, _ := res.RowsAffected(); affected > 0 {
+		log.Printf("已合并 %d 行重复题目", affected)
+	}
+}
+
+// ensureOptionsUniqueIndex creates the (QuestionHash, OptionsHash) unique index
+// that backs ON CONFLICT inserts. PostgreSQL builds it CONCURRENTLY; MySQL uses
+// a plain unique index. On failure it is logged and uniqueQuestion stays false,
+// so inserts fall back to the serialized NOT EXISTS path.
+func (s *Store) ensureOptionsUniqueIndex() error {
+	exists, err := s.indexExists("idx_airesponses_question_options")
+	if err != nil {
+		return err
+	}
+	if exists {
+		s.uniqueQuestion = true
+		return nil
+	}
+	if s.dialect.isMySQL() {
+		if _, err := s.exec(
+			`CREATE UNIQUE INDEX idx_airesponses_question_options ON AIResponses (QuestionHash, OptionsHash)`,
+		); err != nil {
+			log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
+			return nil
+		}
+		s.uniqueQuestion = true
+		return nil
+	}
+	log.Printf("创建题目唯一索引（CONCURRENTLY）")
+	if _, err := s.exec(
+		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_options
+			ON AIResponses (QuestionHash, OptionsHash)`,
+	); err != nil {
+		log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
+		return nil
+	}
+	s.uniqueQuestion = true
+	return nil
+}
+
 // ensureQuestionHashIndex creates the lookup index if it is missing. Unique is
-// intentionally avoided: duplicate questions are tolerated by the matcher, which
-// scores every candidate sharing a hash.
+// intentionally avoided here: this narrow index backs the by-question probes,
+// while uniqueness is enforced separately on (QuestionHash, OptionsHash).
 func (s *Store) ensureQuestionHashIndex() error {
 	exists, err := s.indexExists("idx_airesponses_question_hash")
 	if err != nil {

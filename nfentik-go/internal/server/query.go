@@ -471,7 +471,7 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 	// Avoid storing a duplicate of a question that already exists in the bank,
 	// even when the similarity lookup above missed it (e.g. formatting-only
 	// differences or a concurrent insert).
-	if existing, err := s.store.FindByNormalizedQuestion(req.Title); err != nil {
+	if existing, err := s.store.FindByNormalizedQuestion(req.Title, req.Options); err != nil {
 		s.PublishError("find duplicate question: %v", err)
 	} else if existing != nil {
 		entry := bankAnswer{

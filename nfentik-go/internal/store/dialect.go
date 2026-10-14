@@ -105,14 +105,6 @@ func execOn(d dialect, q queryer, query string, args ...any) (sql.Result, error)
 // SQL fragments
 // ---------------------------------------------------------------------------
 
-// nullSafeEqual renders a NULL-safe equality predicate between two expressions.
-func (d dialect) nullSafeEqual(lhs, rhs string) string {
-	if d.isMySQL() {
-		return lhs + " <=> " + rhs
-	}
-	return lhs + " IS NOT DISTINCT FROM " + rhs
-}
-
 // ilike renders a case-insensitive LIKE. MySQL is made collation independent by
 // comparing lowercased values.
 func (d dialect) ilike(column, placeholder string) string {

@@ -52,7 +52,7 @@ func TestExternalBankHitIsReturnedAndWrittenBack(t *testing.T) {
 		t.Fatalf("payload = %v", payload)
 	}
 
-	hit, err := srv.store.FindByNormalizedQuestion(question)
+	hit, err := srv.store.FindByNormalizedQuestion(question, nil)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestExternalBankRejectsMismatchedQuestion(t *testing.T) {
 	if !strings.Contains(msg, "模型调用失败") {
 		t.Fatalf("expected fallback to model, got %v", payload)
 	}
-	hit, err := srv.store.FindByNormalizedQuestion(question)
+	hit, err := srv.store.FindByNormalizedQuestion(question, nil)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestExternalBankTrustModeAcceptsAnyQuestion(t *testing.T) {
 		t.Fatalf("payload = %v", payload)
 	}
 	// writeBack is false, so nothing should be persisted under this question.
-	hit, err := srv.store.FindByNormalizedQuestion(question)
+	hit, err := srv.store.FindByNormalizedQuestion(question, nil)
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
