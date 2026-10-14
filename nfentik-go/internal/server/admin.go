@@ -1,0 +1,433 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/nfentik/nfentik-go/internal/config"
+	"github.com/nfentik/nfentik-go/internal/externalbank"
+	"github.com/nfentik/nfentik-go/internal/store"
+)
+
+// handleAdmin routes every /api/admin/* endpoint.
+func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin"), "/")
+	if path == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "nfentik-go admin API"})
+		return
+	}
+	if !s.requireAdmin(r) {
+		s.unauthorized(w)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	switch parts[0] {
+	case "settings":
+		s.adminSettings(w, r)
+	case "questions":
+		s.adminQuestions(w, r, parts[1:])
+	case "logs":
+		s.adminLogs(w, r, parts[1:])
+	case "model-config":
+		s.adminModelConfig(w, r)
+	case "external-banks":
+		s.adminExternalBanks(w, r, parts[1:])
+	case "mogo":
+		s.adminMogo(w, r, parts[1:])
+	case "stats":
+		s.adminStats(w, r)
+	case "users":
+		s.adminUsers(w, r, parts[1:])
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "settings": s.config.Settings()})
+	case http.MethodPut, http.MethodPost:
+		body, err := readBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		updated, err := s.config.Patch(body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "settings": updated})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) adminQuestions(w http.ResponseWriter, r *http.Request, rest []string) {
+	if len(rest) == 0 {
+		switch r.Method {
+		case http.MethodGet:
+			s.listQuestions(w, r)
+		case http.MethodPost:
+			s.createQuestion(w, r)
+		case http.MethodDelete:
+			s.deleteQuestions(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	if rest[0] == "search" && r.Method == http.MethodGet {
+		keyword := r.URL.Query().Get("keyword")
+		items, err := s.store.Search(keyword)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "items": items})
+		return
+	}
+
+	id, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if len(rest) > 1 {
+		switch rest[1] {
+		case "pending-correction":
+			if r.Method == http.MethodPost {
+				pending, _ := strconv.ParseBool(defaultString(r.URL.Query().Get("value"), "true"))
+				if err := s.store.SetPendingCorrection(id, pending); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"success": true})
+				return
+			}
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		q, err := s.store.GetQuestion(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "item": q})
+	case http.MethodPut:
+		var req struct {
+			Question     *string `json:"question"`
+			Options      *string `json:"options"`
+			Answer       *string `json:"answer"`
+			QuestionType *string `json:"question_type"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		if err := s.store.UpdateQuestion(id, req.Question, req.Options, req.Answer, req.QuestionType); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	case http.MethodDelete:
+		if err := s.store.DeleteQuestion(id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) listQuestions(w http.ResponseWriter, r *http.Request) {
+	page := parseIntDefault(r.URL.Query().Get("page"), 1)
+	pageSize := parseIntDefault(r.URL.Query().Get("page_size"), 20)
+	pendingOnly := r.URL.Query().Get("pending") == "true"
+	sortOrder := defaultString(r.URL.Query().Get("sort"), "desc")
+
+	result, err := s.store.PaginatedQuestions(pendingOnly, page, pageSize, sortOrder)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "items": result.Items, "total": result.Total, "page": page, "page_size": pageSize,
+	})
+}
+
+func (s *Server) createQuestion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Question     string  `json:"question"`
+		Options      *string `json:"options"`
+		Answer       *string `json:"answer"`
+		QuestionType *string `json:"question_type"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	if strings.TrimSpace(req.Question) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "题目内容不能为空"})
+		return
+	}
+	q, err := s.store.AddQuestion(req.Question, req.Options, req.Answer, req.QuestionType, false)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "item": q})
+}
+
+func (s *Server) deleteQuestions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	if err := s.store.DeleteQuestions(req.IDs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "deleted": len(req.IDs)})
+}
+
+func (s *Server) adminLogs(w http.ResponseWriter, r *http.Request, rest []string) {
+	if len(rest) > 0 && rest[0] == "clear" && r.Method == http.MethodDelete {
+		if err := s.store.ClearRequestLogs(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	filter := store.RequestLogFilter{
+		Keyword:  r.URL.Query().Get("keyword"),
+		Method:   strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("method"))),
+		Path:     strings.TrimSpace(r.URL.Query().Get("path")),
+		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
+		Page:     int(parseIntDefault(r.URL.Query().Get("page"), 1)),
+		PageSize: int(parseIntDefault(r.URL.Query().Get("page_size"), 50)),
+	}
+	logs, total, err := s.store.RequestLogsFiltered(filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "logs": logs, "total": total,
+		"page": filter.Page, "page_size": filter.PageSize,
+	})
+}
+
+func (s *Server) adminModelConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		raw, err := s.config.ModelConfig()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "config": json.RawMessage(raw)})
+	case http.MethodPut, http.MethodPost:
+		body, err := readBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		if !json.Valid(body) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "模型配置不是有效的 JSON"})
+			return
+		}
+		if err := s.config.SaveModelConfig(body); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// adminExternalBanks reads and writes the third-party question bank
+// configuration, and serves the connectivity test endpoint.
+func (s *Server) adminExternalBanks(w http.ResponseWriter, r *http.Request, rest []string) {
+	if len(rest) > 0 && rest[0] == "test" {
+		s.adminExternalBankTest(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		raw, err := s.config.ExternalBanks()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "config": json.RawMessage(raw)})
+	case http.MethodPut, http.MethodPost:
+		body, err := readBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		if !json.Valid(body) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "配置不是有效的 JSON"})
+			return
+		}
+		settings, err := externalbank.Parse(body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "配置解析失败: " + err.Error()})
+			return
+		}
+		for _, src := range settings.Sources {
+			if strings.TrimSpace(src.Name) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "显示名称不能为空"})
+				return
+			}
+			if strings.TrimSpace(src.URL) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址不能为空"})
+				return
+			}
+			if !externalbank.ValidURL(src.URL) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址无效"})
+				return
+			}
+		}
+		if err := s.config.SaveExternalBanks(body); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// adminExternalBankTest performs one lookup against a candidate source so the
+// operator gets immediate feedback before saving.
+func (s *Server) adminExternalBankTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := readBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	var req struct {
+		Source   externalbank.Source `json:"source"`
+		Question string              `json:"question"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求体解析失败"})
+		return
+	}
+	if !externalbank.ValidURL(req.Source.URL) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "请求地址无效"})
+		return
+	}
+	if strings.TrimSpace(req.Question) == "" {
+		req.Question = "1+1="
+	}
+	client := s.external
+	if client == nil {
+		client = externalbank.NewClient()
+	}
+	result, err := client.Lookup(r.Context(), req.Source, externalbank.Query{Title: req.Question})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "查询失败: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "message": "查询成功", "answer": result.Answer, "question": result.Question,
+	})
+}
+
+func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
+	pending, _ := s.store.PendingCorrectionCount()
+	counts, _ := s.store.DailyRequestCounts()
+	var total int64
+	for _, c := range counts {
+		total += c.Count
+	}
+	redisStatus := map[string]any{"enabled": false}
+	if s.cache != nil {
+		redisStatus = map[string]any{
+			"enabled":        true,
+			"reachable":      s.cache.Ping(),
+			"log_queue":      s.cache.QueueLength(),
+			"cache_hit_info": "查询结果缓存已启用",
+		}
+	}
+	schemaVersion, _ := s.store.SchemaVersion()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":        true,
+		"pending":        pending,
+		"daily":          counts,
+		"total_requests": total,
+		"subscribers":    s.bus.SubscriberCount(),
+		"data_path":      s.DataPath(),
+		"redis":          redisStatus,
+		"schema_version": schemaVersion,
+	})
+}
+
+func readBody(r *http.Request) ([]byte, error) {
+	body := make([]byte, 0)
+	buf := make([]byte, 4096)
+	for {
+		n, err := r.Body.Read(buf)
+		if n > 0 {
+			body = append(body, buf[:n]...)
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			if n == 0 {
+				break
+			}
+		}
+	}
+	return body, nil
+}
+
+func parseIntDefault(v string, def int64) int64 {
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func defaultString(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// ensure the store package remains referenced by admin wiring helpers.
+var _ = store.Question{}
+var _ = config.Settings{}
+var _ = fmt.Sprintf

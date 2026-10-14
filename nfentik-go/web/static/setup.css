@@ -1,0 +1,181 @@
+/* nfentik 安装向导 · 白色商务（Clean Business） */
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --panel-2: #fafbfc;
+  --text: #14181f;
+  --muted: #6b7280;
+  --border: #e6e8ec;
+  --border-strong: #d7dae0;
+  --primary: #1f2937;
+  --primary-hover: #111827;
+  --accent: #4f46e5;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(160deg, #eef1f6 0%, #e7ecf5 45%, #eef2ff 100%);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 32px 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.setup-wrap { max-width: 640px; margin: 0 auto; }
+
+.setup-head { text-align: center; margin-bottom: 24px; }
+.setup-head .brand { font-size: 28px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+.setup-head .sub { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  box-shadow: 0 20px 50px -24px rgba(17, 24, 39, .35), 0 2px 8px rgba(17, 24, 39, .05);
+}
+
+.hidden { display: none !important; }
+
+.intro { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.req { color: var(--danger); }
+
+.section { margin-bottom: 22px; }
+.section h3 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.field { margin-bottom: 14px; }
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #334155;
+}
+.field label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.field input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  transition: border-color .15s, box-shadow .15s;
+}
+.field input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+.field-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.field-hint code {
+  background: #f1f2f5;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  word-break: break-all;
+  color: #475569;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 520px) {
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+.field select {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+}
+.field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+.db-actions { display: flex; align-items: center; gap: 12px; }
+.btn.ghost {
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+.btn.ghost:hover { background: var(--panel-2); }
+
+.test-result { font-size: 13px; font-weight: 500; }
+.test-result.ok { color: var(--ok); }
+.test-result.fail { color: var(--danger); }
+
+.actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+.btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, box-shadow .15s;
+}
+.btn.primary { background: var(--primary); color: #fff; }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(79, 70, 229, .25); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.alert {
+  background: #fef2f2;
+  color: var(--danger);
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+.done { text-align: center; }
+.done-icon {
+  display: inline-block;
+  background: #dcfce7;
+  color: var(--ok);
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 6px 18px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.done h2 { margin: 8px 0; font-size: 20px; }
+.done p { color: var(--muted); font-size: 14px; }
+.done .path {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  overflow-x: auto;
+  text-align: left;
+}
+.done .hint { font-size: 12px; }
