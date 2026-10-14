@@ -1060,13 +1060,19 @@
   function renderMogoTable() {
     var body = qs("ms-table").querySelector("tbody");
     if (!mogoSources.length) {
-      body.innerHTML = '<tr><td colspan="6" class="muted">尚未配置 MOGO 源</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="muted">尚未配置 MOGO 源</td></tr>';
       return;
     }
     body.innerHTML = mogoSources.map(function (s) {
+      var isDB = s.type === "database";
+      var db = s.database || {};
+      var addr = isDB
+        ? (db.host ? esc(db.host) + ":" + esc(db.port || "3306") + "/" + esc(db.database || "") + (db.table ? " · " + esc(db.table) : "") : "-")
+        : esc(s.baseUrl);
       return '<tr data-id="' + esc(s.id) + '">' +
         "<td>" + esc(s.name) + "</td>" +
-        '<td class="mono small">' + esc(s.baseUrl) + "</td>" +
+        "<td>" + (isDB ? "数据库" : "HTTP") + "</td>" +
+        '<td class="mono small">' + addr + "</td>" +
         "<td>" + esc(mogoScheduleText(s.schedule)) + "</td>" +
         "<td>" + (s.enabled ? '<span class="pill s2">启用</span>' : '<span class="pill disabled">停用</span>') + "</td>" +
         '<td class="small">' + (s.lastRun ? esc(s.lastRun) + " · 导入 " + (s.lastImported || 0) : "-") +
@@ -1082,44 +1088,96 @@
 
   function openMogoEditor(src) {
     src = src || {
-      item: 50, mode: "incremental", enabled: true,
+      type: "http", item: 50, mode: "incremental", enabled: true,
       schedule: { type: "manual", everyMinutes: 60, atTime: "03:00" },
-      throttle: { pageDelayMs: 1500, rowDelayMs: 0, maxPerRun: 0 },
+      throttle: { pageDelayMs: 1500, rowDelayMs: 0, rowsPerSecond: 100, batchDelayMs: 0, maxPerRun: 0 },
+      database: { port: "3306", batchSize: 500, columns: {} },
     };
+    var db = src.database || {};
+    var cols = db.columns || {};
+    var thr = src.throttle || {};
+    function isDB(v) { return v.type === "database"; }
+    function isHTTP(v) { return v.type !== "database"; }
     openModal(src.id ? ("编辑源 · " + src.name) : "新增 MOGO 源", [
       { name: "name", label: "名称", type: "text", value: src.name || "" },
-      { name: "baseUrl", label: "MOGO 地址", type: "text", value: src.baseUrl || "" },
-      { name: "aKey", label: "aKey", type: "text", value: src.aKey || "" },
-      { name: "item", label: "每页条数（1-500）", type: "number", value: String(src.item || 50) },
+      { name: "type", label: "类型", options: [{ value: "http", label: "HTTP 接口" }, { value: "database", label: "数据库直连" }], value: src.type || "http" },
+
+      { name: "baseUrl", label: "MOGO 地址", type: "text", value: src.baseUrl || "", showWhen: isHTTP },
+      { name: "aKey", label: "aKey", type: "text", value: src.aKey || "", showWhen: isHTTP },
+      { name: "item", label: "每页条数（1-500）", type: "number", value: String(src.item || 50), showWhen: isHTTP },
+
+      { name: "dbHost", label: "数据库主机", type: "text", value: db.host || "", showWhen: isDB },
+      { name: "dbPort", label: "端口", type: "text", value: db.port || "3306", showWhen: isDB },
+      { name: "dbUser", label: "用户名", type: "text", value: db.user || "", showWhen: isDB },
+      { name: "dbPassword", label: "密码", type: "password", value: db.password || "", showWhen: isDB },
+      { name: "dbDatabase", label: "库名", type: "text", value: db.database || "", showWhen: isDB },
+      { name: "dbTable", label: "题目表名", type: "text", value: db.table || "", showWhen: isDB },
+      { name: "dbColId", label: "主键列", type: "text", value: cols.id || "id", showWhen: isDB },
+      { name: "dbColQuestion", label: "题目列", type: "text", value: cols.question || "question", showWhen: isDB },
+      { name: "dbColAnswer", label: "答案列", type: "text", value: cols.answer || "answer", showWhen: isDB },
+      { name: "dbColOptions", label: "选项列", type: "text", value: cols.options || "opt", showWhen: isDB },
+      { name: "dbColType", label: "题型列", type: "text", value: cols.questionType || "questionType", showWhen: isDB },
+      { name: "dbBatchSize", label: "批次大小（1-5000）", type: "number", value: String(db.batchSize || 500), showWhen: isDB },
+      { name: "rowsPerSecond", label: "每秒行数（0 不限速）", type: "number", value: String(typeof thr.rowsPerSecond === "number" ? thr.rowsPerSecond : 100), showWhen: isDB },
+      { name: "batchDelayMs", label: "批间延迟毫秒", type: "number", value: String(thr.batchDelayMs || 0), showWhen: isDB },
+
       { name: "retries", label: "失败重试次数（每次间隔 5 秒）", type: "number", value: String(src.retries || 0) },
       { name: "mode", label: "模式", options: [{ value: "incremental", label: "增量" }, { value: "backfill", label: "回填全部" }], value: src.mode || "incremental" },
       { name: "schedType", label: "计划", options: [{ value: "manual", label: "手动" }, { value: "interval", label: "间隔" }, { value: "daily", label: "每天定点" }], value: (src.schedule && src.schedule.type) || "manual" },
       { name: "everyMinutes", label: "间隔分钟（间隔模式）", type: "number", value: String((src.schedule && src.schedule.everyMinutes) || 60) },
       { name: "atTime", label: "每天时间 HH:MM（定点模式）", type: "text", value: (src.schedule && src.schedule.atTime) || "03:00" },
-      { name: "pageDelayMs", label: "每页间隔毫秒（限速）", type: "number", value: String((src.throttle && src.throttle.pageDelayMs) || 1500) },
-      { name: "rowDelayMs", label: "每行间隔毫秒", type: "number", value: String((src.throttle && src.throttle.rowDelayMs) || 0) },
-      { name: "maxPerRun", label: "单次上限条数（0 不限）", type: "number", value: String((src.throttle && src.throttle.maxPerRun) || 0) },
+      { name: "pageDelayMs", label: "每页间隔毫秒（HTTP 限速）", type: "number", value: String(thr.pageDelayMs || 1500), showWhen: isHTTP },
+      { name: "maxPerRun", label: "单次上限条数（0 不限）", type: "number", value: String(thr.maxPerRun || 0) },
       { name: "enabled", label: "启用", options: [{ value: "1", label: "启用" }, { value: "0", label: "停用" }], value: src.enabled ? "1" : "0" },
     ], function (v) {
       var obj = {
         id: src.id || "",
         name: v.name.trim(),
+        type: v.type,
+        enabled: v.enabled === "1",
         baseUrl: v.baseUrl.trim(),
         aKey: v.aKey.trim(),
         item: Number(v.item) || 50,
         retries: Number(v.retries) || 0,
         mode: v.mode,
-        enabled: v.enabled === "1",
         schedule: { type: v.schedType, everyMinutes: Number(v.everyMinutes) || 0, atTime: v.atTime.trim() },
-        throttle: { pageDelayMs: Number(v.pageDelayMs) || 0, rowDelayMs: Number(v.rowDelayMs) || 0, maxPerRun: Number(v.maxPerRun) || 0 },
+        throttle: {
+          pageDelayMs: Number(v.pageDelayMs) || 0,
+          rowDelayMs: Number(thr.rowDelayMs) || 0,
+          rowsPerSecond: Number(v.rowsPerSecond) || 0,
+          batchDelayMs: Number(v.batchDelayMs) || 0,
+          maxPerRun: Number(v.maxPerRun) || 0,
+        },
+        database: {
+          host: v.dbHost.trim(),
+          port: v.dbPort.trim(),
+          user: v.dbUser.trim(),
+          password: v.dbPassword,
+          database: v.dbDatabase.trim(),
+          table: v.dbTable.trim(),
+          batchSize: Number(v.dbBatchSize) || 0,
+          columns: {
+            id: v.dbColId.trim(),
+            question: v.dbColQuestion.trim(),
+            answer: v.dbColAnswer.trim(),
+            options: v.dbColOptions.trim(),
+            questionType: v.dbColType.trim(),
+          },
+        },
         maxId: src.maxId || 0,
         lastRun: src.lastRun || "",
         lastImported: src.lastImported || 0,
         lastError: src.lastError || "",
       };
       if (!obj.name) { toast("请填写名称", "error"); return; }
-      if (!obj.baseUrl) { toast("请填写 MOGO 地址", "error"); return; }
-      if (!obj.aKey) { toast("请填写 aKey", "error"); return; }
+      if (obj.type === "database") {
+        if (!obj.database.host || !obj.database.user || !obj.database.database || !obj.database.table) {
+          toast("请填写数据库主机/用户名/库名/表名", "error"); return;
+        }
+      } else {
+        if (!obj.baseUrl) { toast("请填写 MOGO 地址", "error"); return; }
+        if (!obj.aKey) { toast("请填写 aKey", "error"); return; }
+      }
       var list = mogoSources.slice();
       var idx = -1;
       for (var i = 0; i < list.length; i++) { if (list[i].id === obj.id) idx = i; }
@@ -1143,9 +1201,21 @@
     var act = btn.getAttribute("data-act");
     if (act === "edit") { openMogoEditor(src); return; }
     if (act === "test") {
-      api("/mogo/test", { method: "POST", body: JSON.stringify({ base_url: src.baseUrl, a_key: src.aKey }) }).then(function (res) {
-        toast(res.message || (res.success ? "连接成功" : "连接失败"), res.success ? "success" : "error");
-      });
+      if (src.type === "database") {
+        var db = src.database || {};
+        api("/mogo/db-test", { method: "POST", body: JSON.stringify({
+          id: src.id, host: db.host, port: db.port, user: db.user, password: db.password,
+          database: db.database, table: db.table, columns: db.columns,
+        }) }).then(function (res) {
+          var msg = res.message || (res.success ? "连接成功" : "连接失败");
+          if (res.success && res.columns) msg += "；列: " + res.columns.join(", ");
+          toast(msg, res.success ? "success" : "error");
+        });
+      } else {
+        api("/mogo/test", { method: "POST", body: JSON.stringify({ base_url: src.baseUrl, a_key: src.aKey }) }).then(function (res) {
+          toast(res.message || (res.success ? "连接成功" : "连接失败"), res.success ? "success" : "error");
+        });
+      }
       return;
     }
     if (act === "run") {
@@ -1760,6 +1830,7 @@
   // ---------------------------------------------------------------------- modal
 
   var modalSubmit = null;
+  var modalSync = null;
 
   function openModal(title, fields, onSubmit) {
     qs("modal-title").textContent = title;
@@ -1775,17 +1846,37 @@
       } else {
         control = '<input name="' + f.name + '" type="' + f.type + '">';
       }
-      return '<div class="field"><label>' + esc(f.label) + "</label>" + control + "</div>";
+      return '<div class="field" data-field="' + f.name + '"><label>' + esc(f.label) + "</label>" + control + "</div>";
     }).join("");
     fields.forEach(function (f) {
       qs("modal-content").querySelector('[name="' + f.name + '"]').value = f.value || "";
     });
-    modalSubmit = function () {
+    function readValues() {
       var values = {};
       fields.forEach(function (f) {
         values[f.name] = qs("modal-content").querySelector('[name="' + f.name + '"]').value;
       });
-      onSubmit(values);
+      return values;
+    }
+    // Conditionally show fields (e.g. HTTP vs database MOGO source fields).
+    function syncVisibility() {
+      var values = readValues();
+      fields.forEach(function (f) {
+        if (typeof f.showWhen !== "function") return;
+        var wrap = qs("modal-content").querySelector('[data-field="' + f.name + '"]');
+        if (wrap) wrap.style.display = f.showWhen(values) ? "" : "none";
+      });
+    }
+    if (modalSync) {
+      qs("modal-content").removeEventListener("input", modalSync);
+      qs("modal-content").removeEventListener("change", modalSync);
+    }
+    modalSync = syncVisibility;
+    qs("modal-content").addEventListener("input", modalSync);
+    qs("modal-content").addEventListener("change", modalSync);
+    syncVisibility();
+    modalSubmit = function () {
+      onSubmit(readValues());
     };
     qs("modal").classList.remove("hidden");
   }

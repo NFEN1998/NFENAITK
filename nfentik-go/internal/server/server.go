@@ -23,6 +23,7 @@ import (
 	"github.com/nfentik/nfentik-go/internal/config"
 	"github.com/nfentik/nfentik-go/internal/externalbank"
 	"github.com/nfentik/nfentik-go/internal/match"
+	"github.com/nfentik/nfentik-go/internal/mogodb"
 	"github.com/nfentik/nfentik-go/internal/store"
 )
 
@@ -44,6 +45,10 @@ type Server struct {
 	importMu   sync.Mutex
 	importOnce sync.Once
 	importJob  *mogoImportJob
+
+	// newMogoDBReader opens a MOGO database reader. It is a field so tests can
+	// substitute a fake without a real MySQL server.
+	newMogoDBReader func(mogodb.Config) (mogoDBReader, error)
 
 	maxLogs int
 }
@@ -125,6 +130,9 @@ func New(deps Deps) (*Server, error) {
 		storageInfo: deps.StorageInfo,
 		pending:     make(map[string]*pendingCall),
 		maxLogs:     1000,
+		newMogoDBReader: func(cfg mogodb.Config) (mogoDBReader, error) {
+			return mogodb.Open(cfg)
+		},
 	}
 	if deps.Store != nil {
 		deps.Store.OnChange(s.invalidateQueryCache)
