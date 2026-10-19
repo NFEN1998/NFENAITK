@@ -184,6 +184,70 @@ var migrations = []migration{
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS OptionsHash TEXT`,
 		},
 	},
+	{
+		Version: 8,
+		Name:    "account_login_recharge",
+		// Accounts give the web portal a username/password identity, sessions
+		// keep that login state server side, and redemption codes carry the
+		// quota a user buys. Tokens stay untouched and remain the /query
+		// credential. Timestamps are TEXT so the same scan code works on both
+		// PostgreSQL and MySQL without driver-level time parsing.
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS Accounts (
+				Id BIGSERIAL PRIMARY KEY,
+				Username VARCHAR(32) NOT NULL,
+				UsernameKey VARCHAR(32) NOT NULL,
+				PasswordHash VARCHAR(100) NOT NULL,
+				UserId BIGINT,
+				Status VARCHAR(16) NOT NULL DEFAULT 'enabled',
+				CreatedAt TIMESTAMP DEFAULT NOW(),
+				UpdatedAt TIMESTAMP DEFAULT NOW(),
+				LastLoginAt TIMESTAMP,
+				UNIQUE (UsernameKey),
+				UNIQUE (UserId)
+			)`,
+			`CREATE TABLE IF NOT EXISTS AccountSessions (
+				Id BIGSERIAL PRIMARY KEY,
+				AccountId BIGINT NOT NULL,
+				TokenHash CHAR(64) NOT NULL,
+				ExpiresAt TEXT NOT NULL,
+				CreatedAt TEXT NOT NULL,
+				LastSeenAt TEXT NOT NULL,
+				IP VARCHAR(64) NOT NULL DEFAULT '',
+				UserAgent VARCHAR(255) NOT NULL DEFAULT '',
+				UNIQUE (TokenHash)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_account_sessions_account ON AccountSessions (AccountId)`,
+			`CREATE TABLE IF NOT EXISTS RedemptionBatches (
+				Id BIGSERIAL PRIMARY KEY,
+				BatchNo VARCHAR(32) NOT NULL,
+				Kind VARCHAR(16) NOT NULL,
+				PlanCode VARCHAR(32) NOT NULL,
+				Amount BIGINT NOT NULL DEFAULT 0,
+				Days INTEGER NOT NULL DEFAULT 0,
+				Quantity INTEGER NOT NULL,
+				Note VARCHAR(255) NOT NULL DEFAULT '',
+				CreatedAt TIMESTAMP DEFAULT NOW(),
+				UNIQUE (BatchNo)
+			)`,
+			`CREATE TABLE IF NOT EXISTS RedemptionCodes (
+				Id BIGSERIAL PRIMARY KEY,
+				BatchId BIGINT NOT NULL,
+				CodeHash CHAR(64) NOT NULL,
+				Kind VARCHAR(16) NOT NULL,
+				Amount BIGINT NOT NULL DEFAULT 0,
+				Days INTEGER NOT NULL DEFAULT 0,
+				ExpiresAt TEXT,
+				Status VARCHAR(16) NOT NULL DEFAULT 'unused',
+				UsedBy BIGINT,
+				UsedAt TEXT,
+				CreatedAt TIMESTAMP DEFAULT NOW(),
+				UNIQUE (CodeHash)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_redeem_codes_batch ON RedemptionCodes (BatchId)`,
+			`CREATE INDEX IF NOT EXISTS idx_redeem_codes_status ON RedemptionCodes (Status)`,
+		},
+	},
 }
 
 // coreTables are the tables every release expects. They are folded into the
@@ -196,6 +260,10 @@ var coreTables = []string{
 	"users",
 	"userrequestlogs",
 	"userauditlogs",
+	"accounts",
+	"accountsessions",
+	"redemptionbatches",
+	"redemptioncodes",
 }
 
 // canonicalTables maps the lowercased table names used by the integrity checks
@@ -209,6 +277,10 @@ var canonicalTables = map[string]string{
 	"users":              "Users",
 	"userrequestlogs":    "UserRequestLogs",
 	"userauditlogs":      "UserAuditLogs",
+	"accounts":           "Accounts",
+	"accountsessions":    "AccountSessions",
+	"redemptionbatches":  "RedemptionBatches",
+	"redemptioncodes":    "RedemptionCodes",
 	"schemamigrations":   "SchemaMigrations",
 }
 
@@ -234,6 +306,10 @@ var coreColumns = map[string][]string{
 	"users":              {"id", "token", "plantype", "plancode", "planlabel", "startat", "expireat", "totalcount", "usedcount", "remaincount", "note", "enabled", "createdat", "updatedat"},
 	"userrequestlogs":    {"logid", "userid", "token", "timestamp", "question", "options", "answer", "source", "status", "responsetime"},
 	"userauditlogs":      {"auditid", "action", "userid", "usertoken", "detail", "actor", "createdat"},
+	"accounts":           {"id", "username", "usernamekey", "passwordhash", "userid", "status", "createdat", "updatedat", "lastloginat"},
+	"accountsessions":    {"id", "accountid", "tokenhash", "expiresat", "createdat", "lastseenat", "ip", "useragent"},
+	"redemptionbatches":  {"id", "batchno", "kind", "plancode", "amount", "days", "quantity", "note", "createdat"},
+	"redemptioncodes":    {"id", "batchid", "codehash", "kind", "amount", "days", "expiresat", "status", "usedby", "usedat", "createdat"},
 }
 
 // ColumnIssue names a single missing column on a table.
@@ -619,6 +695,63 @@ var mysqlTableDDL = []string{
 		CreatedAt DATETIME DEFAULT NOW(),
 		PRIMARY KEY (AuditId),
 		KEY idx_user_audits_created (CreatedAt)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS Accounts (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		Username VARCHAR(32) NOT NULL,
+		UsernameKey VARCHAR(32) NOT NULL,
+		PasswordHash VARCHAR(100) NOT NULL,
+		UserId BIGINT NULL,
+		Status VARCHAR(16) NOT NULL DEFAULT 'enabled',
+		CreatedAt DATETIME DEFAULT NOW(),
+		UpdatedAt DATETIME DEFAULT NOW(),
+		LastLoginAt DATETIME NULL,
+		PRIMARY KEY (Id),
+		UNIQUE KEY idx_accounts_username_key (UsernameKey),
+		UNIQUE KEY idx_accounts_user_id (UserId)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS AccountSessions (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		AccountId BIGINT NOT NULL,
+		TokenHash CHAR(64) NOT NULL,
+		ExpiresAt VARCHAR(32) NOT NULL,
+		CreatedAt VARCHAR(32) NOT NULL,
+		LastSeenAt VARCHAR(32) NOT NULL,
+		IP VARCHAR(64) NOT NULL DEFAULT '',
+		UserAgent VARCHAR(255) NOT NULL DEFAULT '',
+		PRIMARY KEY (Id),
+		UNIQUE KEY idx_account_sessions_token (TokenHash),
+		KEY idx_account_sessions_account (AccountId)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS RedemptionBatches (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		BatchNo VARCHAR(32) NOT NULL,
+		Kind VARCHAR(16) NOT NULL,
+		PlanCode VARCHAR(32) NOT NULL,
+		Amount BIGINT NOT NULL DEFAULT 0,
+		Days INT NOT NULL DEFAULT 0,
+		Quantity INT NOT NULL,
+		Note VARCHAR(255) NOT NULL DEFAULT '',
+		CreatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (Id),
+		UNIQUE KEY idx_redeem_batches_no (BatchNo)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS RedemptionCodes (
+		Id BIGINT NOT NULL AUTO_INCREMENT,
+		BatchId BIGINT NOT NULL,
+		CodeHash CHAR(64) NOT NULL,
+		Kind VARCHAR(16) NOT NULL,
+		Amount BIGINT NOT NULL DEFAULT 0,
+		Days INT NOT NULL DEFAULT 0,
+		ExpiresAt VARCHAR(32) NULL,
+		Status VARCHAR(16) NOT NULL DEFAULT 'unused',
+		UsedBy BIGINT NULL,
+		UsedAt VARCHAR(32) NULL,
+		CreatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (Id),
+		UNIQUE KEY idx_redeem_codes_hash (CodeHash),
+		KEY idx_redeem_codes_batch (BatchId),
+		KEY idx_redeem_codes_status (Status)
 	)` + mysqlTableOptions,
 }
 

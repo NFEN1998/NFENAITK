@@ -155,6 +155,58 @@ func TestImportQuestionDeduplicates(t *testing.T) {
 	_, _ = s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
 }
 
+// TestImportQuestionWithOverwrite verifies the opt-in overwrite behaviour: the
+// default keeps an existing AI answer, while overwrite replaces the answer and
+// re-tags the row without touching the stored question or options text.
+func TestImportQuestionWithOverwrite(t *testing.T) {
+	s := testStore(t)
+	question := "覆盖导入测试 unique import overwrite"
+	options := strp("A. 甲 B. 乙")
+	if _, err := s.InsertAIResponse(question, "AI答案", options, nil); err != nil {
+		t.Fatalf("seed ai answer: %v", err)
+	}
+	defer s.exec(`DELETE FROM AIResponses WHERE Question = $1`, question)
+
+	created, updated, err := s.ImportQuestionWithOverwrite(question, *options, "导入答案", "单选题", "import:mogo-db", false)
+	if err != nil {
+		t.Fatalf("import without overwrite: %v", err)
+	}
+	if created || updated {
+		t.Fatalf("without overwrite created=%v updated=%v, want both false", created, updated)
+	}
+
+	var answer, source string
+	var isAI bool
+	if err := s.queryRow(`SELECT Answer, Source, IsAi FROM AIResponses WHERE Question = $1`, question).Scan(&answer, &source, &isAI); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if answer != "AI答案" || source != "ai" || !isAI {
+		t.Fatalf("row changed without overwrite: answer=%q source=%q isAI=%v", answer, source, isAI)
+	}
+
+	// Same normalized options hash, different punctuation: overwrite must keep
+	// the stored options text.
+	created, updated, err = s.ImportQuestionWithOverwrite(question, "A 甲 B 乙", "导入答案", "单选题", "import:mogo-db", true)
+	if err != nil {
+		t.Fatalf("import with overwrite: %v", err)
+	}
+	if created || !updated {
+		t.Fatalf("with overwrite created=%v updated=%v, want created=false updated=true", created, updated)
+	}
+
+	var storedOptions, questionType string
+	if err := s.queryRow(`SELECT Answer, Source, IsAi, Options, QuestionType FROM AIResponses WHERE Question = $1`, question).
+		Scan(&answer, &source, &isAI, &storedOptions, &questionType); err != nil {
+		t.Fatalf("read overwritten row: %v", err)
+	}
+	if answer != "导入答案" || source != "import:mogo-db" || isAI {
+		t.Fatalf("overwrite result: answer=%q source=%q isAI=%v", answer, source, isAI)
+	}
+	if storedOptions != *options || questionType != "单选题" {
+		t.Fatalf("overwrite touched options/type unexpectedly: options=%q type=%q", storedOptions, questionType)
+	}
+}
+
 // TestRejectsEmptyQuestion ensures a blank question is never persisted, which
 // would otherwise let a third-party bank plant an answer with no question.
 func TestRejectsEmptyQuestion(t *testing.T) {

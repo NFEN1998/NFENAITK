@@ -105,7 +105,8 @@
 
   var titles = {
     dashboard: "概览", questions: "题库", pending: "待修正",
-    models: "模型配置", users: "用户管理", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
+    models: "模型配置", users: "用户管理", accounts: "账号管理", redeem: "卡密管理",
+    ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
     external: "第三方题库", import: "导入题库",
   };
 
@@ -117,6 +118,8 @@
     models: "配置 AI 供应商、模型与调用优先级",
     external: "本地未命中时按优先级调用的第三方题库",
     users: "用户令牌、套餐与配额管理",
+    accounts: "用户中心账号、绑定与登录状态",
+    redeem: "生成与作废用户充值卡密",
     ocs: "生成 OCS 用户脚本所需的查询配置",
     settings: "站点、网络、缓存与安全设置",
     logs: "实时与历史的请求审计日志",
@@ -140,6 +143,8 @@
     if (view === "models") loadModelConfig();
     if (view === "external") loadExternalBanks();
     if (view === "users") loadUsers();
+    if (view === "accounts") loadAccounts();
+    if (view === "redeem") loadRedeem();
     if (view === "ocs") loadOCS();
     if (view === "settings") loadSettings();
     if (view === "logs") loadLogs();
@@ -815,6 +820,11 @@
     qs("s-ulog-peruser").value = s.userLogPerUserLimit || 200;
     qs("s-ulog-global").value = s.userLogGlobalLimit || 50000;
     qs("s-uaudit-days").value = s.userAuditRetentionDays || 90;
+    qs("s-account-registration").checked = s.accountRegistrationEnabled !== false;
+    qs("s-account-session-days").value = s.accountSessionTTLDays || 30;
+    qs("s-account-login-failures").value = s.accountLoginMaxFailures || 5;
+    qs("s-account-login-window").value = s.accountLoginWindowMinutes || 15;
+    qs("s-redeem-failures").value = s.redeemMaxFailuresPerHour || 10;
     fillPlanOptions(qs("s-default-plan"), s.defaultPlanCode || "");
   }
 
@@ -841,6 +851,11 @@
     s.userLogGlobalLimit = Number(qs("s-ulog-global").value) || 50000;
     s.userAuditRetentionDays = Number(qs("s-uaudit-days").value) || 90;
     s.defaultPlanCode = qs("s-default-plan").value || "";
+    s.accountRegistrationEnabled = qs("s-account-registration").checked;
+    s.accountSessionTTLDays = Number(qs("s-account-session-days").value) || 30;
+    s.accountLoginMaxFailures = Number(qs("s-account-login-failures").value) || 5;
+    s.accountLoginWindowMinutes = Number(qs("s-account-login-window").value) || 15;
+    s.redeemMaxFailuresPerHour = Number(qs("s-redeem-failures").value) || 10;
     return s;
   }
 
@@ -1071,11 +1086,11 @@
         : esc(s.baseUrl);
       return '<tr data-id="' + esc(s.id) + '">' +
         "<td>" + esc(s.name) + "</td>" +
-        "<td>" + (isDB ? "数据库" : "HTTP") + "</td>" +
+        "<td>" + (isDB ? (s.overwrite ? "数据库 · 覆盖" : "数据库") : "HTTP") + "</td>" +
         '<td class="mono small">' + addr + "</td>" +
         "<td>" + esc(mogoScheduleText(s.schedule)) + "</td>" +
         "<td>" + (s.enabled ? '<span class="pill s2">启用</span>' : '<span class="pill disabled">停用</span>') + "</td>" +
-        '<td class="small">' + (s.lastRun ? esc(s.lastRun) + " · 导入 " + (s.lastImported || 0) : "-") +
+        '<td class="small">' + (s.lastRun ? esc(s.lastRun) + " · 导入 " + (s.lastImported || 0) + (s.lastUpdated ? " · 更新 " + s.lastUpdated : "") : "-") +
         (s.lastError ? '<br><span class="error small">' + esc(s.lastError) + "</span>" : "") + "</td>" +
         '<td><div class="row-actions">' +
         '<button class="btn small primary" data-act="run">运行</button>' +
@@ -1120,6 +1135,7 @@
       { name: "dbBatchSize", label: "批次大小（1-5000）", type: "number", value: String(db.batchSize || 500), showWhen: isDB },
       { name: "rowsPerSecond", label: "每秒行数（0 不限速）", type: "number", value: String(typeof thr.rowsPerSecond === "number" ? thr.rowsPerSecond : 100), showWhen: isDB },
       { name: "batchDelayMs", label: "批间延迟毫秒", type: "number", value: String(thr.batchDelayMs || 0), showWhen: isDB },
+      { name: "overwrite", label: "覆盖已有答案（开启会覆盖 AI/第三方/人工修正）", options: [{ value: "0", label: "跳过已存在（默认）" }, { value: "1", label: "覆盖并更新" }], value: src.overwrite ? "1" : "0", showWhen: isDB },
 
       { name: "retries", label: "失败重试次数（每次间隔 5 秒）", type: "number", value: String(src.retries || 0) },
       { name: "mode", label: "模式", options: [{ value: "incremental", label: "增量" }, { value: "backfill", label: "回填全部" }], value: src.mode || "incremental" },
@@ -1140,6 +1156,7 @@
         item: Number(v.item) || 50,
         retries: Number(v.retries) || 0,
         mode: v.mode,
+        overwrite: v.overwrite === "1",
         schedule: { type: v.schedType, everyMinutes: Number(v.everyMinutes) || 0, atTime: v.atTime.trim() },
         throttle: {
           pageDelayMs: Number(v.pageDelayMs) || 0,
@@ -1167,6 +1184,7 @@
         maxId: src.maxId || 0,
         lastRun: src.lastRun || "",
         lastImported: src.lastImported || 0,
+        lastUpdated: src.lastUpdated || 0,
         lastError: src.lastError || "",
       };
       if (!obj.name) { toast("请填写名称", "error"); return; }
@@ -1253,6 +1271,7 @@
       qs("ms-running").textContent = st.running ? "运行中…" : "未运行";
       qs("ms-source").textContent = st.sourceName || "-";
       qs("ms-imported").textContent = st.imported || 0;
+      qs("ms-updated").textContent = st.updated || 0;
       qs("ms-skipped").textContent = st.skipped || 0;
       qs("ms-scanned").textContent = st.scanned || 0;
       qs("ms-total").textContent = st.total || "-";
@@ -1676,12 +1695,12 @@
   function openBatchUser() {
     qs("modal-title").textContent = "批量生成用户";
     qs("modal-content").innerHTML =
-      '<div class="field"><label>生成数量（1-500）</label><input id="bu-count" type="number" min="1" max="500" value="10"></div>';
+      '<div class="field"><label>生成数量（1-500）</label><input id="bu-quantity" type="number" min="1" max="500" value="10"></div>';
     var collect = planFields("bu");
 
     modalSubmit = function () {
       var payload = collect();
-      payload.count = Number(qs("bu-count").value) || 0;
+      payload.count = Number(qs("bu-quantity").value) || 0;
       api("/users/batch", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
         if (!res.success) { toast(res.message); return; }
         showBatchResult(res.tokens || []);
@@ -1825,6 +1844,263 @@
         '<div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>用户</th><th>操作者</th><th>详情</th></tr></thead><tbody>' +
         rows + "</tbody></table></div>");
     });
+  });
+
+  // ---------------------------------------------------------------- accounts
+
+  var accountState = { page: 1, pageSize: 50, total: 0, q: "" };
+
+  function accountStatusPill(status) {
+    if (status === "enabled") return '<span class="pill s2">正常</span>';
+    if (status === "unbound") return '<span class="pill disabled">未绑定</span>';
+    return '<span class="pill disabled">停用</span>';
+  }
+
+  function loadAccounts() {
+    var params = new URLSearchParams({
+      page: String(accountState.page),
+      page_size: String(accountState.pageSize),
+      q: accountState.q || "",
+    });
+    api("/accounts?" + params.toString()).then(function (data) {
+      if (!data.success) { toast(data.message || "加载失败", "error"); return; }
+      accountState.total = data.total || 0;
+      renderAccounts(data.accounts || []);
+      qs("acc-pageinfo").textContent = "第 " + accountState.page + " 页 / 共 " +
+        Math.max(1, Math.ceil(accountState.total / accountState.pageSize)) + " 页";
+    });
+  }
+
+  function renderAccounts(items) {
+    var body = qs("acc-table").querySelector("tbody");
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="8" class="muted">暂无账号</td></tr>';
+      return;
+    }
+    body.innerHTML = items.map(function (a) {
+      var plan = a.plan_label || a.plan_code || "-";
+      var remain = a.remain_count == null ? "不限" : a.remain_count;
+      var actions = '<div class="row-actions">' +
+        '<button class="btn small ghost" data-act="password" data-id="' + a.id + '">重置密码</button>';
+      if (a.status === "enabled") {
+        actions += '<button class="btn small ghost" data-act="disable" data-id="' + a.id + '">停用</button>' +
+          '<button class="btn small ghost" data-act="unbind" data-id="' + a.id + '">解绑</button>' +
+          '<button class="btn small ghost" data-act="revoke" data-id="' + a.id + '">撤销会话</button>';
+      } else if (a.status === "unbound") {
+        actions += '<button class="btn small primary" data-act="bind" data-id="' + a.id + '">绑定令牌</button>' +
+          '<button class="btn small danger" data-act="delete" data-id="' + a.id + '">删除</button>';
+      } else {
+        actions += '<button class="btn small primary" data-act="enable" data-id="' + a.id + '">启用</button>';
+      }
+      actions += "</div>";
+      return "<tr>" +
+        "<td>" + a.id + "</td>" +
+        "<td>" + esc(a.username) + "</td>" +
+        '<td><span class="mono small clamp">' + esc(a.token || "-") + "</span></td>" +
+        "<td>" + esc(plan) + "</td>" +
+        "<td>" + accountStatusPill(a.status) + "</td>" +
+        "<td>" + remain + "</td>" +
+        '<td class="small">' + esc(a.last_login_at || "-") + "</td>" +
+        "<td>" + actions + "</td>" +
+      "</tr>";
+    }).join("");
+  }
+
+  function accountAction(id, action, extra) {
+    return api("/accounts/" + encodeURIComponent(id) + "/" + action, {
+      method: "POST", body: extra ? JSON.stringify(extra) : undefined,
+    });
+  }
+
+  qs("acc-table").addEventListener("click", async function (e) {
+    var btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    var id = btn.getAttribute("data-id");
+    var act = btn.getAttribute("data-act");
+    if (act === "password") {
+      openModal("重置账号密码", [
+        { name: "password", label: "新密码（至少 8 位）", type: "password", value: "" },
+      ], function (v) {
+        accountAction(id, "reset-password", { password: v.password }).then(function (res) {
+          if (!res.success) { toast(res.message || "重置失败", "error"); return; }
+          toast("密码已重置", "success");
+          closeModal();
+        });
+      });
+      return;
+    }
+    if (act === "delete") {
+      if (!(await confirmDialog("删除该未绑定账号？用户名将被释放。", { danger: true }))) return;
+      api("/accounts/" + encodeURIComponent(id), { method: "DELETE" }).then(function (res) {
+        if (!res.success) { toast(res.message || "删除失败", "error"); return; }
+        toast("已删除", "success");
+        loadAccounts();
+      });
+      return;
+    }
+    if (act === "bind") {
+      openModal("绑定令牌", [
+        { name: "token", label: "用户令牌", type: "text", value: "" },
+      ], function (v) {
+        accountAction(id, "bind", { token: v.token.trim() }).then(function (res) {
+          if (!res.success) { toast(res.message || "绑定失败", "error"); return; }
+          toast("已绑定", "success");
+          closeModal();
+          loadAccounts();
+        });
+      });
+      return;
+    }
+    var messages = {
+      disable: "停用该账号？现有登录会话会被撤销。",
+      enable: "启用该账号？",
+      unbind: "解除账号与令牌的绑定？账号将无法登录，直到重新绑定。",
+      revoke: "撤销该账号的全部登录会话？",
+    };
+    if (!(await confirmDialog(messages[act] || "确认操作？", { danger: act === "disable" || act === "unbind" }))) return;
+    accountAction(id, act).then(function (res) {
+      if (!res.success) { toast(res.message || "操作失败", "error"); return; }
+      toast("操作成功", "success");
+      loadAccounts();
+    });
+  });
+
+  qs("acc-search-btn").addEventListener("click", function () {
+    accountState.q = qs("acc-search").value.trim();
+    accountState.page = 1;
+    loadAccounts();
+  });
+  qs("acc-refresh").addEventListener("click", loadAccounts);
+  qs("acc-prev").addEventListener("click", function () {
+    if (accountState.page <= 1) return;
+    accountState.page--;
+    loadAccounts();
+  });
+  qs("acc-next").addEventListener("click", function () {
+    if (accountState.page * accountState.pageSize >= accountState.total) return;
+    accountState.page++;
+    loadAccounts();
+  });
+
+  // ------------------------------------------------------------------- redeem
+
+  var redeemState = { page: 1, pageSize: 50, total: 0 };
+
+  function fillRedeemPlans() {
+    var kind = qs("rd-kind").value;
+    var sel = qs("rd-plan");
+    var keep = sel.value;
+    sel.innerHTML = userState.plans.filter(function (p) {
+      if (kind === "count") return p.Kind === "count";
+      return p.Kind === "duration" && !p.Unlimited;
+    }).map(function (p) {
+      return '<option value="' + esc(p.Code) + '">' + esc(p.Label) + "</option>";
+    }).join("");
+    if (keep && userState.planMap[keep]) sel.value = keep;
+    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+    var current = userState.planMap[sel.value];
+    if (kind === "duration" && current && !current.Custom && current.Days) {
+      qs("rd-days").value = current.Days;
+    }
+  }
+
+  function loadRedeem() {
+    ensurePlans(function () {
+      fillRedeemPlans();
+      loadRedeemBatches();
+    });
+  }
+
+  function loadRedeemBatches() {
+    var params = new URLSearchParams({
+      page: String(redeemState.page),
+      page_size: String(redeemState.pageSize),
+    });
+    api("/redeem/batches?" + params.toString()).then(function (data) {
+      if (!data.success) { toast(data.message || "加载失败", "error"); return; }
+      redeemState.total = data.total || 0;
+      renderRedeemBatches(data.batches || []);
+      qs("rd-pageinfo").textContent = "第 " + redeemState.page + " 页 / 共 " +
+        Math.max(1, Math.ceil(redeemState.total / redeemState.pageSize)) + " 页";
+    });
+  }
+
+  function renderRedeemBatches(items) {
+    var body = qs("rd-table").querySelector("tbody");
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="9" class="muted">暂无卡密批次</td></tr>';
+      return;
+    }
+    body.innerHTML = items.map(function (b) {
+      var amount = b.kind === "count" ? (b.amount + " 次") : (b.days + " 天");
+      return "<tr>" +
+        "<td>" + b.id + "</td>" +
+        '<td class="mono small">' + esc(b.batch_no) + "</td>" +
+        "<td>" + (b.kind === "count" ? "次数卡" : "时长卡") + "</td>" +
+        "<td>" + esc(planLabel(b.plan_code)) + "</td>" +
+        "<td>" + amount + "</td>" +
+        "<td>" + b.quantity + "</td>" +
+        "<td>" + (b.used_count || 0) + "</td>" +
+        '<td class="small">' + esc(b.created_at || "-") + "</td>" +
+        '<td><div class="row-actions"><button class="btn small danger" data-act="revoke" data-id="' + b.id + '">作废未用</button></div></td>' +
+      "</tr>";
+    }).join("");
+  }
+
+  qs("rd-kind").addEventListener("change", fillRedeemPlans);
+  qs("rd-plan").addEventListener("change", fillRedeemPlans);
+
+  qs("rd-create").addEventListener("click", function () {
+    var kind = qs("rd-kind").value;
+    var payload = {
+      kind: kind,
+      plan_code: qs("rd-plan").value,
+      quantity: Number(qs("rd-quantity").value) || 0,
+      expires_at: qs("rd-expires").value || "",
+      note: qs("rd-note").value.trim(),
+    };
+    if (kind === "count") {
+      payload.amount = Number(qs("rd-amount").value) || 0;
+      payload.days = 0;
+    } else {
+      payload.days = Number(qs("rd-days").value) || 0;
+      payload.amount = 0;
+    }
+    api("/redeem/batches", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
+      if (!res.success) { qs("rd-status").textContent = res.message || "生成失败"; return; }
+      qs("rd-status").textContent = "已生成 " + res.codes.length + " 个卡密";
+      openModal("卡密已生成", [
+        {
+          name: "codes", label: "请立即复制保存，关闭后无法再次查看", type: "textarea",
+          value: (res.codes || []).join("\n"),
+        },
+      ], function () { closeModal(); });
+      loadRedeemBatches();
+    });
+  });
+
+  qs("rd-table").addEventListener("click", async function (e) {
+    var btn = e.target.closest("button[data-act='revoke']");
+    if (!btn) return;
+    var id = btn.getAttribute("data-id");
+    if (!(await confirmDialog("作废该批次所有未使用的卡密？", { danger: true }))) return;
+    api("/redeem/batches/" + encodeURIComponent(id) + "/revoke", { method: "POST" }).then(function (res) {
+      if (!res.success) { toast(res.message || "作废失败", "error"); return; }
+      toast("已作废 " + (res.revoked || 0) + " 个卡密", "success");
+      loadRedeemBatches();
+    });
+  });
+
+  qs("rd-refresh").addEventListener("click", loadRedeemBatches);
+  qs("rd-prev").addEventListener("click", function () {
+    if (redeemState.page <= 1) return;
+    redeemState.page--;
+    loadRedeemBatches();
+  });
+  qs("rd-next").addEventListener("click", function () {
+    if (redeemState.page * redeemState.pageSize >= redeemState.total) return;
+    redeemState.page++;
+    loadRedeemBatches();
   });
 
   // ---------------------------------------------------------------------- modal

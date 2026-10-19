@@ -10,8 +10,11 @@ internal/server/
 ├── query.go        # /query 查询链路与解析
 ├── admin.go        # 管理接口路由与设置/日志/统计/第三方题库
 ├── admin_users.go  # 用户管理接口
-├── user_auth.go    # 用户令牌鉴权
-├── user_api.go     # 用户中心接口
+├── user_auth.go    # 用户令牌鉴权与用户中心路由
+├── account_auth.go # 账号会话、CSRF、密码与来源校验
+├── account_api.go  # 注册/登录/绑定/改密/卡密兑换
+├── account_admin.go# 管理端账号与卡密接口
+├── ratelimit.go    # 进程内注册/登录/兑换限流
 ├── model_api.go    # 模型配置与调用接口
 ├── setup.go        # 首次运行安装向导
 ├── console.go      # 控制台/用户中心页面渲染
@@ -28,6 +31,9 @@ internal/server/
 | `server.go` | `Server` 与 `New`，路由注册 `Handler` |
 | `query.go` | `handleQuery` 与 `resolveQueryUncached` 查询链路 |
 | `admin.go` | `handleAdmin` 分派与设置、第三方题库接口 |
+| `account_api.go` | 账号注册登录、token 绑定、卡密兑换 |
+| `account_auth.go` | 会话 cookie、CSRF 与 bcrypt 密码校验 |
+| `account_admin.go` | 管理端账号与卡密批次接口 |
 | `setup.go` | 未配置数据库/令牌时的安装向导 |
 
 ## 依赖

@@ -9,6 +9,7 @@ internal/ai/
 ├── ai.go         # Client、流式/非流式调用、并发限制
 ├── models.go     # Platform / Model / ModelSettings 及解析
 ├── prompt.go     # 提示词构建
+├── choice.go     # 选项解析与单选/多选/判断答案校验
 ├── validate.go   # 答案可信度校验（IsUnreliableAnswer）
 ├── regex.go      # 提取辅助
 └── *_test.go     # 单测
@@ -21,6 +22,7 @@ internal/ai/
 | `ai.go` | 模型调用核心与并发上限 |
 | `models.go` | 模型与平台配置结构、`ParseModelSettings`、`TextModels` / `VisionModel` |
 | `validate.go` | 拒绝空/低信息/拒答类不可信答案 |
+| `choice.go` | 解析选项并校验单选/多选/判断答案，拒绝翻译与无关散文 |
 
 ## 依赖
 
@@ -43,7 +45,7 @@ for _, m := range settings.TextModels() { /* 按优先级调用 */ }
 
 ### 错误处理
 - 调用失败返回错误；返回内容先经 `DetectError` 判定是否为模型错误
-- 答案经 `ExtractAnswer` 提取、`IsUnreliableAnswer` 校验后才回写题库
+- 答案经 `ExtractAnswer` 提取、`ValidateAnswer` 校验后才回写题库；选择题必须匹配选项文字或字母
 
 ### 测试
 - `validate_test.go`、`extract_test.go`、`concurrency_test.go` 覆盖校验、提取与并发

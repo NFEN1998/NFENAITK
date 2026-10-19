@@ -79,6 +79,7 @@ func BuildTextPrompt(title string, options, queryType *string) string {
 	b.WriteString("1. 仔细分析题目，理解题目在问什么，如果有选项则逐一分析每个选项是否正确。\n")
 	b.WriteString("2. 输出最终答案，**只输出一个JSON对象**，不要加代码块标记，不要加任何其他文字。\n\n")
 	b.WriteString("格式：{\"answer\": \"你的最终答案\"}\n\n")
+	b.WriteString("如果题目带有选项，答案必须是其中一个选项的文字；禁止翻译题目、复述题干或输出解释。\n\n")
 
 	if queryType != nil {
 		raw := strings.TrimSpace(*queryType)
@@ -151,7 +152,8 @@ func MajorityAnswer(answers []string) string {
 func BuildVisionPrompt(title string, options *string) string {
 	var b strings.Builder
 	b.WriteString("请阅读图片内容并回答题目。\n")
-	b.WriteString("先分析题目，再只输出一个JSON对象：{\"answer\": \"你的最终答案\"}\n\n")
+	b.WriteString("先分析题目，再只输出一个JSON对象：{\"answer\": \"你的最终答案\"}\n")
+	b.WriteString("如果题目带有选项，答案必须是其中一个选项的文字；禁止翻译题目、复述题干或输出解释。\n\n")
 	fmt.Fprintf(&b, "【题目】\n%s\n", title)
 	if options != nil {
 		if opts := strings.TrimSpace(*options); opts != "" {

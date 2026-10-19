@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nfentik/nfentik-go/internal/ai"
 	"github.com/nfentik/nfentik-go/internal/config"
 	"github.com/nfentik/nfentik-go/internal/externalbank"
 	"github.com/nfentik/nfentik-go/internal/store"
@@ -42,6 +43,10 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.adminStats(w, r)
 	case "users":
 		s.adminUsers(w, r, parts[1:])
+	case "accounts":
+		s.adminAccounts(w, r, parts[1:])
+	case "redeem":
+		s.adminRedeem(w, r, parts[1:])
 	default:
 		http.NotFound(w, r)
 	}
@@ -134,6 +139,16 @@ func (s *Server) adminQuestions(w http.ResponseWriter, r *http.Request, rest []s
 			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 			return
 		}
+		if req.Answer != nil && strings.TrimSpace(*req.Answer) != "" {
+			if validated, ok := ai.ValidateAnswer(derefString(req.Question), req.Options, req.QuestionType, *req.Answer); ok {
+				req.Answer = &validated
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"success": false, "message": "答案与题目类型或选项不匹配，未保存",
+				})
+				return
+			}
+		}
 		if err := s.store.UpdateQuestion(id, req.Question, req.Options, req.Answer, req.QuestionType); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 			return
@@ -180,6 +195,16 @@ func (s *Server) createQuestion(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Question) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "题目内容不能为空"})
 		return
+	}
+	if req.Answer != nil && strings.TrimSpace(*req.Answer) != "" {
+		if validated, ok := ai.ValidateAnswer(req.Question, req.Options, req.QuestionType, *req.Answer); ok {
+			req.Answer = &validated
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false, "message": "答案与题目类型或选项不匹配，未保存",
+			})
+			return
+		}
 	}
 	q, err := s.store.AddQuestion(req.Question, req.Options, req.Answer, req.QuestionType, false)
 	if err != nil {
@@ -418,6 +443,13 @@ func parseIntDefault(v string, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func defaultString(v, def string) string {

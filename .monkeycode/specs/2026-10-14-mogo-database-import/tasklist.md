@@ -36,6 +36,15 @@
   - [x] 5.2 增加「每秒行数」「批间延迟毫秒」，新建数据库源默认批次 500、每秒 100、延迟 0（Requirement 3.2、3.4；已确认决策）
   - [x] 5.3 源列表显示「类型」列；数据库源「测试」按钮调用 `/mogo/db-test`（Requirement 4.7）
 
-- [x] 6. 检查点 - 确保所有测试通过
+- [x] 6. 覆盖已有答案（显式开关）
+  - [x] 6.1 `mogoSource` 新增 `Overwrite bool`（默认 `false`），`mogoImportState` 新增 `Updated`，源配置新增 `LastUpdated`（Requirement 6.1、6.5、6.6）
+  - [x] 6.2 `normalizeSource` 对非数据库源强制关闭覆盖（Requirement 6.7）
+  - [x] 6.3 存储层新增 `ImportQuestionWithOverwrite`：命中时按开关决定跳过或更新答案/题型/来源，题目与选项文本保持不变（Requirement 6.2–6.4；Design「存储层覆盖写入」）
+  - [x] 6.4 `runMogoDatabaseSource` 调用覆盖写入接口，按 `created/updated` 分别累加 `Imported/Updated/Skipped`，`MaxPerRun` 计入更新行（Requirement 6.5；Design「服务端集成」）
+  - [x] 6.5 `mogoFinish` 持久化 `LastUpdated`（Requirement 6.6）
+  - [x] 6.6 控制台源编辑器新增「覆盖已有答案」下拉，源列表显示覆盖标记，进度面板新增「已更新（覆盖）」（Design「控制台」）
+  - [x] 6.7 测试：默认不覆盖保留 AI 答案；开启覆盖后答案/来源/`IsAi` 更新且题目与选项文本不变；运行链路计数正确
+
+- [x] 7. 检查点 - 确保所有测试通过
   - 运行 `gofmt -l internal`、`go build ./...`、`go vet ./...`、`go test -p 1 ./...`
   - 如有疑问请询问用户

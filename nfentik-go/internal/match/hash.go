@@ -6,19 +6,28 @@ import (
 	"strings"
 )
 
-// QuestionHash returns a stable SHA-256 hex digest of the normalized question
-// text. Normalization collapses case, whitespace and punctuation so questions
-// that differ only in formatting share the same hash. The digest is the primary
-// lookup key for the bank, turning exact-match lookups into indexed B-tree
-// probes instead of full-table scans.
-func QuestionHash(question string) string {
-	sum := sha256.Sum256([]byte(NormalizeQuestion(question)))
+// digest returns the hex SHA-256 of a normalized string.
+func digest(normalized string) string {
+	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:])
+}
+
+// QuestionHash returns a stable SHA-256 hex digest of the normalized question
+// text plus its URL identity. Normalization collapses case, whitespace and
+// punctuation so questions that differ only in formatting share the same hash.
+// URLs are replaced by a placeholder during normalization, so the sorted URL
+// set is hashed separately; without it two different image questions with the
+// same text would share a bank row and answer each other's queries.
+func QuestionHash(question string) string {
+	urls := ExtractURLs(question)
+	return digest(NormalizeQuestion(question) + "\x00" + strings.Join(urls, "\n"))
 }
 
 // OptionsHash returns the hash of normalized option text, or an empty string when
 // no options are present. It is combined with QuestionHash to discriminate
-// between entries that share a question but offer different choices.
+// between entries that share a question but offer different choices. The
+// normalization intentionally matches the historical algorithm so existing
+// OptionsHash values stay valid.
 func OptionsHash(options *string) string {
 	if options == nil {
 		return ""
@@ -27,7 +36,7 @@ func OptionsHash(options *string) string {
 	if normalized == "" {
 		return ""
 	}
-	return QuestionHash(normalized)
+	return digest(normalized)
 }
 
 // LookupKey combines the question and option hashes into the single key used by

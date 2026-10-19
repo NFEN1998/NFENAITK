@@ -10,6 +10,9 @@ internal/store/
 ├── dialect.go       # 数据库方言识别、占位符重绑、方言 SQL 片段
 ├── migrate.go       # 迁移系统、结构检查与修复、MySQL 建表
 ├── users.go         # 用户、套餐、使用与审计日志、使用报表
+├── accounts.go      # 账号、token 绑定与账号列表
+├── sessions.go      # 账号会话创建、校验与撤销
+├── redeem.go        # 卡密批次、兑换事务与额度规则
 ├── logs.go          # 请求日志、每日计数
 └── settings_repo.go # AppSettings 键值读写
 ```
@@ -22,6 +25,9 @@ internal/store/
 | `dialect.go` | 引擎差异集中在此，其余代码只写 `$n` 占位符 |
 | `migrate.go` | 带版本号的迁移、完整性检查与幂等修复 |
 | `users.go` | 用户令牌、套餐配额与报表 |
+| `accounts.go` | 账号与 token 一对一绑定、账号管理 |
+| `sessions.go` | 账号会话摘要存储与过期清理 |
+| `redeem.go` | 卡密摘要、批次生成、单事务兑换 |
 | `settings_repo.go` | `app_settings` / `model_config` / `external_banks` 读写 |
 
 ## 依赖

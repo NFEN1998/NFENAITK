@@ -99,7 +99,7 @@ func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleUserMe returns the current user's plan and status.
 func (s *Server) handleUserMe(w http.ResponseWriter, r *http.Request) {
-	u, err := s.userFromRequest(r)
+	u, _, err := s.currentUser(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -111,7 +111,7 @@ func (s *Server) handleUserMe(w http.ResponseWriter, r *http.Request) {
 
 // handleUserLogs returns the current user's own request logs.
 func (s *Server) handleUserLogs(w http.ResponseWriter, r *http.Request) {
-	u, err := s.userFromRequest(r)
+	u, _, err := s.currentUser(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -134,7 +134,7 @@ func (s *Server) handleUserResetToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	u, err := s.userFromRequest(r)
+	u, _, err := s.currentUser(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -155,7 +155,7 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	u, err := s.userFromRequest(r)
+	u, _, err := s.currentUser(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -185,6 +185,8 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "login":
 		s.handleUserLogin(w, r)
+	case "register":
+		s.handleUserRegister(w, r)
 	case "me":
 		s.handleUserMe(w, r)
 	case "logs":
@@ -193,6 +195,18 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		s.handleUserResetToken(w, r)
 	case "profile":
 		s.handleUserProfile(w, r)
+	case "redeem":
+		s.handleUserRedeem(w, r)
+	case "account/login":
+		s.handleAccountLogin(w, r)
+	case "account/logout":
+		s.handleAccountLogout(w, r)
+	case "account/me":
+		s.handleAccountMe(w, r)
+	case "account/bind":
+		s.handleAccountBind(w, r)
+	case "account/password":
+		s.handleAccountPassword(w, r)
 	default:
 		http.NotFound(w, r)
 	}

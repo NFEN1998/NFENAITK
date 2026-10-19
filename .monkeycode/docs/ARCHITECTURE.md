@@ -63,6 +63,13 @@ nfentik-go/
 **依赖**: `store`, `externalbank`, `ai`, `cache`, `match`, `plan`
 **被依赖**: 无（对外入口）
 
+### 账号与充值
+**目的**: 用户中心账号注册登录、token 绑定与卡密充值；查询链路继续使用 token
+**位置**: `internal/server/`、`internal/store/`
+**关键文件**: `account_api.go`, `account_auth.go`, `account_admin.go`, `accounts.go`, `sessions.go`, `redeem.go`
+**依赖**: `store`, `plan`, `config`
+**被依赖**: 无（用户中心入口）
+
 ### 数据存储
 **目的**: 题库、日志、用户、设置与模型/第三方题库配置的持久化
 **位置**: `internal/store/`

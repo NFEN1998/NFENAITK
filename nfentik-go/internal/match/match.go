@@ -143,7 +143,7 @@ func NormalizeQuestion(text string) string {
 // NormalizerVersion identifies the current NormalizeQuestion algorithm. Bump it
 // whenever normalization changes so stored question digests are recomputed once
 // on the next startup (see Store.ensureQuestionHash).
-const NormalizerVersion = 2
+const NormalizerVersion = 3
 
 // isMathOperator reports whether r is an operator that changes the value of a
 // numeric expression. It is the discriminator used to keep "3+3=" and "3×3="

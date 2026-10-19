@@ -2,7 +2,11 @@
   "use strict";
 
   var app = document.getElementById("app");
-  var state = { token: "", user: null, status: "", plans: [], planMap: {}, logPage: 1, logPageSize: 20, logTotal: 0 };
+  var state = {
+    token: "", user: null, status: "", plans: [], planMap: {},
+    logPage: 1, logPageSize: 20, logTotal: 0,
+    authMode: "token", account: null, csrf: "",
+  };
 
   // siteName comes from the system setting, injected by the page template, so
   // the generated OCS config carries the configured question bank name.
@@ -74,15 +78,35 @@
 
   function headers() {
     var h = { "Content-Type": "application/json" };
-    if (state.token) h["Authorization"] = "Bearer " + state.token;
+    if (state.authMode === "token" && state.token) h["Authorization"] = "Bearer " + state.token;
+    if (state.authMode === "account" && state.csrf) h["X-CSRF-Token"] = state.csrf;
     return h;
+  }
+
+  function readCookie(name) {
+    var parts = document.cookie ? document.cookie.split(";") : [];
+    for (var i = 0; i < parts.length; i++) {
+      var pair = parts[i].trim().split("=");
+      if (pair[0] === name) return decodeURIComponent(pair.slice(1).join("="));
+    }
+    return "";
+  }
+
+  function clearState() {
+    state.token = "";
+    state.user = null;
+    state.status = "";
+    state.account = null;
+    state.csrf = "";
+    state.authMode = "token";
+    try { sessionStorage.removeItem("nfentik_usertoken"); } catch (e) {}
   }
 
   function api(path, options) {
     options = options || {};
     options.headers = Object.assign(headers(), options.headers || {});
     return fetch("/api/user" + path, options).then(function (res) {
-      if (res.status === 401) { showLogin(); throw new Error("未授权"); }
+      if (res.status === 401) { clearState(); showLogin(); throw new Error("未授权"); }
       return res.json().catch(function () { return { success: false, message: "响应解析失败" }; });
     });
   }
@@ -99,6 +123,36 @@
     qs("user-main").classList.remove("hidden");
   }
 
+  function enterMain() {
+    showMain();
+    loadMe();
+    loadLogs();
+    loadAccount();
+  }
+
+  function switchLoginTab(tab) {
+    document.querySelectorAll("[data-login-tab]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-login-tab") === tab);
+    });
+    ["token", "account", "register"].forEach(function (name) {
+      qs("login-panel-" + name).classList.toggle("hidden", name !== tab);
+    });
+  }
+
+  document.querySelectorAll("[data-login-tab]").forEach(function (btn) {
+    btn.addEventListener("click", function () { switchLoginTab(btn.getAttribute("data-login-tab")); });
+  });
+
+  function applyAccountLogin(data) {
+    state.authMode = "account";
+    state.user = data.user || null;
+    state.account = data.account || null;
+    state.token = (data.user && data.user.token) || "";
+    state.csrf = data.csrf_token || "";
+    try { sessionStorage.removeItem("nfentik_usertoken"); } catch (e) {}
+    enterMain();
+  }
+
   qs("user-login-btn").addEventListener("click", function () {
     var token = qs("user-token").value.trim();
     if (!token) { qs("user-login-error").textContent = "请输入用户令牌"; return; }
@@ -107,30 +161,76 @@
       body: JSON.stringify({ token: token }),
     }).then(function (res) { return res.json(); }).then(function (data) {
       if (!data.success) { qs("user-login-error").textContent = data.message || "登录失败"; return; }
+      state.authMode = "token";
       state.token = token;
+      state.account = null;
+      state.csrf = "";
       try { sessionStorage.setItem("nfentik_usertoken", token); } catch (e) {}
-      showMain();
-      loadMe();
-      loadLogs();
+      enterMain();
     }).catch(function () { qs("user-login-error").textContent = "网络错误，请重试"; });
+  });
+
+  qs("account-login-btn").addEventListener("click", function () {
+    var username = qs("account-username").value.trim();
+    var password = qs("account-password").value;
+    if (!username || !password) { qs("account-login-error").textContent = "请输入用户名和密码"; return; }
+    fetch("/api/user/account/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: username, password: password }),
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (!data.success) { qs("account-login-error").textContent = data.message || "登录失败"; return; }
+      qs("account-login-error").textContent = "";
+      applyAccountLogin(data);
+    }).catch(function () { qs("account-login-error").textContent = "网络错误，请重试"; });
+  });
+
+  qs("register-btn").addEventListener("click", function () {
+    var username = qs("register-username").value.trim();
+    var password = qs("register-password").value;
+    var confirm = qs("register-password2").value;
+    var token = qs("register-token").value.trim();
+    if (!username || !password) { qs("register-error").textContent = "请填写用户名和密码"; return; }
+    if (password !== confirm) { qs("register-error").textContent = "两次输入的密码不一致"; return; }
+    fetch("/api/user/register", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: username, password: password, token: token }),
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (!data.success) { qs("register-error").textContent = data.message || "注册失败"; return; }
+      qs("register-error").textContent = "";
+      applyAccountLogin(data);
+      toast("注册成功，请兑换卡密后使用", "success");
+    }).catch(function () { qs("register-error").textContent = "网络错误，请重试"; });
   });
 
   qs("user-token").addEventListener("keydown", function (e) {
     if (e.key === "Enter") qs("user-login-btn").click();
   });
+  qs("account-password").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") qs("account-login-btn").click();
+  });
+  qs("register-password2").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") qs("register-btn").click();
+  });
 
   qs("user-token-toggle").addEventListener("click", function () {
     var input = qs("user-token");
-    var show = input.type === "раs​s​wоr​d";
-    input.type = show ? "text" : "раs​s​wоr​d";
+    var show = input.type === "password";
+    input.type = show ? "text" : "password";
     this.textContent = show ? "隐藏" : "显示";
   });
 
-  qs("user-logout").addEventListener("click", function () {
-    state.token = "";
-    try { sessionStorage.removeItem("nfentik_usertoken"); } catch (e) {}
-    showLogin();
-  });
+  function doLogout() {
+    fetch("/api/user/account/logout", { method: "POST", headers: headers() })
+      .catch(function () {})
+      .then(function () {
+        clearState();
+        showLogin();
+        switchLoginTab("token");
+      });
+  }
+
+  qs("user-logout").addEventListener("click", doLogout);
+  qs("account-logout-btn").addEventListener("click", doLogout);
 
   // ------------------------------------------------------------------ profile
 
@@ -150,7 +250,7 @@
       renderProfile();
       renderOCS();
       renderUrlExamples();
-    });
+    }).catch(function () {});
   }
 
   function planLabel(code) {
@@ -202,12 +302,15 @@
     }
     if (state.status === "expired") {
       el.className = "user-alert danger";
-      el.textContent = "套餐已过期，请及时续费。";
+      el.textContent = "套餐已过期，请兑换时长卡密或联系管理员续费。";
       return;
     }
     if (state.status === "exhausted") {
       el.className = "user-alert danger";
-      el.textContent = "调用次数已用尽，请及时续费。";
+      var zero = (u.total_count || 0) === 0;
+      el.textContent = zero
+        ? "尚未充值，请在下方兑换卡密后使用。"
+        : "调用次数已用尽，请兑换卡密或联系管理员续费。";
       return;
     }
     if (state.status === "expiring" && u.expire_at) {
@@ -218,6 +321,107 @@
         : "套餐即将到期，请及时续费。";
     }
   }
+
+  // ------------------------------------------------------------------ account
+
+  function loadAccount() {
+    api("/account/me").then(function (data) {
+      if (!data || !data.success) return;
+      state.account = data.account || null;
+      if (data.user) {
+        state.user = data.user;
+        state.token = data.user.token || state.token;
+      }
+      renderAccount();
+    }).catch(function () {});
+  }
+
+  function renderAccount() {
+    var acc = state.account;
+    qs("account-username-view").textContent = acc ? acc.username : "-";
+    qs("account-token-view").textContent = state.token || "-";
+    var pill = qs("account-status-pill");
+    if (acc) {
+      pill.className = acc.status === "disabled" ? "pill disabled" : "pill active";
+      pill.textContent = acc.status === "disabled" ? "已停用" : "已绑定";
+    } else {
+      pill.className = "pill disabled";
+      pill.textContent = "未绑定";
+    }
+    qs("account-bind-wrap").classList.toggle("hidden", !!acc);
+    qs("account-actions").classList.toggle("hidden", !acc);
+    qs("account-hint").textContent = acc
+      ? "已绑定账号，可使用用户名密码登录用户中心。"
+      : "当前为令牌登录，绑定账号后可使用用户名密码登录。";
+  }
+
+  qs("bind-btn").addEventListener("click", function () {
+    var username = qs("bind-username").value.trim();
+    var password = qs("bind-password").value;
+    if (!username || !password) { qs("bind-error").textContent = "请填写用户名和密码"; return; }
+    fetch("/api/user/account/bind", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ username: username, password: password }),
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (!data.success) { qs("bind-error").textContent = data.message || "绑定失败"; return; }
+      qs("bind-error").textContent = "";
+      state.authMode = "account";
+      state.account = data.account || null;
+      state.csrf = data.csrf_token || "";
+      state.user = data.user || state.user;
+      state.token = (data.user && data.user.token) || state.token;
+      try { sessionStorage.removeItem("nfentik_usertoken"); } catch (e) {}
+      toast("账号绑定成功", "success");
+      renderAccount();
+      renderProfile();
+      renderOCS();
+      renderUrlExamples();
+    }).catch(function () { qs("bind-error").textContent = "网络错误，请重试"; });
+  });
+
+  qs("account-token-copy").addEventListener("click", function () {
+    copyText(state.token, "令牌已复制");
+  });
+
+  qs("password-btn").addEventListener("click", function () {
+    qs("password-wrap").classList.toggle("hidden");
+  });
+
+  qs("password-save").addEventListener("click", function () {
+    var oldPassword = qs("old-password").value;
+    var newPassword = qs("new-password").value;
+    if (!oldPassword || !newPassword) { qs("password-error").textContent = "请填写原密码和新密码"; return; }
+    api("/account/password", {
+      method: "POST",
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    }).then(function (data) {
+      if (!data.success) { qs("password-error").textContent = data.message || "修改失败"; return; }
+      qs("password-error").textContent = "";
+      state.csrf = data.csrf_token || state.csrf;
+      qs("old-password").value = "";
+      qs("new-password").value = "";
+      qs("password-wrap").classList.add("hidden");
+      toast("密码已更新", "success");
+    }).catch(function () { qs("password-error").textContent = "网络错误，请重试"; });
+  });
+
+  // ------------------------------------------------------------------ redeem
+
+  qs("redeem-btn").addEventListener("click", function () {
+    var code = qs("redeem-code").value.trim();
+    if (!code) { qs("redeem-error").textContent = "请输入卡密"; return; }
+    api("/redeem", { method: "POST", body: JSON.stringify({ code: code }) }).then(function (data) {
+      if (!data.success) { qs("redeem-error").textContent = data.message || "兑换失败"; return; }
+      qs("redeem-error").textContent = "";
+      qs("redeem-code").value = "";
+      state.user = data.user || state.user;
+      renderProfile();
+      renderOCS();
+      renderUrlExamples();
+      loadMe();
+      toast("卡密兑换成功", "success");
+    }).catch(function () { qs("redeem-error").textContent = "网络错误，请重试"; });
+  });
 
   function remainDays(expireAt) {
     var t = parseDate(expireAt);
@@ -330,7 +534,7 @@
       renderLogs(data.items || []);
       qs("user-logs-pageinfo").textContent = "第 " + state.logPage + " 页 / 共 " +
         Math.max(1, Math.ceil(state.logTotal / state.logPageSize)) + " 页";
-    });
+    }).catch(function () {});
   }
 
   var sourceLabels = { bank: "题库", cache: "缓存", ai: "AI" };
@@ -372,8 +576,14 @@
     api("/reset-token", { method: "POST" }).then(function (res) {
       if (!res.success) { toast(res.message, "error"); return; }
       state.token = res.token;
-      try { sessionStorage.setItem("nfentik_usertoken", state.token); } catch (e) {}
+      if (state.user) state.user.token = res.token;
+      if (state.authMode === "token") {
+        try { sessionStorage.setItem("nfentik_usertoken", state.token); } catch (e) {}
+      }
+      renderAccount();
+      renderProfile();
       renderOCS();
+      renderUrlExamples();
       showTokenModal(res.token);
     });
   });
@@ -398,11 +608,31 @@
   function boot() {
     var token = "";
     try { token = sessionStorage.getItem("nfentik_usertoken") || ""; } catch (e) {}
-    if (!token) { showLogin(); return; }
-    state.token = token;
-    showMain();
-    loadMe();
-    loadLogs();
+    if (token) {
+      state.authMode = "token";
+      state.token = token;
+      enterMain();
+      return;
+    }
+    // No stored token: try an existing account session cookie.
+    fetch("/api/user/account/me", { headers: { "Content-Type": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function (data) {
+        if (data && data.success && data.account) {
+          state.authMode = "account";
+          state.account = data.account;
+          state.user = data.user || null;
+          state.token = (data.user && data.user.token) || "";
+          state.csrf = readCookie("nfentik_csrf");
+          enterMain();
+          return;
+        }
+        showLogin();
+      })
+      .catch(function () { showLogin(); });
   }
 
   boot();

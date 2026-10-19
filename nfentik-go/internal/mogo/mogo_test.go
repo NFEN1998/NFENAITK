@@ -155,3 +155,34 @@ func TestClientRetryStopsOnContextCancel(t *testing.T) {
 		t.Fatalf("expected the cancelled context to abort the retry")
 	}
 }
+
+// TestQuestionBankSampleFormat covers the real questionbank.data shape:
+// the stem and inline options are joined with #####, while opt carries the
+// type prefix and the authoritative option list.
+func TestQuestionBankSampleFormat(t *testing.T) {
+	question := "下列关于急救知识说法正确的是()。#####对毛细血管出血患者在近心端压迫止血###心跳骤停时可以利用自动体外除颤器(AED)对患者进行除颤和心肺复苏###洗胃最佳的时间应该尽量控制在患者服毒后6-8小时之内"
+	opt := "单选题****[洗胃最佳的时间应该尽量控制在患者服毒后6-8小时之内###对毛细血管出血患者在近心端压迫止血###胸外心脏按压的频率为每分钟30~50次###心跳骤停时可以利用自动体外除颤器(AED)对患者进行除颤和心肺复苏]"
+
+	stem, inline := SplitQuestion(question)
+	if stem != "下列关于急救知识说法正确的是()。" {
+		t.Fatalf("stem = %q", stem)
+	}
+	if len(inline) != 3 {
+		t.Fatalf("inline options = %d, want 3", len(inline))
+	}
+	options := ParseOptions(opt)
+	if len(options) != 4 {
+		t.Fatalf("opt options = %v", options)
+	}
+	if options[0] != "洗胃最佳的时间应该尽量控制在患者服毒后6-8小时之内" {
+		t.Fatalf("first option = %q", options[0])
+	}
+
+	stem, inline = SplitQuestion("心肺复苏术简称CPR,是针对骤停的心脏和呼吸采取的救命技术。")
+	if stem == "" || len(inline) != 0 {
+		t.Fatalf("judgement split = %q %v", stem, inline)
+	}
+	if got := ParseOptions("判断题****[对###错]"); len(got) != 2 || got[0] != "对" || got[1] != "错" {
+		t.Fatalf("judgement options = %v", got)
+	}
+}

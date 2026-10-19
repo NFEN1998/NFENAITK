@@ -135,6 +135,70 @@ func TestRunMogoDatabaseImports(t *testing.T) {
 	}
 }
 
+func TestRunMogoDatabaseOverwriteExisting(t *testing.T) {
+	srv, _ := testServer(t)
+	q := "数据库覆盖测试 unique db overwrite"
+	if _, err := srv.store.InsertAIResponse(q, "AI答案", nil, nil); err != nil {
+		t.Fatalf("seed ai answer: %v", err)
+	}
+	defer srv.store.DB().Exec(`DELETE FROM AIResponses WHERE Question = $1`, q)
+
+	reader := &fakeDBReader{
+		columns: fullColumns(),
+		rows:    []mogodb.Row{{ID: 10, Question: q, Answer: "MOGO答案", QuestionType: "单选题"}},
+	}
+	srv.newMogoDBReader = func(mogodb.Config) (mogoDBReader, error) { return reader, nil }
+
+	src := dbTestSource(0)
+	src.Overwrite = true
+	job := &mogoImportJob{state: mogoImportState{Running: true, SourceID: "db1"}}
+	srv.runMogoDatabaseSource(context.Background(), job, src)
+
+	if job.state.Updated != 1 || job.state.Imported != 0 || job.state.Skipped != 0 {
+		t.Fatalf("counts wrong: imported=%d updated=%d skipped=%d", job.state.Imported, job.state.Updated, job.state.Skipped)
+	}
+	var answer, source string
+	var isAI bool
+	if err := srv.store.DB().QueryRow(`SELECT Answer, Source, IsAi FROM AIResponses WHERE Question = $1`, q).
+		Scan(&answer, &source, &isAI); err != nil {
+		t.Fatalf("read overwritten row: %v", err)
+	}
+	if answer != "MOGO答案" || source != "import:mogo-db" || isAI {
+		t.Fatalf("overwrite result: answer=%q source=%q isAI=%v", answer, source, isAI)
+	}
+}
+
+func TestRunMogoDatabaseKeepsExistingWithoutOverwrite(t *testing.T) {
+	srv, _ := testServer(t)
+	q := "数据库默认不覆盖测试 unique db no overwrite"
+	if _, err := srv.store.InsertAIResponse(q, "AI答案", nil, nil); err != nil {
+		t.Fatalf("seed ai answer: %v", err)
+	}
+	defer srv.store.DB().Exec(`DELETE FROM AIResponses WHERE Question = $1`, q)
+
+	reader := &fakeDBReader{
+		columns: fullColumns(),
+		rows:    []mogodb.Row{{ID: 10, Question: q, Answer: "MOGO答案"}},
+	}
+	srv.newMogoDBReader = func(mogodb.Config) (mogoDBReader, error) { return reader, nil }
+
+	job := &mogoImportJob{state: mogoImportState{Running: true, SourceID: "db1"}}
+	srv.runMogoDatabaseSource(context.Background(), job, dbTestSource(0))
+
+	if job.state.Skipped != 1 || job.state.Updated != 0 || job.state.Imported != 0 {
+		t.Fatalf("counts wrong: imported=%d updated=%d skipped=%d", job.state.Imported, job.state.Updated, job.state.Skipped)
+	}
+	var answer, source string
+	var isAI bool
+	if err := srv.store.DB().QueryRow(`SELECT Answer, Source, IsAi FROM AIResponses WHERE Question = $1`, q).
+		Scan(&answer, &source, &isAI); err != nil {
+		t.Fatalf("read existing row: %v", err)
+	}
+	if answer != "AI答案" || source != "ai" || !isAI {
+		t.Fatalf("existing row changed: answer=%q source=%q isAI=%v", answer, source, isAI)
+	}
+}
+
 func TestRunMogoDatabaseMaxPerRunStops(t *testing.T) {
 	srv, _ := testServer(t)
 	q := "数据库上限测试 unique db maxperrun"

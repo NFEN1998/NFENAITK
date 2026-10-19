@@ -67,6 +67,10 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 		if hadModel {
 			_ = st.SetSetting("model_config", snapModel)
 		}
+		_, _ = st.DB().Exec(`DELETE FROM AccountSessions`)
+		_, _ = st.DB().Exec(`DELETE FROM Accounts`)
+		_, _ = st.DB().Exec(`DELETE FROM RedemptionCodes`)
+		_, _ = st.DB().Exec(`DELETE FROM RedemptionBatches`)
 		_, _ = st.DB().Exec(`DELETE FROM UserRequestLogs`)
 		_, _ = st.DB().Exec(`DELETE FROM UserAuditLogs`)
 		_, _ = st.DB().Exec(`DELETE FROM Users`)

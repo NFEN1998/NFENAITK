@@ -93,6 +93,13 @@ type Settings struct {
 	UserLogGlobalLimit     int    `json:"userLogGlobalLimit"`
 	UserAuditRetentionDays int    `json:"userAuditRetentionDays"`
 	DefaultPlanCode        string `json:"defaultPlanCode"`
+
+	// Account login and redemption.
+	AccountRegistrationEnabled bool `json:"accountRegistrationEnabled"`
+	AccountSessionTTLDays      int  `json:"accountSessionTTLDays"`
+	AccountLoginMaxFailures    int  `json:"accountLoginMaxFailures"`
+	AccountLoginWindowMinutes  int  `json:"accountLoginWindowMinutes"`
+	RedeemMaxFailuresPerHour   int  `json:"redeemMaxFailuresPerHour"`
 }
 
 // Default site branding shown on the landing page, console and user portal.
@@ -141,6 +148,12 @@ func DefaultSettings() Settings {
 		UserLogGlobalLimit:     50000,
 		UserAuditRetentionDays: 90,
 		DefaultPlanCode:        "",
+
+		AccountRegistrationEnabled: true,
+		AccountSessionTTLDays:      30,
+		AccountLoginMaxFailures:    5,
+		AccountLoginWindowMinutes:  15,
+		RedeemMaxFailuresPerHour:   10,
 	}
 }
 
@@ -305,6 +318,18 @@ func normalize(settings *Settings) {
 	}
 	if settings.UserAuditRetentionDays <= 0 {
 		settings.UserAuditRetentionDays = 90
+	}
+	if settings.AccountSessionTTLDays <= 0 {
+		settings.AccountSessionTTLDays = 30
+	}
+	if settings.AccountLoginMaxFailures <= 0 {
+		settings.AccountLoginMaxFailures = 5
+	}
+	if settings.AccountLoginWindowMinutes <= 0 {
+		settings.AccountLoginWindowMinutes = 15
+	}
+	if settings.RedeemMaxFailuresPerHour <= 0 {
+		settings.RedeemMaxFailuresPerHour = 10
 	}
 }
 

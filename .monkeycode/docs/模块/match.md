@@ -16,7 +16,7 @@ internal/match/
 
 | 文件 | 目的 |
 | --- | --- |
-| `hash.go` | `NormalizeQuestion`、`QuestionHash`、`LookupKey`（精确查询与缓存键） |
+| `hash.go` | `NormalizeQuestion`、`QuestionHash`（题面 + URL 集合）、`LookupKey`（精确查询与缓存键） |
 | `match.go` | `Score`（模糊评分，供两段式查询与第三方校验使用）、`ExtractURLs` |
 
 ## 依赖
@@ -48,5 +48,6 @@ if score, ok := match.Score(query, result.Question); !ok || score < 0.72 {
 
 ### 行为
 - `Score` 返回 `(float64, bool)`：`ok=false` 表示不构成匹配
-- 精确哈希命中跳过模糊评分；带 URL 的题目要求 URL 集合一致
+- `QuestionHash` 追加排序后的 URL 集合，不同图片题目不会共享哈希；`NormalizerVersion=3` 时启动会重算一次全库哈希
+- 精确哈希命中跳过模糊评分；所有题目都要求 URL 集合一致（纯文本题为空集合）
 - gojieba 词典随发布包附带，通过 `JIEBA_DICT_DIR` 或 exe 同级 `dict/` 加载

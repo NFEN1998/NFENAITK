@@ -231,3 +231,22 @@ tbody tr:hover { background: var(--panel-2); }
 .toast.leaving { animation: toast-out .18s ease forwards; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(-10px); } }
+
+/* ---- account login and recharge ---- */
+.login-tabs { display: flex; gap: 6px; margin: 0 0 18px; }
+.login-tab {
+  flex: 1; padding: 8px 6px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.login-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(79,70,229,.08); font-weight: 600; }
+.login-panel { animation: fade-in .18s ease; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#account-token-view { word-break: break-all; }
+#redeem-code { text-transform: uppercase; }
+
+@media (max-width: 720px) {
+  .grid-2 { grid-template-columns: 1fr; }
+}

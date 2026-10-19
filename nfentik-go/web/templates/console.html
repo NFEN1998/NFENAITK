@@ -29,6 +29,8 @@
         <button class="nav-item" data-view="ocs"><svg viewBox="0 0 24 24"><path d="M4 8h4V4h8v4h4v8h-4v4H8v-4H4z"/></svg><span>OCS 配置</span></button>
         <div class="nav-group">系统</div>
         <button class="nav-item" data-view="users"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6"/><path d="M21 20a6 6 0 0 0-4-5.5"/></svg><span>用户管理</span></button>
+        <button class="nav-item" data-view="accounts"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>账号管理</span></button>
+        <button class="nav-item" data-view="redeem"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg><span>卡密管理</span></button>
         <button class="nav-item" data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg><span>系统设置</span></button>
         <button class="nav-item" data-view="logs"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>请求日志</span></button>
       </nav>
@@ -200,6 +202,93 @@
       </div>
     </section>
 
+    <section id="view-accounts" class="view">
+      <div class="card">
+        <h2>账号列表</h2>
+        <p class="muted small">账号用于用户中心登录与卡密充值，查询仍使用绑定的令牌。</p>
+        <div class="toolbar">
+          <input id="acc-search" placeholder="搜索用户名">
+          <button id="acc-search-btn" class="btn">搜索</button>
+          <button id="acc-refresh" class="btn ghost">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table id="acc-table">
+            <thead><tr>
+              <th>ID</th><th>用户名</th><th>绑定令牌</th><th>套餐</th><th>账号状态</th><th>剩余</th><th>最近登录</th><th>操作</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="acc-prev" class="btn ghost">上一页</button>
+          <span id="acc-pageinfo">第 1 页</span>
+          <button id="acc-next" class="btn ghost">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-redeem" class="view">
+      <div class="card">
+        <h2>生成卡密</h2>
+        <p class="muted small">次数卡只增加次数，时长卡顺延到期时间；套餐类型不匹配时会被拒绝。明文只在生成时展示一次。</p>
+        <div class="grid-3">
+          <div class="field">
+            <label>类型</label>
+            <select id="rd-kind">
+              <option value="count">次数卡</option>
+              <option value="duration">时长卡</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>套餐</label>
+            <select id="rd-plan"></select>
+          </div>
+          <div class="field">
+            <label>生成数量（1-10000）</label>
+            <input id="rd-quantity" type="number" min="1" max="10000" value="10">
+          </div>
+          <div class="field">
+            <label>次数额度</label>
+            <input id="rd-amount" type="number" min="1" value="100">
+          </div>
+          <div class="field">
+            <label>时长天数</label>
+            <input id="rd-days" type="number" min="1" value="30">
+          </div>
+          <div class="field">
+            <label>兑换截止（可选）</label>
+            <input id="rd-expires" type="date">
+          </div>
+        </div>
+        <div class="field">
+          <label>批次备注</label>
+          <input id="rd-note" type="text" placeholder="例如 2026 秋季次卡">
+        </div>
+        <button id="rd-create" class="btn primary">生成卡密</button>
+        <p id="rd-status" class="muted"></p>
+      </div>
+
+      <div class="card">
+        <h2>卡密批次</h2>
+        <div class="toolbar">
+          <button id="rd-refresh" class="btn ghost">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table id="rd-table">
+            <thead><tr>
+              <th>ID</th><th>批次号</th><th>类型</th><th>套餐</th><th>额度</th><th>数量</th><th>已用</th><th>创建时间</th><th>操作</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="rd-prev" class="btn ghost">上一页</button>
+          <span id="rd-pageinfo">第 1 页</span>
+          <button id="rd-next" class="btn ghost">下一页</button>
+        </div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view">
       <div class="toolbar">
         <span class="muted">系统设置保存在 config.json，保存后立即生效。</span>
@@ -322,6 +411,30 @@
             </div>
           </div>
         </div>
+
+        <div class="card">
+          <h2>账号与充值</h2>
+          <p class="muted small">控制用户中心注册、账号会话有效期与登录/兑换限流。</p>
+          <label class="checkbox"><input type="checkbox" id="s-account-registration"> 开放用户注册</label>
+          <div class="grid-3">
+            <div class="field">
+              <label>会话有效期（天）</label>
+              <input id="s-account-session-days" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>登录失败上限</label>
+              <input id="s-account-login-failures" type="number" min="1">
+            </div>
+            <div class="field">
+              <label>登录失败窗口（分钟）</label>
+              <input id="s-account-login-window" type="number" min="1">
+            </div>
+          </div>
+          <div class="field">
+            <label>每小时兑换失败上限</label>
+            <input id="s-redeem-failures" type="number" min="1">
+          </div>
+        </div>
       </div>
 
       <textarea id="s-editor" class="editor hidden" spellcheck="false"></textarea>
@@ -375,6 +488,7 @@
           <div class="kv"><span>任务</span><strong id="ms-running">未运行</strong></div>
           <div class="kv"><span>来源</span><strong id="ms-source">-</strong></div>
           <div class="kv"><span>已导入</span><strong id="ms-imported">0</strong></div>
+          <div class="kv"><span>已更新（覆盖）</span><strong id="ms-updated">0</strong></div>
           <div class="kv"><span>已跳过（已存在）</span><strong id="ms-skipped">0</strong></div>
           <div class="kv"><span>已扫描</span><strong id="ms-scanned">0</strong></div>
           <div class="kv"><span>题库总数</span><strong id="ms-total">-</strong></div>

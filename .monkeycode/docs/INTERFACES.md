@@ -66,11 +66,20 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/user/login` | 用户令牌登录 |
-| GET | `/api/user/me` | 当前用户与套餐信息 |
+| POST | `/api/user/register` | 注册账号；可选携带已有 token 绑定 |
+| POST | `/api/user/account/login` | 账号密码登录，返回 HttpOnly 会话 cookie |
+| POST | `/api/user/account/logout` | 退出并撤销账号会话 |
+| GET | `/api/user/account/me` | 当前账号与绑定信息 |
+| POST | `/api/user/account/bind` | 为当前令牌绑定账号 |
+| POST | `/api/user/account/password` | 修改账号密码并轮换会话 |
+| POST | `/api/user/redeem` | 兑换卡密给当前用户充值 |
+| GET | `/api/user/me` | 当前用户与套餐信息（支持 token 或账号会话） |
 | GET | `/api/user/logs` | 我的调用记录（分页） |
 | POST | `/api/user/reset-token` | 重置我的令牌 |
 | PUT | `/api/user/profile` | 修改备注等资料 |
 | GET | `/user` | 用户中心页面 |
+
+账号登录使用服务端会话 cookie `nfentik_session`，写操作需在请求头携带 `X-CSRF-Token`（值与 `nfentik_csrf` cookie 一致）。`/query` 仍只使用 token 鉴权；同时携带 Bearer token 时以 token 身份为准。
 
 ## 管理接口
 
@@ -87,6 +96,8 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | — | `/api/admin/mogo` | MOGO 多源题库导入（源管理、计划、限速、运行进度） |
 | GET | `/api/admin/stats` | 概览统计（含数据库结构版本） |
 | — | `/api/admin/users` | 用户增删改查、续费、重置令牌 |
+| — | `/api/admin/accounts` | 账号列表、重置密码、启停、解绑/绑定、撤销会话 |
+| — | `/api/admin/redeem` | 卡密批次创建、列表与作废 |
 | GET | `/console` | 管理控制台页面 |
 
 ### 第三方题库配置
@@ -139,7 +150,8 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | POST | `/api/admin/mogo/sources/{id}/run` | 立即运行某个源 |
 | POST | `/api/admin/mogo/stop` | 停止当前导入任务 |
 | GET | `/api/admin/mogo/status` | 当前任务进度 |
-| POST | `/api/admin/mogo/test` | 测试某个源连通性 |
+| POST | `/api/admin/mogo/test` | 测试某个 HTTP 源的连通性 |
+| POST | `/api/admin/mogo/db-test` | 测试数据库源并返回可映射的列名 |
 
 源配置字段（`sources` 数组元素）：
 
@@ -147,7 +159,9 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 {
   "id": "mogo-1",
   "name": "MOGO 主库",
+  "type": "http",
   "enabled": true,
+  "overwrite": false,
   "baseUrl": "http://<mogo-host>:9988",
   "aKey": "<aKey>",
   "item": 50,
@@ -156,14 +170,18 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
   "throttle": { "pageDelayMs": 1500, "rowDelayMs": 0, "maxPerRun": 0 },
   "maxId": 0,
   "lastRun": "",
-  "lastImported": 0
+  "lastImported": 0,
+  "lastUpdated": 0
 }
 ```
 
+- `type`：`http`（默认）或 `database`。数据库源使用 `database` 对象（`host/port/user/password/database/table/batchSize/columns`），并用 `throttle.rowsPerSecond` 控制每秒读取行数、`batchDelayMs` 控制批间延迟。
 - `mode`：`incremental`（仅导入比游标更新的数据，首次等价回填）或 `backfill`。
 - `schedule.type`：`manual`（仅手动）/ `interval`（每 `everyMinutes` 分钟）/ `daily`（每天 `atTime` 时刻）。调度由服务端每 30 秒检查一次，同一时刻只运行一个任务。
-- `throttle`：`pageDelayMs` 每页间隔、`rowDelayMs` 每行间隔、`maxPerRun` 单次上限（0 不限），用于控制对 MOGO 的压力。
-- 导入采用 MOGO 递增 id 作游标、按 id 倒序拉取并去重写入，来源标记 `import:mogo`；`maxId`/`lastRun`/`lastImported` 为持久化的运行游标。
+- `throttle`：`pageDelayMs` 每页间隔、`rowDelayMs` 每行间隔、`rowsPerSecond` 数据库源每秒行数、`batchDelayMs` 数据库源批间延迟、`maxPerRun` 单次上限（0 不限）。
+- `overwrite`：默认 `false`，命中同题同选项时跳过并保留已有答案；设为 `true` 时用导入答案覆盖已有答案，来源改为 `import:mogo-db`、清除 AI 与待修正标记，题目与选项文本保持不变。
+- HTTP 源按 id 倒序拉取并去重写入，来源标记 `import:mogo`；数据库源按主键游标升序读取，来源标记 `import:mogo-db`。`maxId`/`lastRun`/`lastImported`/`lastUpdated` 为持久化的运行游标与计数。
+- `GET /api/admin/mogo/status` 的 `state` 包含 `imported/updated/skipped/scanned/currentId/total` 等进度字段。
 
 ## 客户端集成契约
 

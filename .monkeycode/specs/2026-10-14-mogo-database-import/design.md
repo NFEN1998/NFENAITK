@@ -7,6 +7,8 @@ Updated: 2026-10-14
 
 在现有 MOGO 导入能力上增加「数据库源」类型：管理员配置一条到 MOGO 主机 MySQL/MariaDB 的只读连接，nfentik-go 按主键游标升序分批 `SELECT` 题目表并写入本地题库。数据库源与 HTTP 源在同一控制台列表管理，复用导入任务的互斥、调度、进度、游标持久化与缓存失效，并新增以「每秒行数」为主的读取限速。
 
+导入默认只跳过已存在的同题同选项行。数据库源提供显式的 `overwrite` 开关：开启后用导入答案替换 AI、第三方或人工修正过的旧答案，默认关闭以保护已有数据。
+
 设计动机：HTTP 接口在数据量大或 MOGO 繁忙时返回 `502/503/504`，而数据库直连可用主键范围扫描稳定地按限速读取。
 
 ## 已确认决策
@@ -14,6 +16,9 @@ Updated: 2026-10-14
 - 数据库导入写入本地题库的 `Source` 标记为 `import:mogo-db`，与 HTTP 导入的 `import:mogo` 区分。
 - 增量游标复用现有 `maxId` 字段；数据库源按 `id` 升序从 `maxId` 续采（主键范围扫描，续采不重复）。
 - 新建数据库源在控制台默认填入批次 500、每秒 100 行、批间延迟 0；`normalizeSource` 将批次收敛到 1–5000（`<= 0` 时置 500）、每秒行数负值收敛为 0；每秒行数 0 表示不限速。
+- 覆盖开关 `overwrite` 默认 `false`。开启后更新 `Answer`、`IsAi`、`IsPendingCorrection` 与 `Source`，导入行提供题型时一并更新 `QuestionType`；已存的 `Question` 与 `Options` 文本保持不变。
+- 进度新增 `Updated` 计数，源配置新增 `LastUpdated`，与 `Imported`、`Skipped` 分开统计。
+- `normalizeSource` 对非数据库源强制 `overwrite=false`，覆盖能力只属于数据库导入。
 
 ## Architecture
 
@@ -23,7 +28,7 @@ flowchart LR
     Scheduler["导入调度器"] --> API
     API -->|"分支: type=database"| Runner["runMogoDatabaseSource"]
     Runner --> Reader["internal/mogodb.Reader"]
-    Runner --> STORE["internal/store.ImportQuestion"]
+    Runner --> STORE["internal/store.ImportQuestionWithOverwrite"]
     Reader -->|"SELECT 主键游标"| MOGODB[("MOGO MySQL/MariaDB")]
     STORE --> LOCAL[("本地 PostgreSQL/MySQL")]
     Runner -->|"结束失效"| CACHE["查询缓存"]
@@ -118,12 +123,25 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
 - `runMogoDatabaseSource`：
   1. `mogodb.Open` → 失败即 `finish("连接数据库失败: ...")`。
   2. `Count(cursor)` 填充 `state.Total`。
-  3. 循环 `Fetch(cursor, batchSize)`；对每行做与 HTTP 路径相同的处理：`mogo.SplitQuestion` + `mogo.ParseOptions` → `store.ImportQuestion`，累加 `Imported/Skipped/Scanned/CurrentID`。
+  3. 循环 `Fetch(cursor, batchSize)`；对每行做与 HTTP 路径相同的处理：`mogo.SplitQuestion` + `mogo.ParseOptions` → `store.ImportQuestionWithOverwrite(..., src.Overwrite)`，按 `created/updated` 累加 `Imported/Updated/Skipped`，并推进 `Scanned/CurrentID`。
   4. `Limiter.Wait` 限速；每 N 批 `mogoPersistCursor`。
   5. 增量模式下因游标即边界（`id > cursor`），无需像 HTTP 那样反向遇到基线即停。
-  6. `finish` 复用：更新 `MaxID/LastRun/LastImported/LastError` 并失效缓存。
+  6. `finish` 复用：更新 `MaxID/LastRun/LastImported/LastUpdated/LastError` 并失效缓存。
 - 可测试性：`Server` 持有 `newMogoDBReader func(mogodb.Config) (mogoDBReader, error)`，默认 `mogodb.Open`；测试注入假实现。
 - 新端点 `POST /api/admin/mogo/db-test`：入参连接信息与表名，调用 `Open` + `Columns`，返回列名列表或错误；用于控制台「测试」。
+
+### 存储层覆盖写入 `internal/store/store.go`
+
+```go
+func (s *Store) ImportQuestionWithOverwrite(question, options, answer, questionType, source string, overwrite bool) (created, updated bool, err error)
+```
+
+- `overwrite=false`：沿用 `ImportQuestion` 行为，命中 `(QuestionHash, OptionsHash)` 时返回 `created=false`，不修改既有行。
+- `overwrite=true` 且命中：在同一把 `writeMu` 内执行
+  `UPDATE AIResponses SET Answer=$1, QuestionType=COALESCE($2, QuestionType), IsAi=FALSE, IsPendingCorrection=FALSE, Source=$3 WHERE Id=$4`，
+  返回 `created=false, updated=true`。导入行题型为空时保留原题型。
+- 并发写入：去重查询与插入仍在 `writeMu` 内；插入遭遇唯一索引冲突时重新解析既有行，并在 `overwrite=true` 时补做更新。
+- 覆盖不修改 `Question`、`Options`，避免改写已存题面与选项文本。
 
 ### 密码脱敏 `internal/server/import.go`
 
@@ -134,9 +152,11 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
 
 - 源编辑器新增「类型」下拉（HTTP/数据库）。
 - 通用弹窗支持条件字段 `showWhen(values) bool`，切换类型时显示对应字段：
-  - 数据库字段：主机、端口、用户名、密码、数据库名、表名、主键列、题目列、答案列、选项列、题型列、批次大小、每秒行数、批间延迟毫秒。
+  - 数据库字段：主机、端口、用户名、密码、数据库名、表名、主键列、题目列、答案列、选项列、题型列、批次大小、每秒行数、批间延迟毫秒、覆盖已有答案。
   - HTTP 字段：地址、aKey、每页条数。
-- 源列表新增「类型」列；数据库源的「测试」按钮调用 `/mogo/db-test`。
+- 「覆盖已有答案」下拉包含「跳过已存在（默认）」与「覆盖并更新」，提示文案说明开启后会覆盖 AI、第三方与人工修正的答案。
+- 源列表新增「类型」列，开启覆盖的数据库源显示为「数据库 · 覆盖」；运行记录同时显示导入数与更新数；进度面板新增「已更新（覆盖）」。
+- 数据库源的「测试」按钮调用 `/mogo/db-test`。
 
 ## Data Models
 
@@ -150,6 +170,7 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
       "name": "芒果库-直连",
       "type": "database",
       "enabled": true,
+      "overwrite": false,
       "database": {
         "host": "8.134.186.10",
         "port": 3306,
@@ -167,7 +188,7 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
       "retries": 3,
       "schedule": { "type": "manual", "everyMinutes": 60, "atTime": "03:00" },
       "maxId": 1031544,
-      "lastRun": "", "lastImported": 0, "lastError": ""
+      "lastRun": "", "lastImported": 0, "lastUpdated": 0, "lastError": ""
     }
   ]
 }
@@ -182,6 +203,9 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
 5. **限速上界**：`rowsPerSecond > 0` 时，单位时间读取行数不超过配置值（允许批次内瞬时到达，平均受约束）。
 6. **脱敏**：密码不出现在接口响应、请求日志与运行日志中。
 7. **标识符安全**：表名与列名匹配 `^[A-Za-z_][A-Za-z0-9_]*$`，否则拒绝，防止 SQL 注入。
+8. **覆盖显式**：`overwrite=false` 时既有行的 `Answer`、`Source`、`IsAi` 保持不变；只有 `overwrite=true` 才执行覆盖更新。
+9. **文本稳定**：覆盖只替换答案、题型与来源，已存的 `Question` 与 `Options` 文本保持不变。
+10. **来源可审计**：覆盖后来源统一为 `import:mogo-db`，`IsAi` 为 `false`，`IsPendingCorrection` 清零。
 
 ## Error Handling
 
@@ -192,20 +216,23 @@ func (l Limiter) Wait(ctx context.Context, rows int, started time.Time) error
 | 可重试的驱动错误（坏连接、网络中断、server gone） | 按 `retries` 次数、固定 5s 间隔重试当前 `Fetch` |
 | 重试耗尽 | `finish("读取数据失败: ...")`，保留游标 |
 | 单行写入失败 | 记录错误并继续下一行（与 HTTP 路径一致） |
+| 覆盖更新失败 | 记录 `写入题库失败: ...`，继续处理后续行，保留游标，失败行按已扫描计数 |
 | 用户停止 | 响应 `ctx.Done()`，持久化游标后结束 |
 | 空题目/空答案行 | 跳过，不计入已导入 |
 
 ## Test Strategy
 
 - **单元（`internal/mogodb`）**：DSN 组装、列/表标识符校验、SQL 组装、`Limiter` 的速率与取消行为（用极小时间片断言 sleep 区间，不依赖真实 MySQL）。
+- **存储（`internal/store`）**：`overwrite=false` 时保留既有 AI 答案与来源；`overwrite=true` 时更新答案与题型、清除 AI 标记、改写来源，并保持已存题目与选项文本不变。
 - **服务端（`internal/server`）**：用注入的假 `mogoDBReader` 驱动 `runMogoDatabaseSource`，断言：
   - 增量模式仅读取 `id > cursor` 且游标按批次推进；
   - `Imported/Skipped/Scanned` 计数正确；
   - 达到 `MaxPerRun` 时停止并保留游标；
   - 连接失败/列缺失时 `LastError` 与游标处理正确；
-  - `normalizeSource` 的类型默认、批次取值范围、限速非负；
-  - 密码脱敏与「提交占位符则保留原密码」。
-- **集成（可选，环境门控）**：`TEST_MOGO_MYSQL_DSN` 存在时对真实 MySQL/MariaDB 跑 `Open/Columns/Count/Fetch` 往返；不存在则跳过。
+  - `normalizeSource` 的类型默认、批次取值范围、限速非负、非数据库源关闭覆盖；
+  - 密码脱敏与「提交占位符则保留原密码」；
+  - 覆盖开启时既有 AI 答案被替换且计入 `Updated`，关闭时保留原答案并计入 `Skipped`。
+- **集成（可选，环境门控）**：设置 `TEST_MOGO_HOST`、`TEST_MOGO_PORT`、`TEST_MOGO_USER`、`TEST_MOGO_PASS`、`TEST_MOGO_DB`、`TEST_MOGO_TABLE` 时，对真实 MySQL/MariaDB 跑 `Open/Columns/Count/Fetch` 往返；未设置则跳过。
 - **回归**：`go test -p 1 ./...`；既有 `TestQueryGetAcceptsQAlias` 为已知失败。
 
 ## References

@@ -48,21 +48,26 @@ type mogoDatabase struct {
 // mogoSource is one configured MOGO import source plus its incremental cursor.
 // Type is "http" (default) or "database".
 type mogoSource struct {
-	ID           string       `json:"id"`
-	Name         string       `json:"name"`
-	Type         string       `json:"type"`
-	Enabled      bool         `json:"enabled"`
-	BaseURL      string       `json:"baseUrl"`
-	AKey         string       `json:"aKey"`
-	Item         int          `json:"item"`
-	Mode         string       `json:"mode"` // incremental | backfill
-	Retries      int          `json:"retries"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
+	BaseURL string `json:"baseUrl"`
+	AKey    string `json:"aKey"`
+	Item    int    `json:"item"`
+	Mode    string `json:"mode"` // incremental | backfill
+	Retries int    `json:"retries"`
+	// Overwrite replaces the answer of an already existing row for the same
+	// normalized question and options. Off by default so imports never clobber
+	// AI, third-party or manually corrected answers unless asked to.
+	Overwrite    bool         `json:"overwrite"`
 	Database     mogoDatabase `json:"database"`
 	Schedule     mogoSchedule `json:"schedule"`
 	Throttle     mogoThrottle `json:"throttle"`
 	MaxID        int64        `json:"maxId"`
 	LastRun      string       `json:"lastRun"`
 	LastImported int64        `json:"lastImported"`
+	LastUpdated  int64        `json:"lastUpdated"`
 	LastError    string       `json:"lastError"`
 }
 
@@ -89,6 +94,7 @@ type mogoImportState struct {
 	SourceName string `json:"sourceName"`
 	Mode       string `json:"mode"`
 	Imported   int64  `json:"imported"`
+	Updated    int64  `json:"updated"`
 	Skipped    int64  `json:"skipped"`
 	Scanned    int64  `json:"scanned"`
 	CurrentID  int64  `json:"currentId"`
@@ -328,6 +334,9 @@ func normalizeSource(src *mogoSource) {
 		if src.Database.BatchSize > maxDBBatchSize {
 			src.Database.BatchSize = maxDBBatchSize
 		}
+	} else {
+		// The overwrite switch only applies to the database importer.
+		src.Overwrite = false
 	}
 	src.Retries = src.retryCount()
 }
@@ -550,6 +559,7 @@ func (s *Server) mogoFinish(src mogoSource, job *mogoImportJob, errMsg string) {
 		}
 		s2.LastRun = final.FinishedAt
 		s2.LastImported = final.Imported
+		s2.LastUpdated = final.Updated
 		s2.LastError = final.Error
 	})
 	s.invalidateQueryCache()
@@ -750,7 +760,8 @@ func (s *Server) runMogoDatabaseSource(ctx context.Context, job *mogoImportJob, 
 			if len(options) == 0 {
 				options = inline
 			}
-			created, err := s.store.ImportQuestion(stem, strings.Join(options, "\n"), row.Answer, row.QuestionType, "import:mogo-db")
+			created, updated, err := s.store.ImportQuestionWithOverwrite(
+				stem, strings.Join(options, "\n"), row.Answer, row.QuestionType, "import:mogo-db", src.Overwrite)
 
 			s.importMu.Lock()
 			if err != nil {
@@ -759,13 +770,15 @@ func (s *Server) runMogoDatabaseSource(ctx context.Context, job *mogoImportJob, 
 				}
 			} else if created {
 				job.state.Imported++
+			} else if updated {
+				job.state.Updated++
 			} else {
 				job.state.Skipped++
 			}
 			if row.ID > job.state.MaxID {
 				job.state.MaxID = row.ID
 			}
-			done := job.state.Imported + job.state.Skipped
+			done := job.state.Imported + job.state.Updated + job.state.Skipped
 			s.importMu.Unlock()
 
 			if src.Throttle.MaxPerRun > 0 && done >= int64(src.Throttle.MaxPerRun) {

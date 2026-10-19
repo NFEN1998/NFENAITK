@@ -21,6 +21,7 @@
 - **Batch（批次）**：一次从数据库读取的行集合，批次大小可配置。
 - **Column Mapping（列映射）**：把 MOGO 题目表的列映射为本地字段（主键、题目、答案、选项、题型），默认值为 `id/question/answer/opt/questionType`。
 - **Read-only Connection（只读连接）**：对 MOGO 数据库仅执行 `SELECT`，不写入、不修改任何数据。
+- **Overwrite（覆盖已有答案）**：数据库源的可选开关；开启后，导入行会替换同题同选项已有行的答案与来源。
 - **AppSettings**：数据库中的系统设置表，MOGO 源配置以 JSON 形式持久化于其中。
 - **Admin**：持有 `adminToken` 的管理员。
 
@@ -96,6 +97,20 @@
 4. THE System SHALL 在日志中不输出数据库源密码明文。
 5. WHEN 数据库源配置的列映射指向不存在的列, THE System SHALL 结束本次运行并返回包含缺失列名的错误信息。
 
+### Requirement 6：覆盖已有答案（显式开关）
+
+**User Story:** AS 管理员, I want 在需要时让数据库导入覆盖已有答案, so that 权威题库可以替换 AI 或第三方写入的旧答案。
+
+#### Acceptance Criteria
+
+1. THE System SHALL 为每个数据库源持久化布尔字段 `overwrite`，默认值为 `false`。
+2. WHILE `overwrite` 为 `false`, THE System SHALL 对已存在的同题同选项行跳过写入并保留该行的答案与来源。
+3. WHEN `overwrite` 为 `true` 且同题同选项行已存在, THE System SHALL 用导入行的答案替换该行，并在导入行提供题型时替换题型，清除待修正标记，将 `IsAi` 置为 `false`，并把来源改为 `import:mogo-db`。
+4. WHEN `overwrite` 为 `true` 且同题同选项行已存在, THE System SHALL 保持该行已存的题目文本与选项文本不变。
+5. WHILE 数据库源运行中, THE System SHALL 在进度中分别统计已导入、已更新、已跳过与已扫描的行数。
+6. WHEN 数据库源运行结束, THE System SHALL 持久化本次已更新行数。
+7. WHEN 源类型为 `http`, THE System SHALL 将 `overwrite` 置为 `false`。
+
 ## 已确认决策
 
 1. MOGO 数据库为 MySQL/MariaDB，可提供只读账号，且从 nfentik-go 服务器可直连。
@@ -104,3 +119,4 @@
 4. 数据库导入写入本地题库的来源标记为 `import:mogo-db`，与 HTTP 导入区分。
 5. 增量游标复用现有 `maxId` 字段，按主键升序续采。
 6. 新建数据库源默认每秒 100 行、批次 500；批间延迟默认 0，每秒行数设为 0 表示不限速。
+7. 覆盖开关默认关闭；开启后替换答案与来源，导入行提供题型时一并替换，题目与选项文本保持不变。长期开启会覆盖后台人工修正的同题答案，建议全量重建时临时开启。

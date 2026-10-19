@@ -307,6 +307,15 @@ func (s *Store) DeleteUser(id int64) error {
 	if _, err := s.exec(`DELETE FROM UserRequestLogs WHERE UserId = $1`, id); err != nil {
 		return err
 	}
+	// The account is a credential for this user; remove it and its sessions so
+	// no orphaned login can remain after the user row is gone.
+	if _, err := s.exec(`DELETE FROM AccountSessions WHERE AccountId IN
+		(SELECT Id FROM Accounts WHERE UserId = $1)`, id); err != nil {
+		return err
+	}
+	if _, err := s.exec(`DELETE FROM Accounts WHERE UserId = $1`, id); err != nil {
+		return err
+	}
 	_, err := s.exec(`DELETE FROM Users WHERE Id = $1`, id)
 	return err
 }

@@ -20,14 +20,58 @@
         </div>
       </div>
       <h2>欢迎</h2>
-      <p class="login-hint">请输入管理员分配给你的用户令牌</p>
-      <label class="login-label" for="user-token">用户令牌</label>
-      <div class="login-field">
-        <input id="user-token" type="password" placeholder="请输入用户令牌" autocomplete="off">
-        <button type="button" id="user-token-toggle" class="login-eye">显示</button>
+      <div class="login-tabs">
+        <button type="button" class="login-tab active" data-login-tab="token">令牌登录</button>
+        <button type="button" class="login-tab" data-login-tab="account">账号登录</button>
+        <button type="button" class="login-tab" data-login-tab="register">注册</button>
       </div>
-      <button id="user-login-btn" class="btn primary full login-submit">进入用户中心</button>
-      <p id="user-login-error" class="error login-error"></p>
+
+      <div id="login-panel-token" class="login-panel">
+        <p class="login-hint">请输入管理员分配给你的用户令牌</p>
+        <label class="login-label" for="user-token">用户令牌</label>
+        <div class="login-field">
+          <input id="user-token" type="password" placeholder="请输入用户令牌" autocomplete="off">
+          <button type="button" id="user-token-toggle" class="login-eye">显示</button>
+        </div>
+        <button id="user-login-btn" class="btn primary full login-submit">进入用户中心</button>
+        <p id="user-login-error" class="error login-error"></p>
+      </div>
+
+      <div id="login-panel-account" class="login-panel hidden">
+        <p class="login-hint">使用用户名和密码登录用户中心</p>
+        <label class="login-label" for="account-username">用户名</label>
+        <div class="login-field">
+          <input id="account-username" type="text" placeholder="请输入用户名" autocomplete="username">
+        </div>
+        <label class="login-label" for="account-password">密码</label>
+        <div class="login-field">
+          <input id="account-password" type="password" placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <button id="account-login-btn" class="btn primary full login-submit">账号登录</button>
+        <p id="account-login-error" class="error login-error"></p>
+      </div>
+
+      <div id="login-panel-register" class="login-panel hidden">
+        <p class="login-hint">注册后自动生成零额度令牌，兑换卡密后即可查询</p>
+        <label class="login-label" for="register-username">用户名</label>
+        <div class="login-field">
+          <input id="register-username" type="text" placeholder="字母开头，3-32 位" autocomplete="username">
+        </div>
+        <label class="login-label" for="register-password">密码</label>
+        <div class="login-field">
+          <input id="register-password" type="password" placeholder="至少 8 位" autocomplete="new-password">
+        </div>
+        <label class="login-label" for="register-password2">确认密码</label>
+        <div class="login-field">
+          <input id="register-password2" type="password" placeholder="再次输入密码" autocomplete="new-password">
+        </div>
+        <label class="login-label" for="register-token">已有令牌（可选）</label>
+        <div class="login-field">
+          <input id="register-token" type="password" placeholder="填写后绑定已有令牌" autocomplete="off">
+        </div>
+        <button id="register-btn" class="btn primary full login-submit">注册并登录</button>
+        <p id="register-error" class="error login-error"></p>
+      </div>
     </div>
   </div>
 
@@ -78,6 +122,61 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
+          <h2>账号</h2>
+          <span id="account-status-pill" class="pill">-</span>
+        </div>
+        <p id="account-hint" class="muted small"></p>
+        <div class="grid-2">
+          <div class="kv"><span>用户名</span><strong id="account-username-view">-</strong></div>
+          <div class="kv"><span>绑定令牌</span><strong id="account-token-view" class="mono">-</strong></div>
+        </div>
+        <div id="account-bind-wrap" class="hidden">
+          <div class="field">
+            <label for="bind-username">用户名</label>
+            <input id="bind-username" type="text" placeholder="字母开头，3-32 位" autocomplete="username">
+          </div>
+          <div class="field">
+            <label for="bind-password">密码</label>
+            <input id="bind-password" type="password" placeholder="至少 8 位" autocomplete="new-password">
+          </div>
+          <button id="bind-btn" class="btn primary small">绑定账号</button>
+          <p id="bind-error" class="error"></p>
+        </div>
+        <div id="account-actions" class="hidden">
+          <div class="toolbar">
+            <button id="account-token-copy" class="btn ghost small">复制令牌</button>
+            <button id="password-btn" class="btn ghost small">修改密码</button>
+            <button id="account-logout-btn" class="btn ghost small">退出账号</button>
+          </div>
+          <div id="password-wrap" class="hidden">
+            <div class="field">
+              <label for="old-password">原密码</label>
+              <input id="old-password" type="password" autocomplete="current-password">
+            </div>
+            <div class="field">
+              <label for="new-password">新密码</label>
+              <input id="new-password" type="password" autocomplete="new-password">
+            </div>
+            <button id="password-save" class="btn primary small">保存新密码</button>
+            <p id="password-error" class="error"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
+          <h2>卡密充值</h2>
+        </div>
+        <p class="muted small">输入卡密为当前令牌充值；次数卡增加查询次数，时长卡顺延到期时间。</p>
+        <div class="url-row">
+          <input id="redeem-code" class="mono" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false">
+          <button id="redeem-btn" class="btn primary small">兑换</button>
+        </div>
+        <p id="redeem-error" class="error"></p>
       </section>
 
       <section class="card">

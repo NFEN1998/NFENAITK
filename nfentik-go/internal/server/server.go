@@ -42,6 +42,8 @@ type Server struct {
 	pendingMu sync.Mutex
 	pending   map[string]*pendingCall
 
+	limiter *rateLimiter
+
 	importMu   sync.Mutex
 	importOnce sync.Once
 	importJob  *mogoImportJob
@@ -129,6 +131,7 @@ func New(deps Deps) (*Server, error) {
 		webFS:       deps.WebFS,
 		storageInfo: deps.StorageInfo,
 		pending:     make(map[string]*pendingCall),
+		limiter:     newRateLimiter(),
 		maxLogs:     1000,
 		newMogoDBReader: func(cfg mogodb.Config) (mogoDBReader, error) {
 			return mogodb.Open(cfg)
@@ -185,7 +188,7 @@ func (s *Server) ConsoleHandler() http.HandlerFunc { return s.handleConsole }
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

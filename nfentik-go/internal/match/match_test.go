@@ -29,6 +29,23 @@ func TestNormalizeQuestion(t *testing.T) {
 	}
 }
 
+// TestQuestionHashDistinguishesURLs guards the image-question case: the
+// normalized text is identical because URLs are replaced with a placeholder,
+// but different images must not share a bank row or answer each other.
+func TestQuestionHashDistinguishesURLs(t *testing.T) {
+	a := "请看图片 https://example.com/a.jpg"
+	b := "请看图片 https://example.com/b.jpg"
+	if NormalizeQuestion(a) != NormalizeQuestion(b) {
+		t.Fatalf("test setup: normalized text should be equal")
+	}
+	if QuestionHash(a) == QuestionHash(b) {
+		t.Fatalf("different image URLs produced the same QuestionHash")
+	}
+	if QuestionHash(a) != QuestionHash(a) {
+		t.Fatalf("QuestionHash is not stable")
+	}
+}
+
 func TestScoreRejectsDifferentOperators(t *testing.T) {
 	// Numeric expressions with different operators must not fuzzy-match.
 	for _, c := range [][2]string{

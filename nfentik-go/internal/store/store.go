@@ -308,8 +308,9 @@ func (s *Store) queryByHash(title string, queryOptions *string, scorer func(q, c
 		if err := rows.Scan(&id, &question, &dbOptions, &answer, &isAI, &isPending); err != nil {
 			return nil, err
 		}
-		// When the query carries URLs, require an identical URL set.
-		if len(extractURLs(title)) > 0 && !equalStringSlices(extractURLs(title), extractURLs(question)) {
+		// Text and image questions are distinct entries: their URL sets must
+		// match exactly, including the empty set for text-only questions.
+		if !equalStringSlices(extractURLs(title), extractURLs(question)) {
 			continue
 		}
 		// The normalized questions are identical here, so the title score is
@@ -411,7 +412,7 @@ func scoreCandidates(title string, queryOptions *string, requireOption bool, can
 	}
 	results := make([]scored, 0, len(candidates))
 	for _, c := range candidates {
-		if len(extractURLs(title)) > 0 && !equalStringSlices(extractURLs(title), extractURLs(c.question)) {
+		if !equalStringSlices(extractURLs(title), extractURLs(c.question)) {
 			continue
 		}
 		titleScore, ok := scorer(title, c.question)
@@ -482,6 +483,11 @@ func (s *Store) FindByNormalizedQuestion(title string, options *string) (*QueryH
 			return nil, nil
 		}
 		return nil, err
+	}
+	// Defensive check: the hash already includes the URL set, but a stale row
+	// from an older normalizer must never answer a different image question.
+	if !equalStringSlices(extractURLs(title), extractURLs(question)) {
+		return nil, nil
 	}
 	return &QueryHit{
 		ID:                  id,
@@ -628,7 +634,7 @@ func (s *Store) AddQuestion(question string, options *string, answerStr, questio
 	if isAI && strings.TrimSpace(answer) == "" {
 		return Question{}, errors.New("AI处理结果答案为空，不保存题目")
 	}
-	id, created, err := s.storeBankRow(question, answer, options, questionType, isAI, "")
+	id, created, _, err := s.storeBankRow(question, answer, options, questionType, isAI, "", false)
 	if err != nil {
 		return Question{}, err
 	}
@@ -661,7 +667,7 @@ func (s *Store) insertBankResponse(question, answer string, options, questionTyp
 	if strings.TrimSpace(answer) == "" {
 		return 0, errors.New("AI处理结果答案为空，不保存题目")
 	}
-	id, created, err := s.storeBankRow(question, answer, options, questionType, isAI, source)
+	id, created, _, err := s.storeBankRow(question, answer, options, questionType, isAI, source, false)
 	if err != nil {
 		return 0, err
 	}
@@ -676,10 +682,21 @@ func (s *Store) insertBankResponse(question, answer string, options, questionTyp
 // and options already exists. It does not invalidate the query cache per row;
 // the caller does that once when a bulk import finishes.
 func (s *Store) ImportQuestion(question, options, answer, questionType, source string) (bool, error) {
+	created, _, err := s.ImportQuestionWithOverwrite(question, options, answer, questionType, source, false)
+	return created, err
+}
+
+// ImportQuestionWithOverwrite is ImportQuestion with an explicit overwrite
+// switch. When overwrite is true and a row already exists for the same
+// normalized question and options, its answer, AI flag and source are replaced
+// and a non-empty imported question type replaces the stored one. The stored
+// question and options text stay untouched. The updated return reports whether
+// an existing row was changed.
+func (s *Store) ImportQuestionWithOverwrite(question, options, answer, questionType, source string, overwrite bool) (created, updated bool, err error) {
 	question = strings.TrimSpace(question)
 	answer = strings.TrimSpace(answer)
 	if question == "" || answer == "" {
-		return false, nil
+		return false, false, nil
 	}
 	var opts *string
 	if strings.TrimSpace(options) != "" {
@@ -689,8 +706,8 @@ func (s *Store) ImportQuestion(question, options, answer, questionType, source s
 	if strings.TrimSpace(questionType) != "" {
 		qtype = &questionType
 	}
-	_, created, err := s.storeBankRow(question, answer, opts, qtype, false, source)
-	return created, err
+	_, created, updated, err = s.storeBankRow(question, answer, opts, qtype, false, source, overwrite)
+	return created, updated, err
 }
 
 // storeBankRow inserts one bank row and reports its id and whether it was newly
@@ -698,7 +715,7 @@ func (s *Store) ImportQuestion(question, options, answer, questionType, source s
 // writers (an import and a query write-back) cannot both insert the same
 // question. When the unique index is present the insert also uses ON CONFLICT
 // DO NOTHING, which keeps it safe across processes.
-func (s *Store) storeBankRow(question, answer string, options, questionType *string, isAI bool, source string) (int64, bool, error) {
+func (s *Store) storeBankRow(question, answer string, options, questionType *string, isAI bool, source string, overwrite bool) (int64, bool, bool, error) {
 	questionHash := match.QuestionHash(question)
 	optionsHash := match.OptionsHash(options)
 
@@ -706,9 +723,13 @@ func (s *Store) storeBankRow(question, answer string, options, questionType *str
 	defer s.writeMu.Unlock()
 
 	if existing, err := s.idByLookup(questionHash, optionsHash); err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	} else if existing != 0 {
-		return existing, false, nil
+		if !overwrite {
+			return existing, false, false, nil
+		}
+		updated, err := s.overwriteImportedRow(existing, answer, questionType, source)
+		return existing, false, updated, err
 	}
 
 	from := ""
@@ -738,32 +759,52 @@ func (s *Store) storeBankRow(question, answer string, options, questionType *str
 	if s.dialect.isPostgres() {
 		if err := s.queryRow(insertSQL+` RETURNING Id`, args...).Scan(&id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return s.existingBankRow(questionHash, optionsHash)
+				return s.resolveOverwriteConflict(questionHash, optionsHash, answer, questionType, source, overwrite)
 			}
-			return 0, false, err
+			return 0, false, false, err
 		}
 	} else {
 		res, err := s.exec(insertSQL, args...)
 		if err != nil {
-			return 0, false, err
+			return 0, false, false, err
 		}
 		inserted, _ := res.LastInsertId()
 		if inserted == 0 {
-			return s.existingBankRow(questionHash, optionsHash)
+			return s.resolveOverwriteConflict(questionHash, optionsHash, answer, questionType, source, overwrite)
 		}
 		id = inserted
 	}
-	return id, true, nil
+	return id, true, false, nil
 }
 
-// existingBankRow re-resolves the id of a row that a concurrent writer inserted
-// first, reporting it as not newly created.
-func (s *Store) existingBankRow(questionHash, optionsHash string) (int64, bool, error) {
+// resolveOverwriteConflict handles a row another writer inserted between the
+// dedup lookup and the insert. When overwrite is set the existing row's answer
+// is replaced; otherwise the existing row is reported as skipped.
+func (s *Store) resolveOverwriteConflict(questionHash, optionsHash, answer string, questionType *string, source string, overwrite bool) (int64, bool, bool, error) {
 	id, err := s.idByLookup(questionHash, optionsHash)
-	if err != nil {
-		return 0, false, err
+	if err != nil || id == 0 || !overwrite {
+		return id, false, false, err
 	}
-	return id, false, nil
+	updated, err := s.overwriteImportedRow(id, answer, questionType, source)
+	return id, false, updated, err
+}
+
+// overwriteImportedRow replaces an existing bank row's answer with an imported
+// one. The normalized question and options already matched, so the stored
+// question and options text stay untouched. A non-empty imported question type
+// replaces the stored one; an empty type keeps the existing value.
+func (s *Store) overwriteImportedRow(id int64, answer string, questionType *string, source string) (bool, error) {
+	res, err := s.exec(`UPDATE AIResponses
+		SET Answer = $1, QuestionType = COALESCE($2, QuestionType), IsAi = FALSE, IsPendingCorrection = FALSE, Source = $3
+		WHERE Id = $4`, answer, questionType, source, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // idByLookup returns the id of the row matching the normalized question and

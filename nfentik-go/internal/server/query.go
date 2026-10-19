@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -421,11 +422,11 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 				}
 				continue
 			}
-			answer, ok := s.acceptExternal(src, req, result)
+			answer, exact, ok := s.acceptExternal(src, req, result)
 			if !ok {
 				continue
 			}
-			return s.respondExternal(req, src, answer, hasURL)
+			return s.respondExternal(req, src, answer, exact, hasURL)
 		}
 	}
 
@@ -452,20 +453,31 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 	if strings.Contains(content, "题目不完整,无法确定具体问题.") {
 		answer = ""
 	}
+	// A model that produced no usable answer must not create a bank entry or a
+	// cached result. Image questions get a link back to the original image
+	// instead of a stored placeholder answer.
 	if answer == "" {
 		if u := firstURL(req.Title); u != "" {
-			answer = "请点击链接查看图片: " + u
+			return queryResult{
+				status: http.StatusOK,
+				entry:  bankAnswer{Question: req.Title, Answer: "请点击链接查看图片: " + u},
+				source: "ai",
+			}
 		}
-	}
-	// A model that produced no usable answer must not create a bank entry or a
-	// cached result. Report the miss instead of returning an empty success.
-	if answer == "" {
 		return queryResult{status: http.StatusOK, errMsg: "AI未能给出有效答案", source: "ai"}
 	}
 	// Refusals, "unable to determine" replies and low-information placeholders
 	// are refused so they never pollute the bank.
 	if reason, bad := ai.IsUnreliableAnswer(answer); bad {
 		return queryResult{status: http.StatusOK, errMsg: "AI未能给出有效答案：" + reason, source: "ai"}
+	}
+	// Choice questions must resolve to an actual option. This rejects
+	// translations, prose and answers to a different question before they can
+	// reach the bank.
+	if validated, ok := ai.ValidateAnswer(req.Title, req.Options, req.Type, answer); ok {
+		answer = validated
+	} else {
+		return queryResult{status: http.StatusOK, errMsg: "AI未能给出有效答案", source: "ai"}
 	}
 
 	// Avoid storing a duplicate of a question that already exists in the bank,
@@ -500,7 +512,25 @@ func (s *Server) resolveQueryUncached(ctx context.Context, req QueryRequest) que
 		IsAI:                true,
 		IsPendingCorrection: false,
 	}
-	if s.cache != nil && !hasURL {
+	// A concurrent writer may have stored a different answer for the same key
+	// between the duplicate probe and the insert. Return and cache what the bank
+	// actually holds so two callers never see different answers.
+	if id > 0 {
+		if stored, err := s.store.GetQuestion(id); err == nil {
+			if slices.Equal(match.ExtractURLs(req.Title), match.ExtractURLs(stored.Question)) {
+				entry.Question = stored.Question
+				entry.Answer = stored.Answer
+				entry.IsAI = stored.IsAI
+				entry.IsPendingCorrection = stored.IsPendingCorrection
+			} else {
+				// Defensive: never let an old normalized collision answer this
+				// image or text question.
+				id = 0
+				entry.ID = 0
+			}
+		}
+	}
+	if s.cache != nil && !hasURL && id > 0 {
 		s.cache.SetQuery(req.Title, req.Options, entry, s.queryCacheTTL())
 	}
 	return queryResult{status: http.StatusOK, entry: entry, source: "ai"}
@@ -536,40 +566,74 @@ func (s *Server) lookupExternal(ctx context.Context, src externalbank.Source, re
 // unreliable answers are always discarded; the returned question is validated
 // against the query with the local matcher unless the source opts into trust
 // mode.
-func (s *Server) acceptExternal(src externalbank.Source, req QueryRequest, result externalbank.Result) (string, bool) {
+func (s *Server) acceptExternal(src externalbank.Source, req QueryRequest, result externalbank.Result) (string, bool, bool) {
 	answer := strings.TrimSpace(result.Answer)
 	if answer == "" {
-		return "", false
+		return "", false, false
 	}
 	if _, bad := ai.IsUnreliableAnswer(answer); bad {
-		return "", false
+		return "", false, false
 	}
-	if !src.Trust && strings.TrimSpace(result.Question) != "" {
-		if score, ok := match.Score(req.Title, result.Question); !ok || score < externalVerifyThreshold {
-			return "", false
+	validated, ok := ai.ValidateAnswer(req.Title, req.Options, req.Type, answer)
+	if !ok {
+		return "", false, false
+	}
+	answer = validated
+
+	question := strings.TrimSpace(result.Question)
+	if question == "" {
+		// A trusted source may omit the echoed question; accept the answer for
+		// this caller, but never write it back or cache it under the query.
+		if src.Trust {
+			return answer, false, true
 		}
+		return "", false, false
 	}
-	return answer, true
+	if !slices.Equal(match.ExtractURLs(req.Title), match.ExtractURLs(question)) {
+		// Text and image questions, or different images, are distinct entries.
+		return "", false, false
+	}
+	score, scored := match.Score(req.Title, question)
+	if !src.Trust && (!scored || score < externalVerifyThreshold) {
+		return "", false, false
+	}
+	// Only an exact question match is safe to persist under the query text.
+	exact := scored && score >= 1-1e-9
+	return answer, exact, true
 }
 
 // respondExternal writes a third-party hit back to the local bank when the
 // source asks for it, caches the result and builds the shared query result.
-func (s *Server) respondExternal(req QueryRequest, src externalbank.Source, answer string, hasURL bool) queryResult {
+// Fuzzy or unverifiable answers are returned to the current caller without
+// touching the bank or cache, so a near-match can never poison another query.
+func (s *Server) respondExternal(req QueryRequest, src externalbank.Source, answer string, exact, hasURL bool) queryResult {
 	source := "external:" + src.Name
 	entry := bankAnswer{
 		Question: req.Title,
 		Answer:   answer,
 		IsAI:     false,
 	}
-	if src.WriteBack {
+	stored := false
+	if src.WriteBack && exact {
 		id, err := s.store.InsertExternalResponse(req.Title, answer, req.Options, req.Type, source)
 		if err != nil {
 			s.PublishError("store external answer: %v", err)
-		} else {
+		} else if id > 0 {
 			entry.ID = id
+			if row, err := s.store.GetQuestion(id); err == nil {
+				if slices.Equal(match.ExtractURLs(req.Title), match.ExtractURLs(row.Question)) {
+					entry.Question = row.Question
+					entry.Answer = row.Answer
+					entry.IsAI = row.IsAI
+					entry.IsPendingCorrection = row.IsPendingCorrection
+					stored = true
+				} else {
+					entry.ID = 0
+				}
+			}
 		}
 	}
-	if s.cache != nil && !hasURL {
+	if s.cache != nil && !hasURL && exact && (!src.WriteBack || stored) {
 		ttl := s.queryCacheTTL()
 		if src.CacheTTL > 0 {
 			ttl = time.Duration(src.CacheTTL) * time.Second
@@ -729,7 +793,12 @@ func (s *Server) callTextModels(ctx context.Context, settings ai.ModelSettings, 
 				results <- baseResult{}
 				return
 			}
-			results <- baseResult{modelName: modelDisplayName(m), answer: answer, raw: content}
+			validated, ok := ai.ValidateAnswer(req.Title, req.Options, req.Type, answer)
+			if !ok {
+				results <- baseResult{}
+				return
+			}
+			results <- baseResult{modelName: modelDisplayName(m), answer: validated, raw: content}
 		}(model, platform)
 	}
 	if launched == 0 {

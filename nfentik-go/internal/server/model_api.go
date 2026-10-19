@@ -136,14 +136,18 @@ func (s *Server) handleModelCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	answer := ai.ExtractAnswer(contentBuf.String())
-	writeJSON(w, http.StatusOK, map[string]any{
+	answer, answerOK := ai.ValidateAnswer(req.Query, req.Options, req.Type, ai.ExtractAnswer(contentBuf.String()))
+	payload := map[string]any{
 		"success":           true,
 		"request_id":        req.RequestID,
 		"content":           contentBuf.String(),
 		"reasoning_content": reasoningBuf.String(),
 		"answer":            answer,
-	})
+	}
+	if !answerOK {
+		payload["message"] = "答案与题目类型或选项不匹配"
+	}
+	writeJSON(w, http.StatusOK, payload)
 	s.bus.Publish(Event{
 		Type: EventModelCallResponse, RequestID: req.RequestID, IsSuccess: true,
 		Content: contentBuf.String(), ReasoningContent: reasoningBuf.String(),
@@ -200,11 +204,15 @@ func (s *Server) handleModelStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	answer := ai.ExtractAnswer(contentBuf.String())
-	stream.send("done", map[string]any{
+	answer, answerOK := ai.ValidateAnswer(req.Query, req.Options, req.Type, ai.ExtractAnswer(contentBuf.String()))
+	done := map[string]any{
 		"request_id": req.RequestID, "content": contentBuf.String(),
 		"reasoning_content": reasoningBuf.String(), "answer": answer,
-	})
+	}
+	if !answerOK {
+		done["message"] = "答案与题目类型或选项不匹配"
+	}
+	stream.send("done", done)
 	s.bus.Publish(Event{
 		Type: EventModelCallResponse, RequestID: req.RequestID, IsSuccess: true,
 		Content: contentBuf.String(), ReasoningContent: reasoningBuf.String(),
@@ -270,6 +278,14 @@ func (s *Server) handleModelResponse(w http.ResponseWriter, r *http.Request) {
 	}
 	id := int64(0)
 	if req.Save && strings.TrimSpace(req.Answer) != "" {
+		validated, ok := ai.ValidateAnswer(req.Query, req.Options, req.Type, req.Answer)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false, "message": "答案与题目类型或选项不匹配，未保存",
+			})
+			return
+		}
+		req.Answer = validated
 		var err error
 		id, err = s.store.InsertAIResponse(req.Query, req.Answer, req.Options, req.Type)
 		if err != nil {

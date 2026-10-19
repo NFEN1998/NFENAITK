@@ -8,6 +8,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/yanyiwu/gojieba v1.4.7
+	golang.org/x/crypto v0.31.0
 )
 
 require (
