@@ -99,7 +99,11 @@ func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		views = append(views, userView{User: u, Status: userUsable(&u)})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": views, "plans": plan.Plans})
+	plans, err := s.store.ListPlansWithUsage()
+	if err != nil {
+		plans = nil
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": views, "plans": plans})
 }
 
 type userPlanRequest struct {
@@ -120,27 +124,37 @@ func (s *Server) buildPlan(req userPlanRequest) (plan.Plan, *string, *int64, *in
 	if code == "" {
 		return plan.Plan{}, nil, nil, nil, errors.New("请选择套餐")
 	}
-	p, ok := plan.Lookup(code)
-	if !ok {
+	p, err := s.store.GetPlan(code)
+	if err != nil {
 		return plan.Plan{}, nil, nil, nil, errors.New("套餐无效")
+	}
+	if !p.Enabled {
+		return plan.Plan{}, nil, nil, nil, errors.New("套餐已停用")
 	}
 	now := time.Now()
 	var expireAt *string
 	var total, remain *int64
 	switch p.Kind {
 	case plan.KindCount:
-		if req.TotalCount <= 0 {
+		count := p.QuotaCount
+		if p.Custom {
+			count = req.TotalCount
+		}
+		if count <= 0 {
 			return plan.Plan{}, nil, nil, nil, errors.New("总次数必须大于 0")
 		}
-		t := req.TotalCount
-		total = &t
-		r := req.TotalCount
+		total = &count
+		r := count
 		remain = &r
+		expiryDays := 0
 		if req.EnforceExpiry {
-			if req.ExpiryDays <= 0 {
-				return plan.Plan{}, nil, nil, nil, errors.New("有效期天数必须大于 0")
-			}
-			v := now.AddDate(0, 0, req.ExpiryDays).Format("2006-01-02 15:04:05")
+			expiryDays = req.ExpiryDays
+		}
+		if expiryDays == 0 {
+			expiryDays = p.ExpiryDays
+		}
+		if expiryDays > 0 {
+			v := now.AddDate(0, 0, expiryDays).Format("2006-01-02 15:04:05")
 			expireAt = &v
 		}
 	default:
@@ -260,7 +274,7 @@ func (s *Server) adminRenewUser(w http.ResponseWriter, r *http.Request, id int64
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	p, _, _, _, err := s.buildPlan(req)
+	p, _, total, _, err := s.buildPlan(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -274,7 +288,16 @@ func (s *Server) adminRenewUser(w http.ResponseWriter, r *http.Request, id int64
 	if before.PlanCode != p.Code {
 		action = "switch_plan"
 	}
-	u, err := s.store.RenewUser(id, p, req.Days, req.TotalCount, req.EnforceExpiry, req.ExpiryDays)
+	totalCount := req.TotalCount
+	if total != nil {
+		totalCount = *total
+	}
+	expiryDays := req.ExpiryDays
+	if expiryDays == 0 {
+		expiryDays = p.ExpiryDays
+	}
+	enforceExpiry := req.EnforceExpiry || p.ExpiryDays > 0
+	u, err := s.store.RenewUser(id, p, req.Days, totalCount, enforceExpiry, expiryDays)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 		return

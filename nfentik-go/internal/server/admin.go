@@ -29,6 +29,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	switch parts[0] {
 	case "settings":
 		s.adminSettings(w, r)
+	case "plans":
+		s.adminPlans(w, r, parts[1:])
 	case "questions":
 		s.adminQuestions(w, r, parts[1:])
 	case "logs":
@@ -61,6 +63,23 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 			return
+		}
+		var patch map[string]any
+		if json.Unmarshal(body, &patch) == nil {
+			if raw, ok := patch["defaultPlanCode"].(string); ok {
+				code := strings.TrimSpace(raw)
+				if code != "" {
+					p, err := s.store.GetPlan(code)
+					if err != nil {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "默认套餐不存在"})
+						return
+					}
+					if !p.Enabled {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "默认套餐已停用，请选择其他套餐"})
+						return
+					}
+				}
+			}
 		}
 		updated, err := s.config.Patch(body)
 		if err != nil {

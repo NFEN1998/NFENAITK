@@ -130,6 +130,11 @@ func validateChoiceAnswer(rawOptions, answer string, multiple bool) (string, boo
 	opts := parseChoiceOptions(rawOptions)
 	parts := []string{answer}
 	if multiple {
+		// A comma or semicolon may be part of a single option (for example
+		// "red, blue"), so prefer an exact option match before splitting.
+		if value, ok := matchOneOption(opts, answer); ok {
+			return value, true
+		}
 		parts = splitMultiAnswer(answer)
 		if len(parts) == 0 {
 			return "", false

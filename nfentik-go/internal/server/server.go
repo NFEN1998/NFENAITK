@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	// ---- OCS integration endpoints (no auth, consumed by the browser userscript) ----
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/query", s.handleQuery)
+	mux.HandleFunc("/nfentk", s.handleNfentk)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/time", s.handleTime)
 	mux.HandleFunc("/api/echo", s.handleEcho)

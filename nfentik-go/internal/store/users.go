@@ -15,20 +15,21 @@ import (
 // User is an end user that authenticates with a usertoken. The token is the
 // only identity: there is no separate display name.
 type User struct {
-	ID          int64   `json:"id"`
-	Token       string  `json:"token"`
-	PlanType    string  `json:"plan_type"`  // duration | count
-	PlanCode    string  `json:"plan_code"`  // monthly|quarterly|half_year|yearly|unlimited|duration_custom|count
-	PlanLabel   string  `json:"plan_label"` // human readable plan name
-	StartAt     string  `json:"start_at"`
-	ExpireAt    *string `json:"expire_at"`    // nil = no expiry
-	TotalCount  *int64  `json:"total_count"`  // count plans only
-	UsedCount   int64   `json:"used_count"`   // count plans only
-	RemainCount *int64  `json:"remain_count"` // count plans only
-	Note        string  `json:"note"`
-	Enabled     bool    `json:"enabled"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID           int64         `json:"id"`
+	Token        string        `json:"token"`
+	PlanType     string        `json:"plan_type"`  // duration | count
+	PlanCode     string        `json:"plan_code"`  // monthly|quarterly|half_year|yearly|unlimited|duration_custom|count
+	PlanLabel    string        `json:"plan_label"` // human readable plan name
+	StartAt      string        `json:"start_at"`
+	ExpireAt     *string       `json:"expire_at"`    // nil = no expiry
+	TotalCount   *int64        `json:"total_count"`  // count plans only
+	UsedCount    int64         `json:"used_count"`   // count plans only
+	RemainCount  *int64        `json:"remain_count"` // count plans only
+	Note         string        `json:"note"`
+	Enabled      bool          `json:"enabled"`
+	CreatedAt    string        `json:"created_at"`
+	UpdatedAt    string        `json:"updated_at"`
+	Entitlements []Entitlement `json:"entitlements,omitempty"`
 }
 
 // UserRequestLog is one persisted query performed by a user.
@@ -147,20 +148,29 @@ func (s *Store) CreateUser(u User) (User, error) {
 	if len([]rune(u.Note)) > 200 {
 		return User{}, errors.New("备注过长")
 	}
-	id, token, err := s.insertUser(u)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	id, _, err := s.insertUserTx(tx, u)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return User{}, ErrUserExists
 		}
 		return User{}, err
 	}
-	u.ID = id
-	u.Token = token
+	if err := s.insertEntitlementFromUserTx(tx, id, u); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
 	return s.GetUserByID(id)
 }
 
-// insertUser writes a single user row and returns its id and token.
-func (s *Store) insertUser(u User) (int64, string, error) {
+// insertUserTx writes a single user row and returns its id and token.
+func (s *Store) insertUserTx(tx *sql.Tx, u User) (int64, string, error) {
 	token := strings.TrimSpace(u.Token)
 	if token == "" {
 		var err error
@@ -173,7 +183,7 @@ func (s *Store) insertUser(u User) (int64, string, error) {
 	if startAt == "" {
 		startAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	id, err := s.insertReturningID(`INSERT INTO Users
+	id, err := s.insertReturningIDTx(tx, `INSERT INTO Users
 		(Token, PlanType, PlanCode, PlanLabel, StartAt, ExpireAt, TotalCount, UsedCount, RemainCount, Note, Enabled, CreatedAt, UpdatedAt)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
 		token, u.PlanType, u.PlanCode, u.PlanLabel, startAt,
@@ -218,6 +228,13 @@ func (s *Store) CreateUsers(template User, n int) ([]User, error) {
 		if err != nil {
 			return nil, err
 		}
+		u := template
+		u.ID = id
+		u.Token = token
+		u.StartAt = startAt
+		if err := s.insertEntitlementFromUserTx(tx, id, u); err != nil {
+			return nil, err
+		}
 		created = append(created, User{
 			ID: id, Token: token, PlanType: template.PlanType, PlanCode: template.PlanCode,
 			PlanLabel: template.PlanLabel, StartAt: startAt, ExpireAt: template.ExpireAt,
@@ -245,6 +262,9 @@ func (s *Store) GetUserByToken(token string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.attachEntitlements(&u); err != nil {
+		return nil, err
+	}
 	return &u, nil
 }
 
@@ -255,7 +275,13 @@ func (s *Store) GetUserByID(id int64) (User, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
-	return u, err
+	if err != nil {
+		return User{}, err
+	}
+	if err := s.attachEntitlements(&u); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 // ListUsers returns all users ordered by id.
@@ -273,7 +299,13 @@ func (s *Store) ListUsers() ([]User, error) {
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachEntitlementsToUsers(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // UpdateUser patches the mutable profile fields.
@@ -307,6 +339,9 @@ func (s *Store) DeleteUser(id int64) error {
 	if _, err := s.exec(`DELETE FROM UserRequestLogs WHERE UserId = $1`, id); err != nil {
 		return err
 	}
+	if _, err := s.exec(`DELETE FROM UserEntitlements WHERE UserId = $1`, id); err != nil {
+		return err
+	}
 	// The account is a credential for this user; remove it and its sessions so
 	// no orphaned login can remain after the user row is gone.
 	if _, err := s.exec(`DELETE FROM AccountSessions WHERE AccountId IN
@@ -336,10 +371,21 @@ func (s *Store) ResetUserToken(id int64) (string, error) {
 	return token, nil
 }
 
-// ConsumeQuota decrements the remaining count for count plans. It returns true
-// when a decrement happened, false when the user has no count quota or is out.
+// ConsumeQuota decrements the remaining count for count plans. It updates the
+// entitlement when one exists and keeps the legacy Users projection in sync.
 func (s *Store) ConsumeQuota(id int64) (bool, error) {
-	res, err := s.exec(`UPDATE Users
+	res, err := s.exec(`UPDATE UserEntitlements
+		SET RemainCount = RemainCount - 1, UsedCount = UsedCount + 1, UpdatedAt = NOW()
+		WHERE UserId = $1 AND Kind = 'count' AND RemainCount IS NOT NULL AND RemainCount > 0`, id)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, s.syncPrimaryPlan(id)
+	}
+	// Users created before entitlements (or without a plan) keep the legacy
+	// path for compatibility.
+	res, err = s.exec(`UPDATE Users
 		SET RemainCount = RemainCount - 1, UsedCount = UsedCount + 1, UpdatedAt = NOW()
 		WHERE Id = $1 AND RemainCount IS NOT NULL AND RemainCount > 0`, id)
 	if err != nil {
@@ -349,11 +395,18 @@ func (s *Store) ConsumeQuota(id int64) (bool, error) {
 	return n > 0, nil
 }
 
-// IncrementUsedCount bumps the used count for duration and unlimited plans,
-// which have no remaining quota to decrement. It is a no-op for count plans so
-// the two paths never double count.
+// IncrementUsedCount bumps the usage counter for duration plans.
 func (s *Store) IncrementUsedCount(id int64) error {
-	_, err := s.exec(`UPDATE Users
+	res, err := s.exec(`UPDATE UserEntitlements
+		SET UsedCount = UsedCount + 1, UpdatedAt = NOW()
+		WHERE UserId = $1 AND Kind = 'duration'`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return s.syncPrimaryPlan(id)
+	}
+	_, err = s.exec(`UPDATE Users
 		SET UsedCount = UsedCount + 1, UpdatedAt = NOW()
 		WHERE Id = $1 AND RemainCount IS NULL`, id)
 	return err
@@ -370,7 +423,18 @@ func (s *Store) SetPlan(id int64, planType, planCode, planLabel, startAt string,
 
 // AddCountTopUp adds count to a count plan, extending TotalCount as well.
 func (s *Store) AddCountTopUp(id int64, delta int64) error {
-	_, err := s.exec(`UPDATE Users
+	res, err := s.exec(`UPDATE UserEntitlements
+		SET RemainCount = COALESCE(RemainCount,0) + $1,
+		    TotalCount = COALESCE(TotalCount,0) + $1,
+		    UpdatedAt = NOW()
+		WHERE UserId = $2 AND Kind = 'count'`, delta, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return s.syncPrimaryPlan(id)
+	}
+	_, err = s.exec(`UPDATE Users
 		SET RemainCount = COALESCE(RemainCount,0) + $1,
 		    TotalCount = COALESCE(TotalCount,0) + $1,
 		    UpdatedAt = NOW()
@@ -381,107 +445,165 @@ func (s *Store) AddCountTopUp(id int64, delta int64) error {
 // ExtendExpiry moves the expiry from base by the given number of days.
 // expireAt is stored as text; callers pass an already formatted value.
 func (s *Store) SetExpiry(id int64, expireAt *string) error {
-	_, err := s.exec(`UPDATE Users SET ExpireAt = $1, UpdatedAt = NOW() WHERE Id = $2`, expireAt, id)
+	res, err := s.exec(`UPDATE UserEntitlements SET ExpireAt = $1, UpdatedAt = NOW()
+		WHERE UserId = $2 AND Kind = 'duration'`, expireAt, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return s.syncPrimaryPlan(id)
+	}
+	_, err = s.exec(`UPDATE Users SET ExpireAt = $1, UpdatedAt = NOW() WHERE Id = $2`, expireAt, id)
 	return err
 }
 
-// RenewUser applies a renewal to an existing user. Duration plans extend from
-// the current expiry (or now when already expired); count plans add the new
-// total, and an optional expiry wins when the plan carries one.
+// RenewUser adds the selected plan to the user's matching entitlement. The
+// other entitlement is preserved so duration and count balances can coexist.
 func (s *Store) RenewUser(id int64, p plan.Plan, customDays int, totalCount int64, enforceExpiry bool, expiryDays int) (User, error) {
-	u, err := s.GetUserByID(id)
+	return s.applyPlan(id, p, customDays, totalCount, enforceExpiry, expiryDays, false)
+}
+
+// SwitchPlan replaces the selected entitlement from now, preserving the other
+// kind of entitlement.
+func (s *Store) SwitchPlan(id int64, p plan.Plan, customDays int, totalCount int64, enforceExpiry bool, expiryDays int) (User, error) {
+	return s.applyPlan(id, p, customDays, totalCount, enforceExpiry, expiryDays, true)
+}
+
+func (s *Store) applyPlan(id int64, p plan.Plan, customDays int, totalCount int64, enforceExpiry bool, expiryDays int, replace bool) (User, error) {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return User{}, err
 	}
-	now := time.Now()
+	defer tx.Rollback()
+	var lockedID int64
+	if err := queryRowOn(s.dialect, tx, `SELECT Id FROM Users WHERE Id = $1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrUserNotFound
+		}
+		return User{}, err
+	}
 	switch p.Kind {
 	case plan.KindCount:
-		u.PlanType = string(plan.KindCount)
-		u.PlanCode = p.Code
-		u.PlanLabel = p.Label
-		if u.TotalCount == nil {
-			u.TotalCount = int64ptr(0)
+		amount := totalCount
+		if !p.Custom && p.QuotaCount > 0 {
+			amount = p.QuotaCount
 		}
-		if u.RemainCount == nil {
-			u.RemainCount = int64ptr(0)
+		if amount <= 0 {
+			return User{}, errors.New("总次数必须大于 0")
 		}
-		*u.TotalCount += totalCount
-		*u.RemainCount += totalCount
-		if enforceExpiry && expiryDays > 0 {
+		days := 0
+		if enforceExpiry {
+			days = expiryDays
+		}
+		if days == 0 {
+			days = p.ExpiryDays
+		}
+		if err := s.applyCountPlanTx(tx, id, p, amount, days, replace); err != nil {
+			return User{}, err
+		}
+	case plan.KindDuration:
+		days := p.Days
+		if p.Custom {
+			days = customDays
+		}
+		if !p.Unlimited && days <= 0 {
+			return User{}, errors.New("自定义天数必须大于 0")
+		}
+		if err := s.applyDurationPlanTx(tx, id, p, days, replace); err != nil {
+			return User{}, err
+		}
+	default:
+		return User{}, errors.New("套餐类型无效")
+	}
+	if err := s.syncPrimaryPlanTx(tx, id); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return s.GetUserByID(id)
+}
+
+func (s *Store) applyDurationPlanTx(tx *sql.Tx, userID int64, p plan.Plan, days int, replace bool) error {
+	ents, err := s.loadEntitlementsTx(tx, userID)
+	if err != nil {
+		return err
+	}
+	current := findEntitlement(ents, string(plan.KindDuration))
+	now := time.Now()
+	e := Entitlement{
+		UserID: userID, Kind: string(plan.KindDuration),
+		PlanCode: p.Code, PlanLabel: p.Label,
+		StartAt: now.Format("2006-01-02 15:04:05"),
+	}
+	if current != nil {
+		e.StartAt = current.StartAt
+		e.UsedCount = current.UsedCount
+	}
+	if replace {
+		e.StartAt = now.Format("2006-01-02 15:04:05")
+	}
+	if p.Unlimited {
+		e.Unlimited = true
+		e.ExpireAt = nil
+	} else {
+		base := now
+		if !replace && current != nil && current.ExpireAt != nil {
+			if t, err := parseTime(*current.ExpireAt); err == nil && t.After(now) {
+				base = t
+			}
+		}
+		exp := base.AddDate(0, 0, days).Format("2006-01-02 15:04:05")
+		e.ExpireAt = &exp
+	}
+	return s.insertEntitlementTx(tx, e)
+}
+
+func (s *Store) applyCountPlanTx(tx *sql.Tx, userID int64, p plan.Plan, amount int64, expiryDays int, replace bool) error {
+	ents, err := s.loadEntitlementsTx(tx, userID)
+	if err != nil {
+		return err
+	}
+	current := findEntitlement(ents, string(plan.KindCount))
+	now := time.Now()
+	e := Entitlement{
+		UserID: userID, Kind: string(plan.KindCount),
+		PlanCode: p.Code, PlanLabel: p.Label,
+		StartAt:    now.Format("2006-01-02 15:04:05"),
+		TotalCount: int64ptr(amount), RemainCount: int64ptr(amount),
+	}
+	if !replace && current != nil && entitlementActive(*current, now) {
+		total := amount
+		if current.TotalCount != nil {
+			total = *current.TotalCount + amount
+		}
+		remain := amount
+		if current.RemainCount != nil {
+			remain = *current.RemainCount + amount
+		}
+		e.StartAt = current.StartAt
+		e.TotalCount = int64ptr(total)
+		e.RemainCount = int64ptr(remain)
+		e.UsedCount = current.UsedCount
+		if expiryDays > 0 {
 			base := now
-			if u.ExpireAt != nil {
-				if t, err := parseTime(*u.ExpireAt); err == nil && t.After(now) {
+			if current.ExpireAt != nil {
+				if t, err := parseTime(*current.ExpireAt); err == nil && t.After(now) {
 					base = t
 				}
 			}
 			exp := base.AddDate(0, 0, expiryDays).Format("2006-01-02 15:04:05")
-			u.ExpireAt = &exp
-		}
-	default:
-		base := now
-		if u.ExpireAt != nil {
-			if t, err := parseTime(*u.ExpireAt); err == nil && t.After(now) {
-				base = t
-			}
-		}
-		exp := plan.ExpireAt(base, p, customDays)
-		u.PlanType = string(plan.KindDuration)
-		u.PlanCode = p.Code
-		u.PlanLabel = p.Label
-		u.TotalCount = nil
-		u.RemainCount = nil
-		if exp != nil {
-			v := exp.Format("2006-01-02 15:04:05")
-			u.ExpireAt = &v
+			e.ExpireAt = &exp
 		} else {
-			u.ExpireAt = nil
+			e.ExpireAt = current.ExpireAt
 		}
+		return s.insertEntitlementTx(tx, e)
 	}
-	if err := s.SetPlan(u.ID, u.PlanType, u.PlanCode, u.PlanLabel, u.StartAt,
-		u.ExpireAt, u.TotalCount, u.RemainCount, u.UsedCount); err != nil {
-		return User{}, err
+	if expiryDays > 0 {
+		exp := now.AddDate(0, 0, expiryDays).Format("2006-01-02 15:04:05")
+		e.ExpireAt = &exp
 	}
-	return s.GetUserByID(id)
-}
-
-// SwitchPlan replaces a user's plan from now, discarding any old quota.
-func (s *Store) SwitchPlan(id int64, p plan.Plan, customDays int, totalCount int64, enforceExpiry bool, expiryDays int) (User, error) {
-	now := time.Now()
-	u, err := s.GetUserByID(id)
-	if err != nil {
-		return User{}, err
-	}
-	u.StartAt = now.Format("2006-01-02 15:04:05")
-	u.PlanCode = p.Code
-	u.PlanLabel = p.Label
-	u.UsedCount = 0
-	switch p.Kind {
-	case plan.KindCount:
-		u.PlanType = string(plan.KindCount)
-		u.TotalCount = int64ptr(totalCount)
-		u.RemainCount = int64ptr(totalCount)
-		if enforceExpiry && expiryDays > 0 {
-			exp := now.AddDate(0, 0, expiryDays).Format("2006-01-02 15:04:05")
-			u.ExpireAt = &exp
-		} else {
-			u.ExpireAt = nil
-		}
-	default:
-		u.PlanType = string(plan.KindDuration)
-		u.TotalCount = nil
-		u.RemainCount = nil
-		if exp := plan.ExpireAt(now, p, customDays); exp != nil {
-			v := exp.Format("2006-01-02 15:04:05")
-			u.ExpireAt = &v
-		} else {
-			u.ExpireAt = nil
-		}
-	}
-	if err := s.SetPlan(u.ID, u.PlanType, u.PlanCode, u.PlanLabel, u.StartAt,
-		u.ExpireAt, u.TotalCount, u.RemainCount, u.UsedCount); err != nil {
-		return User{}, err
-	}
-	return s.GetUserByID(id)
+	return s.insertEntitlementTx(tx, e)
 }
 
 // ---------------------------------------------------------------------------

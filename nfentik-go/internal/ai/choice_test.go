@@ -85,3 +85,15 @@ func TestValidateJudgement(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateMultipleChoicePrefersWholeOption(t *testing.T) {
+	options := "A. red, blue\nB. green\nC. yellow"
+	got, ok := ValidateAnswer("choose colors", &options, strptr("多选题"), "red, blue")
+	if !ok || got != "red, blue" {
+		t.Fatalf("whole option = %q ok=%v", got, ok)
+	}
+	got, ok = ValidateAnswer("choose colors", &options, strptr("多选题"), "A###C")
+	if !ok || got != "red, blue###yellow" {
+		t.Fatalf("multiple answer = %q ok=%v", got, ok)
+	}
+}

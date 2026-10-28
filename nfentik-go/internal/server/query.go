@@ -33,6 +33,10 @@ type QueryRequest struct {
 	// Token is an optional usertoken carried in the body. It is cleared before
 	// the request is logged so the secret never reaches request logs.
 	Token string `json:"token"`
+	// ExtraPrompt carries MOGO-only context such as discussion bodies or
+	// matching groups. It never comes from the OCS payload and is excluded
+	// from logs.
+	ExtraPrompt string `json:"-"`
 }
 
 // queryData is one answer entry returned to OCS.
@@ -130,17 +134,16 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
 	switch r.Method {
 	case http.MethodGet:
-		q := r.URL.Query()
-		title := q.Get("title")
+		title := queryValue(r, "title")
 		if title == "" {
 			// q is accepted as an alias for title.
-			title = q.Get("q")
+			title = queryValue(r, "q")
 		}
 		req = QueryRequest{
 			Title:   title,
-			Options: optional(q.Get("options")),
-			Type:    optional(q.Get("type")),
-			Raw:     isTruthy(q.Get("raw")),
+			Options: optional(queryValue(r, "options")),
+			Type:    optional(r.URL.Query().Get("type")),
+			Raw:     isTruthy(r.URL.Query().Get("raw")),
 		}
 	case http.MethodPost:
 		if err := decodeJSON(r, &req); err != nil {
@@ -189,7 +192,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// User token authentication and quota check run before any lookup. The
 	// enforcement mode depends on the usersEnabled / requireTokenForQuery
 	// settings: when tokens are not required, anonymous queries stay allowed.
-	user, denied := s.authorizeQuery(r, bodyToken)
+	user, quotaKind, denied := s.authorizeQuery(r, bodyToken)
 	if denied != nil {
 		status := http.StatusForbidden
 		message := denied.Error()
@@ -241,14 +244,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Charge the query against the user's count quota (duration and unlimited
 	// plans are unaffected) and record the per-user usage log.
 	if user != nil {
-		consumed, err := s.store.ConsumeQuota(user.ID)
-		if err != nil {
-			s.PublishError("consume quota: %v", err)
-		} else if !consumed {
-			if err := s.store.IncrementUsedCount(user.ID); err != nil {
-				s.PublishError("increment used count: %v", err)
-			}
-		}
+		s.consumeQueryQuota(user, quotaKind)
 		answer := ""
 		if resp.Data != nil {
 			answer = resp.Data.Answer
@@ -264,10 +260,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 // request body (bodyToken), in that order. When the user system is disabled or
 // tokens are optional, a missing token is allowed (returns nil user, nil
 // error). A non-nil error denies the query.
-func (s *Server) authorizeQuery(r *http.Request, bodyToken string) (*store.User, error) {
+func (s *Server) authorizeQuery(r *http.Request, bodyToken string) (*store.User, string, error) {
 	settings := s.config.Settings()
 	if !settings.UsersEnabled {
-		return nil, nil
+		return nil, "", nil
 	}
 	var (
 		u   *store.User
@@ -280,22 +276,47 @@ func (s *Server) authorizeQuery(r *http.Request, bodyToken string) (*store.User,
 	}
 	if err != nil {
 		if errors.Is(err, ErrUserTokenMissing) && !settings.RequireTokenForQuery {
-			return nil, nil
+			return nil, "", nil
 		}
 		if errors.Is(err, ErrUserTokenMissing) {
-			return nil, err
+			return nil, "", err
 		}
-		return nil, errInvalidToken
+		return nil, "", errInvalidToken
 	}
-	switch userUsable(u) {
-	case plan.StatusExpired:
-		return u, errors.New("套餐已过期")
-	case plan.StatusExhausted:
-		return u, errors.New("次数已用尽")
-	case plan.StatusDisabled:
-		return u, errors.New("账号已停用")
+	kind, err := queryAccess(u)
+	if err != nil {
+		return u, "", err
 	}
-	return u, nil
+	return u, kind, nil
+}
+
+// consumeQueryQuota charges the balance that served the query. Duration plans
+// only bump their usage counter; count plans decrement their remaining quota.
+func (s *Server) consumeQueryQuota(u *store.User, kind string) {
+	if u == nil {
+		return
+	}
+	if len(u.Entitlements) > 0 {
+		switch kind {
+		case string(plan.KindCount):
+			if _, err := s.store.ConsumeCountEntitlement(u.ID); err != nil {
+				s.PublishError("consume count entitlement: %v", err)
+			}
+		case string(plan.KindDuration):
+			if err := s.store.RecordDurationUse(u.ID); err != nil {
+				s.PublishError("record duration use: %v", err)
+			}
+		}
+		return
+	}
+	consumed, err := s.store.ConsumeQuota(u.ID)
+	if err != nil {
+		s.PublishError("consume quota: %v", err)
+	} else if !consumed {
+		if err := s.store.IncrementUsedCount(u.ID); err != nil {
+			s.PublishError("increment used count: %v", err)
+		}
+	}
 }
 
 // recordUserQuery writes one user request log and periodically prunes the
@@ -763,7 +784,7 @@ func (s *Server) callTextModels(ctx context.Context, settings ai.ModelSettings, 
 		return "", fmt.Errorf("未配置文本模型")
 	}
 
-	prompt := ai.BuildTextPrompt(req.Title, req.Options, req.Type)
+	prompt := ai.BuildTextPromptWithContext(req.Title, req.Options, req.Type, req.ExtraPrompt)
 	appSettings := s.config.Settings()
 	timeout := time.Duration(appSettings.ModelResponseTimeout) * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)

@@ -122,28 +122,319 @@ func normalizeURLs(text string) string {
 	return urlRe.ReplaceAllString(text, "__URL__")
 }
 
-// NormalizeQuestion reduces a question to lowercase letters and digits, dropping
-// whitespace and text punctuation, so questions that differ only in formatting
-// compare as equal. Formula symbols (operators and grouping) are preserved
-// because they change the meaning of an expression: without them "3+3=" and
-// "3×3=" would collapse onto the same digest and return each other's answers.
+// NormalizeQuestion reduces a question to lowercase letters and digits,
+// dropping whitespace and text punctuation. Formula questions keep the symbols
+// that change their meaning (decimal points, ratios, factorials, roots,
+// absolute-value bars, superscripts, brackets and so on), so "1.5" and "15"
+// no longer share a digest. Equivalent operator spellings are compared
+// separately by operatorsCompatible.
 func NormalizeQuestion(text string) string {
+	runes := []rune(strings.ToLower(normalizeURLs(text)))
+	formula := looksLikeFormulaRunes(runes)
 	var b strings.Builder
-	for _, r := range strings.ToLower(normalizeURLs(text)) {
+	bracketDepth := 0
+	for i, r := range runes {
 		if r >= 0xFF01 && r <= 0xFF5E {
 			r -= 0xFEE0
 		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || isFormulaSymbol(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsMark(r) {
+			if formula {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		if isFormulaSymbol(r) {
+			b.WriteRune(r)
+			switch r {
+			case '(', '[', '{':
+				bracketDepth++
+			case ')', ']', '}':
+				if bracketDepth > 0 {
+					bracketDepth--
+				}
+			}
+			continue
+		}
+		if !formula {
+			continue
+		}
+		switch {
+		case r == '=':
+			b.WriteRune(r)
+		case r == '.' || r == ':':
+			if betweenDigits(runes, i) {
+				b.WriteRune(r)
+			}
+		case r == '!':
+			b.WriteRune(r)
+		case r == ',':
+			if bracketDepth > 0 {
+				b.WriteRune(r)
+			}
+		case r == '[' || r == '{':
+			b.WriteRune(r)
+			bracketDepth++
+		case r == ']' || r == '}':
+			b.WriteRune(r)
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case isFormulaModeSymbol(r):
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	out := b.String()
+	if formula {
+		out = trimDecorativeEquals(out)
+	}
+	return out
 }
 
 // NormalizerVersion identifies the current NormalizeQuestion algorithm. Bump it
-// whenever normalization changes so stored question digests are recomputed once
-// on the next startup (see Store.ensureQuestionHash).
-const NormalizerVersion = 3
+// whenever normalization changes so stored question and option digests are
+// recomputed once on the next startup.
+const NormalizerVersion = 4
+
+// looksLikeFormula decides whether the broader formula alphabet should be
+// preserved. Ordinary prose keeps the historical punctuation-insensitive hash.
+func looksLikeFormula(text string) bool {
+	return looksLikeFormulaRunes([]rune(strings.ToLower(normalizeURLs(text))))
+}
+
+// IsFormula reports whether text uses math-significant symbols. The store uses
+// it to widen candidate retrieval for equivalent operator spellings.
+func IsFormula(text string) bool { return looksLikeFormula(text) }
+
+// FormulaPrefix returns the leading alphanumeric run of a normalized formula.
+// It is used as a bounded candidate prefix so "1×2" can find a stored "1*2".
+func FormulaPrefix(normalized string) string {
+	runes := []rune(normalized)
+	for i, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			continue
+		}
+		if i > 0 {
+			return string(runes[:i])
+		}
+		for j := 0; j < len(runes); j++ {
+			if unicode.IsLetter(runes[j]) || unicode.IsDigit(runes[j]) {
+				return string(runes[j : j+1])
+			}
+		}
+		return ""
+	}
+	return normalized
+}
+
+func looksLikeFormulaRunes(runes []rune) bool {
+	var hasDigit, hasLetter bool
+	for _, r := range runes {
+		if unicode.IsDigit(r) {
+			hasDigit = true
+		}
+		if unicode.IsLetter(r) {
+			hasLetter = true
+		}
+	}
+	for i, r := range runes {
+		r = foldWidthRune(r)
+		if isStrongMathSymbol(r) {
+			return true
+		}
+		if unicode.Is(unicode.No, r) {
+			return true
+		}
+		switch r {
+		case '=':
+			if (hasDigit || hasLetter) && alnumBefore(runes, i) && alnumAfter(runes, i) {
+				return true
+			}
+		case '<', '>':
+			if next, ok := runeAfter(runes, i); ok && next == '=' {
+				if (hasDigit || hasLetter) && alnumBefore(runes, i) && alnumAfterEquals(runes, i) {
+					return true
+				}
+			} else if betweenAlnum(runes, i) {
+				return true
+			}
+		case '!':
+			if next, ok := runeAfter(runes, i); ok && next == '=' {
+				if alnumBefore(runes, i) && alnumAfterEquals(runes, i) {
+					return true
+				}
+			} else if prev, ok := runeBefore(runes, i); ok && unicode.IsDigit(prev) {
+				return true
+			}
+		case '.', ':':
+			if betweenDigits(runes, i) {
+				return true
+			}
+		case '+', '-', '*', '/', '^', '%':
+			if betweenDigits(runes, i) {
+				return true
+			}
+		case '−', '–', '—', '·', '⋅':
+			if betweenDigits(runes, i) {
+				return true
+			}
+		case '°', '‰':
+			if prev, ok := runeBefore(runes, i); ok && unicode.IsDigit(prev) {
+				return true
+			}
+		}
+	}
+	if (hasDigit || hasLetter) && countRune(runes, '|') >= 2 {
+		return true
+	}
+	if (hasDigit || hasLetter) && commaInsideBrackets(runes) {
+		return true
+	}
+	return false
+}
+
+func isStrongMathSymbol(r rune) bool {
+	switch r {
+	case '×', '÷', '≤', '≥', '≠', '±', '≈', '∞', '∑', '∏', '∫', '∂', '∇',
+		'√', '∠', '△', '⊥', '∥', '≌', '∽', '∈', '∉', '⊂', '⊃', '∪', '∩',
+		'∅', '→', '⇒', '⇔', '⁄':
+		return true
+	}
+	return false
+}
+
+func isFormulaModeSymbol(r rune) bool {
+	switch r {
+	case '.', ':', '!', ',', '[', ']', '{', '}', '|', '_', '\'', '′', '″',
+		'~', '∼', '°', '‰', '−', '–', '—', '·', '⋅', '⁄', '±', '≈', '∞',
+		'∑', '∏', '∫', '∂', '∇', '√', '∠', '△', '⊥', '∥', '≌', '∽', '∈',
+		'∉', '⊂', '⊃', '∪', '∩', '∅', '→', '⇒', '⇔':
+		return true
+	}
+	return unicode.Is(unicode.No, r)
+}
+
+func foldWidthRune(r rune) rune {
+	if r >= 0xFF01 && r <= 0xFF5E {
+		return r - 0xFEE0
+	}
+	return r
+}
+
+func prevNonSpace(runes []rune, i int) (rune, bool) {
+	for j := i - 1; j >= 0; j-- {
+		if !unicode.IsSpace(runes[j]) {
+			return runes[j], true
+		}
+	}
+	return 0, false
+}
+
+func nextNonSpace(runes []rune, i int) (rune, bool) {
+	for j := i + 1; j < len(runes); j++ {
+		if !unicode.IsSpace(runes[j]) {
+			return runes[j], true
+		}
+	}
+	return 0, false
+}
+
+func runeBefore(runes []rune, i int) (rune, bool) { return prevNonSpace(runes, i) }
+func runeAfter(runes []rune, i int) (rune, bool)  { return nextNonSpace(runes, i) }
+
+func betweenDigits(runes []rune, i int) bool {
+	prev, pok := prevNonSpace(runes, i)
+	next, nok := nextNonSpace(runes, i)
+	return pok && nok && unicode.IsDigit(prev) && unicode.IsDigit(next)
+}
+
+func betweenAlnum(runes []rune, i int) bool {
+	prev, pok := prevNonSpace(runes, i)
+	next, nok := nextNonSpace(runes, i)
+	return pok && nok && isAlnumRune(prev) && isAlnumRune(next)
+}
+
+func alnumBefore(runes []rune, i int) bool {
+	prev, ok := prevNonSpace(runes, i)
+	return ok && isAlnumRune(prev)
+}
+
+func alnumAfter(runes []rune, i int) bool {
+	next, ok := nextNonSpace(runes, i)
+	return ok && isAlnumRune(next)
+}
+
+func alnumAfterEquals(runes []rune, i int) bool {
+	for j := i + 1; j < len(runes); j++ {
+		if unicode.IsSpace(runes[j]) {
+			continue
+		}
+		if runes[j] == '=' {
+			for k := j + 1; k < len(runes); k++ {
+				if unicode.IsSpace(runes[k]) {
+					continue
+				}
+				return isAlnumRune(runes[k])
+			}
+			return false
+		}
+		return isAlnumRune(runes[j])
+	}
+	return false
+}
+
+func isAlnumRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+func countRune(runes []rune, target rune) int {
+	n := 0
+	for _, r := range runes {
+		if r == target {
+			n++
+		}
+	}
+	return n
+}
+
+func commaInsideBrackets(runes []rune) bool {
+	depth := 0
+	for _, r := range runes {
+		switch r {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func trimDecorativeEquals(s string) string {
+	runes := []rune(s)
+	for len(runes) > 0 && runes[len(runes)-1] == '=' {
+		if len(runes) == 1 {
+			break
+		}
+		prev := runes[len(runes)-2]
+		if prev == '<' || prev == '>' || prev == '!' || prev == '=' {
+			break
+		}
+		if unicode.IsDigit(prev) || prev == ')' || prev == ']' || prev == '}' {
+			runes = runes[:len(runes)-1]
+			continue
+		}
+		break
+	}
+	return string(runes)
+}
 
 // isMathOperator reports whether r is an operator that changes the value of a
 // numeric expression. It is the discriminator used to keep "3+3=" and "3×3="
@@ -171,10 +462,160 @@ func isFormulaSymbol(r rune) bool {
 // fuzzy-matches a multiplication row. Plain prose and decorative parentheses
 // are left untouched.
 func operatorsCompatible(a, b string) bool {
-	if !looksLikeExpression(a) || !looksLikeExpression(b) {
+	fa := looksLikeFormula(a)
+	fb := looksLikeFormula(b)
+	if !fa && !fb {
 		return true
 	}
-	return equalOperatorCounts(operatorCounts(a), operatorCounts(b))
+	if fa != fb {
+		return false
+	}
+	return formulaSignature(a) == formulaSignature(b)
+}
+
+// formulaSignature keeps only the operator/grouping skeleton of a formula and
+// canonicalises equivalent spellings: × and * both become *, ≤ and <= both
+// become <=, and so on. It lets fuzzy matching treat equivalent formulas as
+// the same while NormalizeQuestion keeps their hashes distinct.
+func formulaSignature(text string) string {
+	runes := []rune(strings.ToLower(normalizeURLs(text)))
+	var b strings.Builder
+	for i := 0; i < len(runes); i++ {
+		r := foldWidthRune(runes[i])
+		switch r {
+		case '+':
+			b.WriteByte('+')
+		case '-', '−', '–', '—':
+			b.WriteByte('-')
+		case '*', '×', '·', '⋅':
+			b.WriteByte('*')
+		case '/', '÷', '⁄':
+			b.WriteByte('/')
+		case '^':
+			b.WriteByte('^')
+			if next, ok := runeAfter(runes, i); ok && unicode.IsDigit(next) {
+				b.WriteRune(next)
+				i++
+			}
+		case '%':
+			b.WriteByte('%')
+		case '=':
+			b.WriteByte('=')
+		case '<':
+			if next, ok := runeAfter(runes, i); ok && next == '=' {
+				b.WriteString("<=")
+				i++
+			} else {
+				b.WriteByte('<')
+			}
+		case '>':
+			if next, ok := runeAfter(runes, i); ok && next == '=' {
+				b.WriteString(">=")
+				i++
+			} else {
+				b.WriteByte('>')
+			}
+		case '!':
+			if next, ok := runeAfter(runes, i); ok && next == '=' {
+				b.WriteString("!=")
+				i++
+			} else {
+				b.WriteByte('!')
+			}
+		case '≤':
+			b.WriteString("<=")
+		case '≥':
+			b.WriteString(">=")
+		case '≠':
+			b.WriteString("!=")
+		case '_':
+			b.WriteByte('_')
+			if next, ok := runeAfter(runes, i); ok && unicode.IsDigit(next) {
+				b.WriteRune(next)
+				i++
+			}
+		case '.', ':', '(', ')', '[', ']', '{', '}', '|', '√', '±', '≈',
+			'∞', '∑', '∏', '∫', '∂', '∇', '∠', '△', '⊥', '∥', '≌', '∽', '∈',
+			'∉', '⊂', '⊃', '∪', '∩', '∅', '→', '⇒', '⇔', '~', '∼', '°', '‰',
+			'\'', '′', '″':
+			b.WriteRune(r)
+		default:
+			if digit, ok := superscriptDigit(r); ok {
+				b.WriteByte('^')
+				b.WriteByte(byte('0' + digit))
+			} else if digit, ok := subscriptDigit(r); ok {
+				b.WriteByte('_')
+				b.WriteByte(byte('0' + digit))
+			}
+		}
+	}
+	return trimSignatureEquals(b.String())
+}
+
+func superscriptDigit(r rune) (int, bool) {
+	switch r {
+	case '⁰':
+		return 0, true
+	case '¹':
+		return 1, true
+	case '²':
+		return 2, true
+	case '³':
+		return 3, true
+	case '⁴':
+		return 4, true
+	case '⁵':
+		return 5, true
+	case '⁶':
+		return 6, true
+	case '⁷':
+		return 7, true
+	case '⁸':
+		return 8, true
+	case '⁹':
+		return 9, true
+	}
+	return 0, false
+}
+
+func subscriptDigit(r rune) (int, bool) {
+	switch r {
+	case '₀':
+		return 0, true
+	case '₁':
+		return 1, true
+	case '₂':
+		return 2, true
+	case '₃':
+		return 3, true
+	case '₄':
+		return 4, true
+	case '₅':
+		return 5, true
+	case '₆':
+		return 6, true
+	case '₇':
+		return 7, true
+	case '₈':
+		return 8, true
+	case '₉':
+		return 9, true
+	}
+	return 0, false
+}
+
+func trimSignatureEquals(sig string) string {
+	for len(sig) > 0 && sig[len(sig)-1] == '=' {
+		if len(sig) == 1 {
+			break
+		}
+		prev := sig[len(sig)-2]
+		if prev == '<' || prev == '>' || prev == '!' || prev == '=' {
+			break
+		}
+		sig = sig[:len(sig)-1]
+	}
+	return sig
 }
 
 // looksLikeExpression reports whether s contains both a digit and an operator,
@@ -374,11 +815,47 @@ func min3(a, b, c int) int {
 	return m
 }
 
+// comparisonForm canonicalises equivalent operator spellings for similarity
+// scoring. NormalizeQuestion keeps the original symbols so their hashes stay
+// distinct; comparison is where × and * or ≤ and <= should be treated alike.
+func comparisonForm(text string) string {
+	runes := []rune(strings.ToLower(normalizeURLs(text)))
+	var b strings.Builder
+	for _, r := range runes {
+		r = foldWidthRune(r)
+		switch r {
+		case '×', '·', '⋅':
+			b.WriteByte('*')
+		case '÷', '⁄':
+			b.WriteByte('/')
+		case '≤':
+			b.WriteString("<=")
+		case '≥':
+			b.WriteString(">=")
+		case '≠':
+			b.WriteString("!=")
+		case '−', '–', '—':
+			b.WriteByte('-')
+		default:
+			if digit, ok := superscriptDigit(r); ok {
+				b.WriteByte('^')
+				b.WriteByte(byte('0' + digit))
+			} else if digit, ok := subscriptDigit(r); ok {
+				b.WriteByte('_')
+				b.WriteByte(byte('0' + digit))
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
+}
+
 // Score computes a similarity score in [0,1]. A zero second return means the
 // candidate is rejected.
 func Score(query, candidate string) (float64, bool) {
-	nq := strings.ToLower(strings.TrimSpace(normalizeURLs(query)))
-	nc := strings.ToLower(strings.TrimSpace(normalizeURLs(candidate)))
+	nq := comparisonForm(strings.TrimSpace(query))
+	nc := comparisonForm(strings.TrimSpace(candidate))
 	if nq == "" || nc == "" {
 		return 0, false
 	}
@@ -387,7 +864,7 @@ func Score(query, candidate string) (float64, bool) {
 	}
 	// A numeric expression must never fuzzy-match one that carries different
 	// operators (e.g. "3+3=" against "3×3=").
-	if !operatorsCompatible(nq, nc) {
+	if !operatorsCompatible(query, candidate) {
 		return 0, false
 	}
 	charSim := levenshteinSimilarity(nq, nc)

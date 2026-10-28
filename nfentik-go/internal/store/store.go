@@ -176,6 +176,14 @@ func Open(dsn string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.SeedDefaultPlans(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.BackfillEntitlements(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := s.ensureTrigram(); err != nil {
 		db.Close()
 		return nil, err
@@ -342,10 +350,36 @@ func (s *Store) fuzzyCandidates(title string) ([]candidate, error) {
 	if normalized == "" {
 		return nil, nil
 	}
-	if s.trigram {
-		return s.trigramCandidates(normalized)
+	prefixes := []string{normalized}
+	if match.IsFormula(title) {
+		if prefix := match.FormulaPrefix(normalized); prefix != "" && prefix != normalized {
+			prefixes = append(prefixes, prefix)
+		}
 	}
-	return s.prefixCandidates(normalized)
+	seen := map[int64]bool{}
+	var out []candidate
+	for _, prefix := range prefixes {
+		var (
+			rows []candidate
+			err  error
+		)
+		if s.trigram {
+			rows, err = s.trigramCandidates(prefix)
+		} else {
+			rows, err = s.prefixCandidates(prefix)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if seen[row.id] {
+				continue
+			}
+			seen[row.id] = true
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 // candidate is one row considered for fuzzy scoring.

@@ -1,6 +1,9 @@
 package ai
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDetectQuestionKind(t *testing.T) {
 	cases := map[string]questionKind{
@@ -33,5 +36,19 @@ func TestQuestionKindEssayNameAndHint(t *testing.T) {
 	}
 	if kindEssay.hint() == "" {
 		t.Errorf("kindEssay hint is empty")
+	}
+}
+
+func TestBuildTextPromptWithContext(t *testing.T) {
+	plain := BuildTextPrompt("题目", nil, nil)
+	withContext := BuildTextPromptWithContext("题目", nil, nil, "补充")
+	if plain == withContext {
+		t.Fatalf("context did not change the prompt")
+	}
+	if !strings.Contains(withContext, "【补充信息】\n补充") {
+		t.Fatalf("context missing: %s", withContext)
+	}
+	if strings.Index(withContext, "【补充信息】") > strings.Index(withContext, "请先分析") {
+		t.Fatalf("context must precede the final instruction")
 	}
 }

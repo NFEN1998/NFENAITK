@@ -74,6 +74,14 @@ func detectQuestionKind(queryType string) questionKind {
 
 // BuildTextPrompt mirrors build_model_query_prompt from the desktop app.
 func BuildTextPrompt(title string, options, queryType *string) string {
+	return BuildTextPromptWithContext(title, options, queryType, "")
+}
+
+// BuildTextPromptWithContext adds extra context before the final answer
+// instruction. OCS callers use BuildTextPrompt and keep the original prompt;
+// the /nfentk adapter uses this to pass MOGO-only fields such as discussion
+// bodies and matching groups.
+func BuildTextPromptWithContext(title string, options, queryType *string, context string) string {
 	var b strings.Builder
 	b.WriteString("你是一个专业的答题助手。我会给你一道题目，请先分别做两件事：\n")
 	b.WriteString("1. 仔细分析题目，理解题目在问什么，如果有选项则逐一分析每个选项是否正确。\n")
@@ -98,6 +106,9 @@ func BuildTextPrompt(title string, options, queryType *string) string {
 		if opts := strings.TrimSpace(*options); opts != "" {
 			fmt.Fprintf(&b, "【选项】\n%s\n", opts)
 		}
+	}
+	if extra := strings.TrimSpace(context); extra != "" {
+		fmt.Fprintf(&b, "【补充信息】\n%s\n", extra)
 	}
 	b.WriteString("\n请先分析，再输出答案JSON：")
 	return b.String()

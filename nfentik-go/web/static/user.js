@@ -258,6 +258,42 @@
     return p ? p.Label : (code || "-");
   }
 
+  function entitlementOf(u, kind) {
+    var list = u.entitlements || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].kind === kind) return list[i];
+    }
+    return null;
+  }
+
+  function durationEntActive(e) {
+    if (!e) return false;
+    if (e.unlimited) return true;
+    if (!e.expire_at) return true;
+    return new Date(String(e.expire_at).replace(" ", "T")).getTime() > Date.now();
+  }
+
+  function renderEntitlements(u) {
+    var list = u.entitlements || [];
+    if (!list.length) {
+      qs("user-entitlements").innerHTML = '<div class="plan-item"><span class="label">时长权益</span><strong>未开通</strong></div>' +
+        '<div class="plan-item"><span class="label">次数权益</span><strong>未开通</strong></div>';
+      return;
+    }
+    qs("user-entitlements").innerHTML = list.map(function (e) {
+      var label = e.kind === "duration" ? "时长权益" : "次数权益";
+      var detail;
+      if (e.kind === "duration") {
+        detail = e.unlimited ? "无限时长" : (e.expire_at ? (e.expire_at + " 到期") : "不限");
+      } else {
+        detail = "剩余 " + (e.remain_count == null ? "不限" : (e.remain_count + " / " + (e.total_count == null ? "-" : e.total_count))) +
+          (e.expire_at ? " · " + e.expire_at + " 到期" : "");
+      }
+      return '<div class="plan-item"><span class="label">' + label + "</span><strong>" +
+        esc(e.plan_label || e.plan_code || "-") + '</strong><span class="muted small">' + esc(detail) + "</span></div>";
+    }).join("");
+  }
+
   function renderProfile() {
     var u = state.user || {};
     qs("user-name").textContent = u.token || "-";
@@ -270,16 +306,29 @@
     pill.className = "pill " + (u.enabled ? state.status : "disabled");
     pill.textContent = statusLabels[u.enabled ? state.status : "disabled"] || state.status;
 
+    renderEntitlements(u);
+
     var quota = qs("user-quota");
     var used = u.used_count || 0;
-    if (u.remain_count != null) {
+    var countEnt = entitlementOf(u, "count");
+    var durationEnt = entitlementOf(u, "duration");
+    if (countEnt && countEnt.remain_count != null) {
       quota.classList.remove("hidden");
-      qs("user-quota-label").textContent = "剩余次数";
-      var total = u.total_count || 0;
-      var remain = u.remain_count || 0;
+      qs("user-quota-label").textContent = durationEnt && durationEntActive(durationEnt)
+        ? "次数余额（时长到期后启用）" : "剩余次数";
+      var total = countEnt.total_count || 0;
+      var remain = countEnt.remain_count || 0;
       qs("user-quota-text").textContent = remain + " / " + total;
       var pct = total > 0 ? Math.max(0, Math.min(100, Math.round((remain / total) * 100))) : 0;
       qs("user-quota-fill").style.width = pct + "%";
+    } else if (u.remain_count != null) {
+      quota.classList.remove("hidden");
+      qs("user-quota-label").textContent = "剩余次数";
+      var legacyTotal = u.total_count || 0;
+      var legacyRemain = u.remain_count || 0;
+      qs("user-quota-text").textContent = legacyRemain + " / " + legacyTotal;
+      var legacyPct = legacyTotal > 0 ? Math.max(0, Math.min(100, Math.round((legacyRemain / legacyTotal) * 100))) : 0;
+      qs("user-quota-fill").style.width = legacyPct + "%";
     } else {
       quota.classList.remove("hidden");
       qs("user-quota-label").textContent = "已用次数";
@@ -488,7 +537,24 @@
     return base + "/query?token=" + encodeURIComponent(state.token) + "&" + key + "=";
   }
 
+  // mogoUrlExample is the short URL pasted into MOGO; MOGO appends q, info
+  // and kcinfo itself. key and token are interchangeable.
+  function mogoUrlExample() {
+    var base = window.location.origin.replace(/\/+$/, "");
+    return base + "/nfentk?key=" + encodeURIComponent(state.token) + "&q=";
+  }
+
+  function mogoDebugUrlExample() {
+    var base = window.location.origin.replace(/\/+$/, "");
+    return base + "/nfentk?key=" + encodeURIComponent(state.token) +
+      "&q=" + encodeURIComponent("示例题目") +
+      "&info=" + encodeURIComponent("单选题****[选项1###选项2]") +
+      "&kcinfo=" + encodeURIComponent("课程名|课程ID|账号");
+  }
+
   function renderUrlExamples() {
+    qs("user-url-mogo").value = mogoUrlExample();
+    qs("user-url-mogo-debug").value = mogoDebugUrlExample();
     qs("user-url-title").value = urlExample("title");
     qs("user-url-q").value = urlExample("q");
   }
@@ -514,8 +580,12 @@
     copyText(qs("user-ocs-json").value, "已复制 OCS 配置");
   });
 
+  qs("user-copy-url1").addEventListener("click", function () {
+    copyText(qs("user-url-mogo").value, "已复制 URL 模式1接口");
+  });
+
   qs("user-copy-url").addEventListener("click", function () {
-    copyText(qs("user-url-title").value, "已复制 URL 接口");
+    copyText(qs("user-url-title").value, "已复制 URL 模式2接口");
   });
 
   document.querySelectorAll("[data-copy]").forEach(function (btn) {

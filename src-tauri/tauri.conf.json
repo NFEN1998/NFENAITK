@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ZError",
+  "productName": "NFENTK",
   "version": "2.2.6-dev",
   "identifier": "com.zerror.app",
   "build": {
@@ -28,7 +28,7 @@
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "",
       "frameworks": [],
-      "providerShortName": "ZError",
+      "providerShortName": "NFENTK",
       "entitlements": null,
       "signingIdentity": null
     },

@@ -138,7 +138,7 @@ pub fn run() {
                     let _mutex = CreateMutexW(None, false, w!("Global\\ZError_SingleInstance"));
                     let err = GetLastError();
                     if err.0 == ERROR_ALREADY_EXISTS.0 && !elevated_arg {
-                        let hwnd = FindWindowW(None, w!("ZError"));
+                        let hwnd = FindWindowW(None, w!("NFENTK"));
                         if hwnd.0 != 0 {
                             let _ = ShowWindow(hwnd, SW_RESTORE);
                             let _ = SetForegroundWindow(hwnd);
@@ -204,7 +204,7 @@ pub fn run() {
             
             #[cfg(target_os = "macos")]
             let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
-                .title("ZError")
+                .title("NFENTK")
                 .inner_size(main_window_size.width, main_window_size.height)
                 .min_inner_size(main_window_size.min_width, main_window_size.min_height)
                 .center()
@@ -215,7 +215,7 @@ pub fn run() {
                 
             #[cfg(not(target_os = "macos"))]
             let _main = tauri::WebviewWindowBuilder::new(app, "main", url)
-                .title("ZError")
+                .title("NFENTK")
                 .inner_size(main_window_size.width, main_window_size.height)
                 .min_inner_size(main_window_size.min_width, main_window_size.min_height)
                 .center()

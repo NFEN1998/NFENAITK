@@ -147,6 +147,13 @@ func TestQueryGetAcceptsQAlias(t *testing.T) {
 	srv, _ := testServer(t)
 	srv.setTokenForQuery(t, true)
 	u := srv.createTestUser(t, "qalias", "count", 3, 0)
+	if hit, _ := srv.store.FindByNormalizedQuestion("1+1=", nil); hit == nil {
+		id, err := srv.store.InsertAIResponse("1+1=", "2", nil, nil)
+		if err != nil {
+			t.Fatalf("seed question: %v", err)
+		}
+		t.Cleanup(func() { _ = srv.store.DeleteQuestion(id) })
+	}
 
 	for _, key := range []string{"title", "q"} {
 		req := httptest.NewRequest(http.MethodGet, "/query?"+key+"=1%2B1%3D&token="+u.Token, nil)

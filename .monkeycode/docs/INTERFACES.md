@@ -6,7 +6,7 @@ nfentik-go 对外提供三类 HTTP 接口：面向 OCS 用户脚本的查询接�
 
 | 接口 | 凭据 | 说明 |
 | --- | --- | --- |
-| `/query`、`/api/model/*` | 可选 `usertoken` | 是否强制由设置 `requireTokenForQuery` 决定；`usersEnabled` 关闭时不校验 |
+| `/query`、`/nfentk`、`/api/model/*` | 可选 `usertoken`（`/nfentk` 也接受 `key`） | 是否强制由设置 `requireTokenForQuery` 决定；`usersEnabled` 关闭时不校验 |
 | `/api/user/*` | `usertoken` | 普通用户令牌，前缀通常为 `nf_` |
 | `/api/admin/*` | `adminToken` | 管理员令牌；当 `adminToken` 为空时管理接口不校验 |
 
@@ -15,7 +15,8 @@ nfentik-go 对外提供三类 HTTP 接口：面向 OCS 用户脚本的查询接�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET / HEAD | `/` | 根路径，`HEAD` 返回 `Hello,OCS` 并广播事件 |
-| GET / POST | `/query` | 题库查询（核心接口） |
+| GET / POST | `/query` | 题库查询（核心接口，URL 模式2） |
+| GET | `/nfentk` | MOGO 题库对接（URL 模式1） |
 | GET | `/api/status` | 服务状态 |
 | GET | `/api/time` | 服务器时间 |
 | POST | `/api/echo` | 回显请求体 |
@@ -42,7 +43,9 @@ nfentik-go 对外提供三类 HTTP 接口：面向 OCS 用户脚本的查询接�
 }
 ```
 
-GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw`、`token`。
+GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw`、`token`。GET 参数会保留数学表达式中的 `+`（例如 `q=1+1=` 按 `1+1=` 处理），普通文本中的 `+` 仍按空格解码。
+
+公式归一化保留小数点、比例、阶乘、根号、绝对值、上标、括号和非结尾等号；等价运算符 `×`/`*`、`÷`/`/`、`≤`/`<=`、`≠`/`!=`、`−`/`-` 在模糊匹配中按等价处理。客户端发送 `&`、`#`、`%` 时需编码为 `%26`、`%23`、`%25`。
 
 响应：
 
@@ -61,6 +64,39 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 
 `code` 为 `1` 表示成功、`0` 表示失败；失败时 `message` 字段说明原因。查询解析顺序为：Redis 缓存 → 本地题库（精确哈希 + 模糊匹配）→ 第三方题库链 → AI 模型。来源内部标记为 `cache` / `bank` / `external:<name>` / `ai`，并写入用户使用记录。
 
+### GET `/nfentk`
+
+MOGO 题库对接接口（URL 模式1），供 MOGO 的题库设置或外置接口调用。它复用 `/query` 的查询链、令牌校验与配额，只改变入参解析和返回结构。
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `q` | 是 | 题目内容；兼容 `title` 兜底 |
+| `info` | 否 | `题型****载荷`，例如 `多选题****[选项1###选项2]` |
+| `kcinfo` | 否 | 课程信息 `课程名\|课程id\|账号`，接收后忽略 |
+| `key` / `token` | 否 | 用户令牌，`key` 与 `token` 等价；是否必填由设置决定 |
+
+`info` 的题型支持：单选题、多选题、判断题、填空题、简答题、名词解释、论述题、计算题、口语题、资料题、问答题、连线题、排序题、完型填空/完形填空、学习通讨论、智慧树互动。选项分隔符按 `###` 解析，同时兼容 `|||`。
+
+请求示例：
+
+```
+https://<域名>/nfentk?key=nf_xxx&q=题目内容&info=多选题****[选项1###选项2###选项3]&kcinfo=课程名|123|账号
+```
+
+成功响应，`data` 为字符串，多答案使用 `###` 连接：
+
+```json
+{"code":1,"data":"选项1###选项3"}
+```
+
+失败响应：
+
+```json
+{"code":-1}
+```
+
+`/nfentk` 的应用层失败统一返回 HTTP 200 + `code:-1`；`/query` 的请求与返回结构保持不变。
+
 ## 用户接口
 
 | 方法 | 路径 | 说明 |
@@ -73,7 +109,7 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | POST | `/api/user/account/bind` | 为当前令牌绑定账号 |
 | POST | `/api/user/account/password` | 修改账号密码并轮换会话 |
 | POST | `/api/user/redeem` | 兑换卡密给当前用户充值 |
-| GET | `/api/user/me` | 当前用户与套餐信息（支持 token 或账号会话） |
+| GET | `/api/user/me` | 当前用户、双权益与套餐目录（支持 token 或账号会话） |
 | GET | `/api/user/logs` | 我的调用记录（分页） |
 | POST | `/api/user/reset-token` | 重置我的令牌 |
 | PUT | `/api/user/profile` | 修改备注等资料 |
@@ -98,7 +134,76 @@ GET 形式接受查询参数 `title`（别名 `q`）、`options`、`type`、`raw
 | — | `/api/admin/users` | 用户增删改查、续费、重置令牌 |
 | — | `/api/admin/accounts` | 账号列表、重置密码、启停、解绑/绑定、撤销会话 |
 | — | `/api/admin/redeem` | 卡密批次创建、列表与作废 |
+| GET / POST | `/api/admin/plans` | 套餐列表、新增套餐 |
+| PUT / DELETE | `/api/admin/plans/{code}` | 修改、停用/删除套餐 |
 | GET | `/console` | 管理控制台页面 |
+
+### 套餐设置
+
+套餐目录保存在 `Plans` 表，默认播种包月、包季、半年、包年、无限、自定义时长、按次 7 个套餐。套餐代码和类型创建后不可修改。
+
+`GET /api/admin/plans` 返回：
+
+```json
+{
+  "success": true,
+  "plans": [
+    {
+      "Code": "count_1000",
+      "Label": "1000 次",
+      "Kind": "count",
+      "Days": 0,
+      "QuotaCount": 1000,
+      "Unlimited": false,
+      "Custom": false,
+      "ExpiryDays": 0,
+      "Enabled": true,
+      "Sort": 80,
+      "UserCount": 12,
+      "BatchCount": 3
+    }
+  ]
+}
+```
+
+新增/修改请求字段使用 snake_case：`code`、`label`、`kind`、`days`、`quota_count`、`unlimited`、`custom`、`expiry_days`、`enabled`、`sort`、`price_cents`、`currency`、`description`、`badge`。
+
+规则：
+
+- `duration` 套餐使用 `days`、`unlimited`、`custom`。
+- `count` 套餐使用 `quota_count`、`custom`、`expiry_days`。
+- 停用套餐不再出现在新建用户、续费和新卡密下拉框中，已发出的未使用卡密仍可兑换。
+- 有用户权益或卡密批次引用时不能删除，只能停用。
+- 默认套餐必须保持启用；至少保留一个启用套餐。
+
+### 用户双权益
+
+用户可同时持有 `duration` 和 `count` 两条权益，`GET /api/user/me` 的 `user.entitlements` 返回：
+
+```json
+[
+  {
+    "kind": "duration",
+    "plan_code": "monthly",
+    "plan_label": "包月",
+    "start_at": "2026-10-27 10:00:00",
+    "expire_at": "2026-11-26 10:00:00",
+    "unlimited": false,
+    "status": "active"
+  },
+  {
+    "kind": "count",
+    "plan_code": "count_1000",
+    "plan_label": "1000 次",
+    "total_count": 1000,
+    "used_count": 200,
+    "remain_count": 800,
+    "status": "active"
+  }
+]
+```
+
+查询时优先使用有效时长权益，此时次数余额不扣减；时长到期后自动扣减次数。时长套餐可叠加到期时间，次数套餐可叠加次数。当前为无限时长时，兑换时长卡会被拒绝。
 
 ### 第三方题库配置
 

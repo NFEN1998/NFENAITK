@@ -17,12 +17,17 @@ var ErrUserTokenMissing = errors.New("缺少令牌")
 var ErrUserDisabled = errors.New("账号已停用")
 
 // userTokenFromRequest extracts a user token from the Authorization header or
-// the ?token= query parameter, preferring the header.
+// the ?token= query parameter, preferring the header. ?key= is accepted as an
+// alias because MOGO calls its token a key.
 func userTokenFromRequest(r *http.Request) string {
 	if t := bearerToken(r); t != "" {
 		return t
 	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	query := r.URL.Query()
+	if t := firstQueryValue(query["token"]); t != "" {
+		return t
+	}
+	return firstQueryValue(query["key"])
 }
 
 // userFromRequest resolves the user behind a request and validates that the
@@ -55,8 +60,67 @@ func (s *Server) userFromToken(token string) (*store.User, error) {
 	return u, nil
 }
 
-// userUsable classifies a user's plan status.
+// entitlementStatus classifies one balance.
+func entitlementStatus(e store.Entitlement, now time.Time) string {
+	in := plan.StatusInput{Enabled: true, Unlimited: e.Unlimited}
+	if e.ExpireAt != nil {
+		if t, err := parseStoreTime(*e.ExpireAt); err == nil {
+			in.ExpireAt = &t
+		}
+	}
+	if e.Kind == string(plan.KindCount) {
+		remain := e.RemainCount
+		if remain == nil {
+			zero := int64(0)
+			remain = &zero
+		}
+		in.RemainCount = remain
+		in.TotalCount = e.TotalCount
+	}
+	return plan.Status(in, now)
+}
+
+func findUserEntitlement(u *store.User, kind string) *store.Entitlement {
+	for i := range u.Entitlements {
+		if u.Entitlements[i].Kind == kind {
+			return &u.Entitlements[i]
+		}
+	}
+	return nil
+}
+
+// userUsable classifies a user by the primary balance. Duration wins while it
+// is active; otherwise an active count balance is used.
 func userUsable(u *store.User) string {
+	if u == nil {
+		return plan.StatusDisabled
+	}
+	if !u.Enabled {
+		return plan.StatusDisabled
+	}
+	if len(u.Entitlements) > 0 {
+		now := timeNow()
+		duration := findUserEntitlement(u, string(plan.KindDuration))
+		count := findUserEntitlement(u, string(plan.KindCount))
+		if duration != nil {
+			status := entitlementStatus(*duration, now)
+			if status == plan.StatusActive || status == plan.StatusExpiring {
+				return status
+			}
+		}
+		if count != nil {
+			status := entitlementStatus(*count, now)
+			if status == plan.StatusActive || status == plan.StatusExpiring {
+				return status
+			}
+		}
+		if duration != nil {
+			return entitlementStatus(*duration, now)
+		}
+		if count != nil {
+			return entitlementStatus(*count, now)
+		}
+	}
 	in := plan.StatusInput{Enabled: u.Enabled, RemainCount: u.RemainCount, TotalCount: u.TotalCount}
 	if u.ExpireAt != nil {
 		if t, err := parseStoreTime(*u.ExpireAt); err == nil {
@@ -64,6 +128,57 @@ func userUsable(u *store.User) string {
 		}
 	}
 	return plan.Status(in, timeNow())
+}
+
+// queryAccess reports which balance should serve a query. An empty kind means
+// the caller is anonymous or the user system is disabled.
+func queryAccess(u *store.User) (string, error) {
+	if u == nil {
+		return "", nil
+	}
+	if !u.Enabled {
+		return "", errors.New("账号已停用")
+	}
+	now := timeNow()
+	if len(u.Entitlements) > 0 {
+		duration := findUserEntitlement(u, string(plan.KindDuration))
+		count := findUserEntitlement(u, string(plan.KindCount))
+		if duration != nil {
+			status := entitlementStatus(*duration, now)
+			if status == plan.StatusActive || status == plan.StatusExpiring {
+				return string(plan.KindDuration), nil
+			}
+		}
+		if count != nil {
+			status := entitlementStatus(*count, now)
+			if status == plan.StatusActive || status == plan.StatusExpiring {
+				return string(plan.KindCount), nil
+			}
+		}
+		if duration != nil {
+			return "", errors.New("套餐已过期")
+		}
+		if count != nil {
+			if count.ExpireAt != nil {
+				if t, err := parseStoreTime(*count.ExpireAt); err == nil && now.After(t) {
+					return "", errors.New("次数套餐已过期")
+				}
+			}
+			return "", errors.New("次数已用尽")
+		}
+	}
+	switch userUsable(u) {
+	case plan.StatusExpired:
+		return "", errors.New("套餐已过期")
+	case plan.StatusExhausted:
+		return "", errors.New("次数已用尽")
+	case plan.StatusDisabled:
+		return "", errors.New("账号已停用")
+	}
+	if u.PlanType == string(plan.KindCount) {
+		return string(plan.KindCount), nil
+	}
+	return string(plan.KindDuration), nil
 }
 
 // handleUserLogin resolves a usertoken and returns the user profile.
@@ -105,7 +220,7 @@ func (s *Server) handleUserMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "user": u, "status": userUsable(u), "plans": plan.Plans,
+		"success": true, "user": u, "status": userUsable(u), "plans": s.userPlanCatalogue(),
 	})
 }
 
@@ -223,4 +338,15 @@ func parseStoreTime(v string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, errors.New("无法解析时间")
+}
+
+// userPlanCatalogue returns the catalogue used for labels in the user portal.
+// Disabled plans remain visible so an existing user can still see the name of
+// the plan they hold.
+func (s *Server) userPlanCatalogue() []plan.Plan {
+	plans, err := s.store.ListPlans()
+	if err != nil || len(plans) == 0 {
+		return plan.Plans
+	}
+	return plans
 }

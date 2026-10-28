@@ -11,7 +11,7 @@ import (
 // The /query handler emits its own richer entry, so it is skipped here.
 func (s *Server) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/query" || skipLogPaths(r.URL.Path) {
+		if r.URL.Path == "/query" || r.URL.Path == "/nfentk" || skipLogPaths(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -31,6 +31,7 @@
         <button class="nav-item" data-view="users"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3 3 0 0 1 0 6"/><path d="M21 20a6 6 0 0 0-4-5.5"/></svg><span>用户管理</span></button>
         <button class="nav-item" data-view="accounts"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>账号管理</span></button>
         <button class="nav-item" data-view="redeem"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg><span>卡密管理</span></button>
+        <button class="nav-item" data-view="plans"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6M7 17h4"/></svg><span>套餐设置</span></button>
         <button class="nav-item" data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg><span>系统设置</span></button>
         <button class="nav-item" data-view="logs"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>请求日志</span></button>
       </nav>
@@ -194,7 +195,7 @@
         <div class="table-wrap">
           <table id="u-table">
             <thead><tr>
-              <th>ID</th><th>令牌</th><th>备注</th><th>套餐</th><th>状态</th><th>剩余</th><th>到期时间</th><th>操作</th>
+              <th>ID</th><th>令牌</th><th>备注</th><th>时长权益</th><th>次数权益</th><th>状态</th><th>操作</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -285,6 +286,26 @@
           <button id="rd-prev" class="btn ghost">上一页</button>
           <span id="rd-pageinfo">第 1 页</span>
           <button id="rd-next" class="btn ghost">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-plans" class="view">
+      <div class="card">
+        <div class="toolbar">
+          <span class="muted">配置套餐名称、额度、价格与上下架状态；套餐代码和类型创建后不可修改。</span>
+          <span class="spacer"></span>
+          <button id="pl-add" class="btn primary">新增套餐</button>
+          <button id="pl-refresh" class="btn ghost">刷新</button>
+        </div>
+        <p id="pl-status" class="muted"></p>
+        <div class="table-wrap">
+          <table id="pl-table">
+            <thead><tr>
+              <th>排序</th><th>代码</th><th>名称</th><th>类型</th><th>额度</th><th>价格</th><th>状态</th><th>使用中</th><th>卡密批次</th><th>操作</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
     </section>

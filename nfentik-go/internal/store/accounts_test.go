@@ -155,8 +155,25 @@ func TestRedemptionCountAndDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create mismatch batch: %v", err)
 	}
-	if _, err := s.RedeemCode(user.ID, HashRedemptionCode(mismatchCodes[0])); !errors.Is(err, ErrCodeNeedsCount) {
-		t.Fatalf("plan mismatch = %v, want ErrCodeNeedsCount", err)
+	result, err = s.RedeemCode(user.ID, HashRedemptionCode(mismatchCodes[0]))
+	if err != nil {
+		t.Fatalf("duration card on count user: %v", err)
+	}
+	if result.User.PlanType != "duration" || result.User.ExpireAt == nil {
+		t.Fatalf("duration priority result: %+v", result.User)
+	}
+	ents, err := s.GetEntitlements(user.ID)
+	if err != nil {
+		t.Fatalf("get entitlements: %v", err)
+	}
+	var countRemain int64
+	for _, e := range ents {
+		if e.Kind == "count" && e.RemainCount != nil {
+			countRemain = *e.RemainCount
+		}
+	}
+	if countRemain != 5 {
+		t.Fatalf("count balance after duration redeem = %d, want 5", countRemain)
 	}
 }
 

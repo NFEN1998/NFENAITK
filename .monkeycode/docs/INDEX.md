@@ -1,6 +1,6 @@
 # nfentik-go 文档
 
-本目录记录 nfentik-go（ZError 服务端）的架构、接口与开发指南，面向维护者与集成方。所有内容基于 `nfentik-go/` 实际代码与脚本。
+本目录记录 nfentik-go（NFENTK 服务端）的架构、接口与开发指南，面向维护者与集成方。所有内容基于 `nfentik-go/` 实际代码与脚本。
 
 **快速链接**: [架构](./ARCHITECTURE.md) | [接口](./INTERFACES.md) | [开发者指南](./DEVELOPER_GUIDE.md)
 

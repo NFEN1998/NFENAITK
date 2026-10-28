@@ -52,3 +52,12 @@ Entries discovered by the Agent during task execution should follow this format:
   - Integration tests for internal/server and internal/store share the same PostgreSQL database and Redis, and `go test ./...` runs packages in parallel, so the two packages clobber each other's users/logs and fail intermittently (errors like "用户不存在" / "令牌无效")
   - Always run tests serially with `cd /workspace/nfentik-go && go test -p 1 ./...`
   - Override the test database with the `TEST_DATABASE_URL` env var when a throwaway database is available
+
+[Project Knowledge Summary]
+- Date: 2026-10-25
+- Context: Discovered by Agent while upgrading the Go toolchain to 1.27.3
+- Category: Environment Configuration
+- Instructions:
+  - The Go toolchain lives at `/usr/local/go` (on PATH); the previous 1.25.5 install was moved to `/usr/local/go1.25.5-backup`
+  - `nfentik-go/go.mod` declares `go 1.27.3`; use Go 1.27+ for builds
+  - Windows cross-builds need `gcc-mingw-w64-x86-64` and `g++-mingw-w64-x86-64` (installed via apt)

@@ -14,7 +14,7 @@ const maxLogBody = 16 * 1024
 
 // sensitiveKeys are JSON field names whose values are replaced with "***".
 var sensitiveKeys = map[string]bool{
-	"apikey": true, "api_key": true, "token": true, "password": true,
+	"apikey": true, "api_key": true, "token": true, "key": true, "kcinfo": true, "password": true,
 	"passwd": true, "secret": true, "authorization": true,
 	"admintoken": true, "admin_token": true, "access_token": true,
 	"refresh_token": true, "client_secret": true,

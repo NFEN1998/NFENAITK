@@ -181,7 +181,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000/console | Select-Object
 
 ## 从源码构建
 
-需要 Go 1.24+ 与 CGO 工具链（中文分词 gojieba 和迁移功能 go-sqlite3 都依赖 CGO）。
+需要 Go 1.27+ 与 CGO 工具链（中文分词 gojieba 和迁移功能 go-sqlite3 都依赖 CGO）。
 
 - 在 Windows 上原生构建：安装 MSYS2 的 MinGW-w64 工具链，在 MSYS2 终端里执行 `scripts/packaging/build-windows.sh`。
 - 在 Linux 上交叉编译：安装 `gcc-mingw-w64-x86-64` 与 `g++-mingw-w64-x86-64` 后执行 `scripts/packaging/build-windows.sh`。

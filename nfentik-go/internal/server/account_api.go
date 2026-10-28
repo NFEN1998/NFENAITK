@@ -74,6 +74,8 @@ func writeAccountError(w http.ResponseWriter, err error) {
 		status, message = http.StatusConflict, "当前套餐请使用次数卡密"
 	case errors.Is(err, store.ErrCodeNoNeed):
 		status, message = http.StatusConflict, "当前为无限套餐，无需充值"
+	case errors.Is(err, store.ErrCodeUnlimited):
+		status, message = http.StatusConflict, "当前已是无限时长套餐，无需使用时长卡"
 	}
 	writeJSON(w, status, map[string]any{"success": false, "message": message})
 }

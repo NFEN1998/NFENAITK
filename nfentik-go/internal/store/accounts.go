@@ -107,6 +107,13 @@ func (s *Store) CreateAccountWithNewUser(username, passwordHash string) (Account
 	if err != nil {
 		return Account{}, User{}, err
 	}
+	if err := s.insertEntitlementFromUserTx(tx, userID, User{
+		PlanType: "count", PlanCode: "count", PlanLabel: "按次",
+		StartAt:    time.Now().Format("2006-01-02 15:04:05"),
+		TotalCount: &zero, RemainCount: &zero,
+	}); err != nil {
+		return Account{}, User{}, err
+	}
 	accountID, err := s.insertReturningIDTx(tx, `INSERT INTO Accounts
 		(Username, UsernameKey, PasswordHash, UserId, Status, CreatedAt, UpdatedAt)
 		VALUES ($1,$2,$3,$4,'enabled',NOW(),NOW())`,

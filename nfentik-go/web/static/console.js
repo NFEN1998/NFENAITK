@@ -106,7 +106,7 @@
   var titles = {
     dashboard: "概览", questions: "题库", pending: "待修正",
     models: "模型配置", users: "用户管理", accounts: "账号管理", redeem: "卡密管理",
-    ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
+    plans: "套餐设置", ocs: "OCS 配置", settings: "系统设置", logs: "请求日志",
     external: "第三方题库", import: "导入题库",
   };
 
@@ -120,6 +120,7 @@
     users: "用户令牌、套餐与配额管理",
     accounts: "用户中心账号、绑定与登录状态",
     redeem: "生成与作废用户充值卡密",
+    plans: "配置时长套餐、次数套餐与上下架状态",
     ocs: "生成 OCS 用户脚本所需的查询配置",
     settings: "站点、网络、缓存与安全设置",
     logs: "实时与历史的请求审计日志",
@@ -145,6 +146,7 @@
     if (view === "users") loadUsers();
     if (view === "accounts") loadAccounts();
     if (view === "redeem") loadRedeem();
+    if (view === "plans") loadPlans();
     if (view === "ocs") loadOCS();
     if (view === "settings") loadSettings();
     if (view === "logs") loadLogs();
@@ -1490,11 +1492,19 @@
     exhausted: "次数用尽", disabled: "已停用",
   };
 
+  function syncPlans(plans) {
+    userState.plans = plans || [];
+    userState.planMap = {};
+    userState.plans.forEach(function (p) { userState.planMap[p.Code] = p; });
+  }
+
   function fillPlanOptions(sel, selected) {
     if (!sel) return;
-    var plans = userState.plans;
+    var plans = userState.plans.filter(function (p) {
+      return p.Enabled !== false || p.Code === selected;
+    });
     sel.innerHTML = '<option value="">未指定</option>' + plans.map(function (p) {
-      return '<option value="' + esc(p.Code) + '">' + esc(p.Label) + "</option>";
+      return '<option value="' + esc(p.Code) + '">' + esc(p.Label) + (p.Enabled === false ? "（已停用）" : "") + "</option>";
     }).join("");
     sel.value = selected || "";
     if (!plans.length) sel.value = "";
@@ -1502,12 +1512,8 @@
 
   function ensurePlans(cb) {
     if (userState.plans.length) { cb(); return; }
-    api("/users").then(function (data) {
-      if (data.success) {
-        userState.plans = data.plans || [];
-        userState.planMap = {};
-        userState.plans.forEach(function (p) { userState.planMap[p.Code] = p; });
-      }
+    api("/plans").then(function (data) {
+      if (data.success) syncPlans(data.plans || []);
       cb();
     });
   }
@@ -1528,6 +1534,30 @@
     return '<span class="pill ' + cls + '">' + esc(userStatusLabels[status] || status) + "</span>";
   }
 
+  function entitlementOf(u, kind) {
+    var list = u.entitlements || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].kind === kind) return list[i];
+    }
+    return null;
+  }
+
+  function durationText(e) {
+    if (!e) return '<span class="muted">未开通</span>';
+    var label = esc(e.plan_label || e.plan_code || "-");
+    var tail = e.unlimited ? "无限" : (e.expire_at ? e.expire_at + " 到期" : "不限");
+    return label + '<br><span class="muted small">' + esc(tail) + "</span>";
+  }
+
+  function countText(e) {
+    if (!e) return '<span class="muted">未开通</span>';
+    var label = esc(e.plan_label || e.plan_code || "-");
+    var remain = e.remain_count == null ? "不限" : (e.remain_count + " / " + (e.total_count == null ? "-" : e.total_count));
+    var tail = "剩余 " + remain;
+    if (e.expire_at) tail += " · " + e.expire_at + " 到期";
+    return label + '<br><span class="muted small">' + esc(tail) + "</span>";
+  }
+
   function userRemainText(u) {
     if (u.remain_count == null) return "不限";
     return u.remain_count + " / " + (u.total_count == null ? "-" : u.total_count);
@@ -1541,9 +1571,7 @@
   function loadUsers() {
     api("/users").then(function (data) {
       if (!data.success) { toast(data.message); return; }
-      userState.plans = data.plans || [];
-      userState.planMap = {};
-      userState.plans.forEach(function (p) { userState.planMap[p.Code] = p; });
+      syncPlans(data.plans || []);
       renderUserTable(data.users || []);
       loadUserStats();
     });
@@ -1554,7 +1582,7 @@
     users.forEach(function (u) { userMap[String(u.id)] = u; });
     var body = qs("u-table").querySelector("tbody");
     if (!users.length) {
-      body.innerHTML = '<tr><td colspan="8" class="muted">暂无用户，点击「新建用户」或「批量生成」创建。</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="muted">暂无用户，点击「新建用户」或「批量生成」创建。</td></tr>';
       return;
     }
     body.innerHTML = users.map(function (u) {
@@ -1565,10 +1593,9 @@
         '<td data-label="ID">' + u.id + "</td>" +
         '<td data-label="令牌"><span class="mono small token-cell">' + esc(u.token) + "</span></td>" +
         '<td data-label="备注"><span class="clamp">' + esc(u.note || "") + "</span></td>" +
-        '<td data-label="套餐">' + esc(planLabel(u.plan_code)) + "</td>" +
+        '<td data-label="时长权益">' + durationText(entitlementOf(u, "duration")) + "</td>" +
+        '<td data-label="次数权益">' + countText(entitlementOf(u, "count")) + "</td>" +
         '<td data-label="状态">' + userStatusPill(u.status) + "</td>" +
-        '<td data-label="剩余">' + esc(userRemainText(u)) + "</td>" +
-        '<td data-label="到期">' + esc(u.expire_at || "不限") + "</td>" +
         '<td data-label="操作" class="row-actions">' +
           '<button data-act="copy" data-id="' + u.id + '" class="btn ghost small">复制令牌</button>' +
           '<button data-act="renew" data-id="' + u.id + '" class="btn ghost small">续费</button>' +
@@ -1629,10 +1656,13 @@
     }).join("");
   }
 
-  function planOptionsHtml(selected) {
-    return userState.plans.map(function (p) {
+  function planOptionsHtml(selected, kind) {
+    return userState.plans.filter(function (p) {
+      if (kind && p.Kind !== kind) return false;
+      return p.Enabled !== false || p.Code === selected;
+    }).map(function (p) {
       var sel = p.Code === selected ? " selected" : "";
-      return '<option value="' + esc(p.Code) + '"' + sel + ">" + esc(p.Label) + "</option>";
+      return '<option value="' + esc(p.Code) + '"' + sel + ">" + esc(p.Label) + (p.Enabled === false ? "（已停用）" : "") + "</option>";
     }).join("");
   }
 
@@ -1640,37 +1670,50 @@
   function planFields(prefix) {
     qs("modal-content").insertAdjacentHTML("beforeend",
       '<div class="field"><label>套餐</label><select id="' + prefix + '-plan">' + planOptionsHtml("") + "</select></div>" +
-      '<div class="field" id="' + prefix + '-count-wrap"><label>总次数</label><input id="' + prefix + '-count" type="number" min="1" value="100"></div>' +
+      '<div class="field" id="' + prefix + '-fixed-wrap" style="display:none;"><label>套餐额度</label><input id="' + prefix + '-fixed" type="text" readonly></div>' +
+      '<div class="field" id="' + prefix + '-count-wrap" style="display:none;"><label>自定义总次数</label><input id="' + prefix + '-count" type="number" min="1" value="100"></div>' +
       '<div class="field" id="' + prefix + '-days-wrap" style="display:none;"><label>自定义天数</label><input id="' + prefix + '-days" type="number" min="1" value="30"></div>' +
       '<div class="field"><label>备注（可选）</label><input id="' + prefix + '-note" type="text"></div>' +
-      '<label class="checkbox" id="' + prefix + '-expiry-wrap"><input type="checkbox" id="' + prefix + '-expiry"> 次数套餐设置有效期</label>' +
+      '<label class="checkbox" id="' + prefix + '-expiry-wrap" style="display:none;"><input type="checkbox" id="' + prefix + '-expiry"> 设置次数套餐有效期</label>' +
       '<div class="field" id="' + prefix + '-expiry-days-wrap" style="display:none;"><label>有效期天数</label><input id="' + prefix + '-expiry-days" type="number" min="1" value="30"></div>');
 
     function syncFields() {
       var code = qs(prefix + "-plan").value;
-      var kind = planKind(code);
-      var custom = userState.planMap[code] && userState.planMap[code].Custom;
-      qs(prefix + "-count-wrap").style.display = kind === "count" ? "" : "none";
-      qs(prefix + "-expiry-wrap").style.display = kind === "count" ? "" : "none";
-      qs(prefix + "-expiry-days-wrap").style.display = kind === "count" && qs(prefix + "-expiry").checked ? "" : "none";
+      var p = userState.planMap[code] || {};
+      var kind = p.Kind || "";
+      var custom = !!p.Custom;
+      qs(prefix + "-fixed-wrap").style.display = kind && !custom ? "" : "none";
+      qs(prefix + "-count-wrap").style.display = kind === "count" && custom ? "" : "none";
       qs(prefix + "-days-wrap").style.display = kind === "duration" && custom ? "" : "none";
+      qs(prefix + "-expiry-wrap").style.display = kind === "count" ? "" : "none";
+      if (kind === "count") {
+        var fixed = !custom;
+        qs(prefix + "-fixed").value = fixed ? ((p.QuotaCount || 0) + " 次" + (p.ExpiryDays ? " / " + p.ExpiryDays + " 天" : "")) : "";
+        if (p.ExpiryDays) {
+          qs(prefix + "-expiry").checked = true;
+          qs(prefix + "-expiry-days").value = p.ExpiryDays;
+        }
+        qs(prefix + "-expiry").disabled = !!p.ExpiryDays;
+      } else if (kind === "duration") {
+        qs(prefix + "-fixed").value = p.Unlimited ? "无限时长" : ((p.Days || 0) + " 天");
+      }
+      qs(prefix + "-expiry-days-wrap").style.display = kind === "count" && qs(prefix + "-expiry").checked ? "" : "none";
     }
     qs(prefix + "-plan").addEventListener("change", syncFields);
     qs(prefix + "-expiry").addEventListener("change", syncFields);
     var def = qs("s-default-plan") ? qs("s-default-plan").value : "";
-    if (def && userState.planMap[def]) qs(prefix + "-plan").value = def;
+    if (def && userState.planMap[def] && userState.planMap[def].Enabled !== false) qs(prefix + "-plan").value = def;
     syncFields();
 
     return function () {
-      var payload = {
-        plan_code: qs(prefix + "-plan").value,
-        note: qs(prefix + "-note").value.trim(),
-      };
-      if (planKind(payload.plan_code) === "count") {
-        payload.total_count = Number(qs(prefix + "-count").value) || 0;
-        payload.enforce_expiry = qs(prefix + "-expiry").checked;
-        payload.expiry_days = Number(qs(prefix + "-expiry-days").value) || 0;
-      } else if (userState.planMap[payload.plan_code] && userState.planMap[payload.plan_code].Custom) {
+      var code = qs(prefix + "-plan").value;
+      var p = userState.planMap[code] || {};
+      var payload = { plan_code: code, note: qs(prefix + "-note").value.trim() };
+      if (p.Kind === "count") {
+        if (p.Custom) payload.total_count = Number(qs(prefix + "-count").value) || 0;
+        payload.enforce_expiry = p.ExpiryDays ? true : qs(prefix + "-expiry").checked;
+        payload.expiry_days = p.ExpiryDays ? p.ExpiryDays : (qs(prefix + "-expiry").checked ? (Number(qs(prefix + "-expiry-days").value) || 0) : 0);
+      } else if (p.Custom) {
         payload.days = Number(qs(prefix + "-days").value) || 0;
       }
       return payload;
@@ -1726,42 +1769,75 @@
   }
 
   function openRenewUser(u) {
-    var planOptions = userState.plans.map(function (p) {
-      var sel = p.Code === u.plan_code ? " selected" : "";
-      return '<option value="' + esc(p.Code) + '"' + sel + ">" + esc(p.Label) + "</option>";
-    }).join("");
+    var duration = entitlementOf(u, "duration");
+    var count = entitlementOf(u, "count");
+    var defaultKind = duration ? "duration" : (count ? "count" : "duration");
+    var defaultCode = defaultKind === "duration" ? (duration && duration.plan_code) : (count && count.plan_code);
+
     qs("modal-title").textContent = "续费 / 切换套餐 - " + shortToken(u.token);
     qs("modal-content").innerHTML =
-      '<div class="field"><label>套餐</label><select id="ru-plan">' + planOptions + "</select></div>" +
-      '<div class="field" id="ru-count-wrap"><label>新增次数</label><input id="ru-count" type="number" min="1" value="100"></div>' +
+      '<p class="muted small">时长套餐与时次套餐独立叠加；当前时长有效时，查询优先使用时长。</p>' +
+      '<div class="field"><label>本次操作</label><select id="ru-kind">' +
+        '<option value="duration">时长套餐</option><option value="count">次数套餐</option></select></div>' +
+      '<div class="field"><label>套餐</label><select id="ru-plan"></select></div>' +
+      '<div class="field" id="ru-fixed-wrap" style="display:none;"><label>套餐额度</label><input id="ru-fixed" type="text" readonly></div>' +
+      '<div class="field" id="ru-count-wrap" style="display:none;"><label>新增次数</label><input id="ru-count" type="number" min="1" value="100"></div>' +
       '<div class="field" id="ru-days-wrap" style="display:none;"><label>自定义天数</label><input id="ru-days" type="number" min="1" value="30"></div>' +
-      '<label class="checkbox" id="ru-expiry-wrap"><input type="checkbox" id="ru-expiry"> 设置/延长有效期</label>' +
+      '<label class="checkbox" id="ru-expiry-wrap" style="display:none;"><input type="checkbox" id="ru-expiry"> 设置/延长有效期</label>' +
       '<div class="field" id="ru-expiry-days-wrap" style="display:none;"><label>有效期天数</label><input id="ru-expiry-days" type="number" min="1" value="30"></div>';
+
+    function fillPlanSelect() {
+      var kind = qs("ru-kind").value;
+      var current = kind === "duration" ? duration : count;
+      var code = current && current.plan_code;
+      qs("ru-plan").innerHTML = planOptionsHtml(code, kind);
+      if (!qs("ru-plan").value && qs("ru-plan").options.length) qs("ru-plan").value = qs("ru-plan").options[0].value;
+      syncFields();
+    }
 
     function syncFields() {
       var code = qs("ru-plan").value;
-      var kind = planKind(code);
-      var custom = userState.planMap[code] && userState.planMap[code].Custom;
-      qs("ru-count-wrap").style.display = kind === "count" ? "" : "none";
-      qs("ru-expiry-wrap").style.display = kind === "count" ? "" : "none";
-      qs("ru-expiry-days-wrap").style.display = kind === "count" && qs("ru-expiry").checked ? "" : "none";
+      var p = userState.planMap[code] || {};
+      var kind = p.Kind || "";
+      var custom = !!p.Custom;
+      qs("ru-fixed-wrap").style.display = kind && !custom ? "" : "none";
+      qs("ru-count-wrap").style.display = kind === "count" && custom ? "" : "none";
       qs("ru-days-wrap").style.display = kind === "duration" && custom ? "" : "none";
+      qs("ru-expiry-wrap").style.display = kind === "count" ? "" : "none";
+      if (kind === "count") {
+        qs("ru-fixed").value = custom ? "" : ((p.QuotaCount || 0) + " 次" + (p.ExpiryDays ? " / " + p.ExpiryDays + " 天" : ""));
+        if (p.ExpiryDays) {
+          qs("ru-expiry").checked = true;
+          qs("ru-expiry-days").value = p.ExpiryDays;
+        }
+        qs("ru-expiry").disabled = !!p.ExpiryDays;
+      } else if (kind === "duration") {
+        qs("ru-fixed").value = p.Unlimited ? "无限时长" : ((p.Days || 0) + " 天");
+      }
+      qs("ru-expiry-days-wrap").style.display = kind === "count" && qs("ru-expiry").checked ? "" : "none";
     }
+
+    qs("ru-kind").value = defaultKind;
+    qs("ru-kind").addEventListener("change", fillPlanSelect);
     qs("ru-plan").addEventListener("change", syncFields);
     qs("ru-expiry").addEventListener("change", syncFields);
+    fillPlanSelect();
+    if (defaultCode && userState.planMap[defaultCode]) qs("ru-plan").value = defaultCode;
     syncFields();
 
     modalSubmit = function () {
-      var payload = { plan_code: qs("ru-plan").value };
-      if (planKind(payload.plan_code) === "count") {
-        payload.total_count = Number(qs("ru-count").value) || 0;
-        payload.enforce_expiry = qs("ru-expiry").checked;
-        payload.expiry_days = Number(qs("ru-expiry-days").value) || 0;
-      } else if (userState.planMap[payload.plan_code] && userState.planMap[payload.plan_code].Custom) {
+      var code = qs("ru-plan").value;
+      var p = userState.planMap[code] || {};
+      var payload = { plan_code: code };
+      if (p.Kind === "count") {
+        if (p.Custom) payload.total_count = Number(qs("ru-count").value) || 0;
+        payload.enforce_expiry = p.ExpiryDays ? true : qs("ru-expiry").checked;
+        payload.expiry_days = p.ExpiryDays ? p.ExpiryDays : (qs("ru-expiry").checked ? (Number(qs("ru-expiry-days").value) || 0) : 0);
+      } else if (p.Custom) {
         payload.days = Number(qs("ru-days").value) || 0;
       }
       api("/users/" + u.id + "/renew", { method: "POST", body: JSON.stringify(payload) }).then(function (res) {
-        if (!res.success) { toast(res.message); return; }
+        if (!res.success) { toast(res.message, "error"); return; }
         closeModal();
         loadUsers();
       });
@@ -1782,6 +1858,185 @@
     };
     qs("modal").classList.remove("hidden");
   }
+
+  // ---------------------------------------------------------------- plans
+
+  function planTypeLabel(kind) { return kind === "count" ? "次数套餐" : "时长套餐"; }
+
+  function planQuotaText(p) {
+    if (p.Kind === "count") {
+      return p.Custom ? "自定义次数" : ((p.QuotaCount || 0) + " 次");
+    }
+    if (p.Unlimited) return "无限时长";
+    return p.Custom ? "自定义天数" : ((p.Days || 0) + " 天");
+  }
+
+  function planPriceText(p) {
+    if (!p.PriceCents) return "-";
+    return "¥" + (p.PriceCents / 100).toFixed(2);
+  }
+
+  function planToPayload(p, overrides) {
+    var payload = {
+      label: p.Label, kind: p.Kind, days: p.Days || 0,
+      quota_count: p.QuotaCount || 0, unlimited: !!p.Unlimited, custom: !!p.Custom,
+      expiry_days: p.ExpiryDays || 0, enabled: p.Enabled !== false, sort: p.Sort || 0,
+      price_cents: p.PriceCents || 0, currency: p.Currency || "CNY",
+      description: p.Description || "", badge: p.Badge || "",
+    };
+    if (overrides) Object.assign(payload, overrides);
+    return payload;
+  }
+
+  function renderPlanTable(plans) {
+    var body = qs("pl-table").querySelector("tbody");
+    if (!plans.length) {
+      body.innerHTML = '<tr><td colspan="10" class="muted">暂无套餐，点击「新增套餐」创建。</td></tr>';
+      return;
+    }
+    body.innerHTML = plans.map(function (p) {
+      var toggle = p.Enabled !== false
+        ? '<button data-act="toggle" data-code="' + esc(p.Code) + '" class="btn ghost small">停用</button>'
+        : '<button data-act="toggle" data-code="' + esc(p.Code) + '" class="btn ghost small">启用</button>';
+      return "<tr>" +
+        "<td>" + (p.Sort || 0) + "</td>" +
+        '<td class="mono small">' + esc(p.Code) + "</td>" +
+        "<td>" + esc(p.Label) + "</td>" +
+        "<td>" + planTypeLabel(p.Kind) + "</td>" +
+        "<td>" + esc(planQuotaText(p)) + "</td>" +
+        "<td>" + esc(planPriceText(p)) + "</td>" +
+        "<td>" + (p.Enabled !== false ? '<span class="pill manual">启用</span>' : '<span class="pill disabled">停用</span>') + "</td>" +
+        "<td>" + (p.UserCount || 0) + "</td>" +
+        "<td>" + (p.BatchCount || 0) + "</td>" +
+        '<td><div class="row-actions">' +
+          '<button data-act="edit" data-code="' + esc(p.Code) + '" class="btn ghost small">编辑</button>' +
+          toggle +
+          '<button data-act="delete" data-code="' + esc(p.Code) + '" class="btn danger small">删除</button>' +
+        "</div></td>" +
+      "</tr>";
+    }).join("");
+  }
+
+  function loadPlans() {
+    api("/plans").then(function (data) {
+      if (!data.success) { toast(data.message || "加载套餐失败", "error"); return; }
+      syncPlans(data.plans || []);
+      renderPlanTable(userState.plans);
+      qs("pl-status").textContent = "共 " + userState.plans.length + " 个套餐，启用 " +
+        userState.plans.filter(function (p) { return p.Enabled !== false; }).length + " 个";
+      fillPlanOptions(qs("s-default-plan"), qs("s-default-plan") ? qs("s-default-plan").value : "");
+    });
+  }
+
+  function openPlanModal(existing) {
+    var p = existing || {
+      Code: "", Label: "", Kind: "duration", Days: 30, QuotaCount: 0,
+      Unlimited: false, Custom: false, ExpiryDays: 0, Enabled: true,
+      Sort: (userState.plans.length + 1) * 10, PriceCents: 0, Currency: "CNY",
+      Description: "", Badge: "",
+    };
+    var editing = !!existing;
+    qs("modal-title").textContent = editing ? "编辑套餐 - " + p.Code : "新增套餐";
+    qs("modal-content").innerHTML =
+      '<div class="grid-3">' +
+        '<div class="field"><label>套餐代码</label><input id="pf-code" type="text" value="' + esc(p.Code) + '"' + (editing ? " readonly" : "") + ' placeholder="例如 count_1000"></div>' +
+        '<div class="field"><label>套餐名称</label><input id="pf-label" type="text" value="' + esc(p.Label) + '"></div>' +
+        '<div class="field"><label>套餐类型</label><select id="pf-kind"' + (editing ? " disabled" : "") + '><option value="duration">时长套餐</option><option value="count">次数套餐</option></select></div>' +
+      '</div>' +
+      '<div class="grid-3">' +
+        '<div class="field"><label>排序</label><input id="pf-sort" type="number" min="0" value="' + (p.Sort || 0) + '"></div>' +
+        '<div class="field"><label>价格（元，可选）</label><input id="pf-price" type="number" min="0" step="0.01" value="' + ((p.PriceCents || 0) / 100) + '"></div>' +
+        '<div class="field"><label>币种</label><input id="pf-currency" type="text" value="' + esc(p.Currency || "CNY") + '"></div>' +
+      '</div>' +
+      '<div class="grid-3">' +
+        '<div class="field" id="pf-days-wrap"><label>固定天数</label><input id="pf-days" type="number" min="1" value="' + (p.Days || 30) + '"></div>' +
+        '<div class="field" id="pf-count-wrap"><label>固定次数</label><input id="pf-count" type="number" min="1" value="' + (p.QuotaCount || 1000) + '"></div>' +
+        '<div class="field" id="pf-expiry-days-wrap"><label>次数有效期（天，0 表示不过期）</label><input id="pf-expiry-days" type="number" min="0" value="' + (p.ExpiryDays || 0) + '"></div>' +
+      '</div>' +
+      '<label class="checkbox" id="pf-unlimited-wrap"><input type="checkbox" id="pf-unlimited"> 无限时长</label>' +
+      '<label class="checkbox" id="pf-custom-wrap"><input type="checkbox" id="pf-custom"> 分配时自定义额度</label>' +
+      '<label class="checkbox"><input type="checkbox" id="pf-enabled"> 启用</label>' +
+      '<div class="field"><label>说明</label><input id="pf-description" type="text" value="' + esc(p.Description || "") + '"></div>' +
+      '<div class="field"><label>角标</label><input id="pf-badge" type="text" value="' + esc(p.Badge || "") + '"></div>';
+
+    qs("pf-kind").value = p.Kind;
+    qs("pf-unlimited").checked = !!p.Unlimited;
+    qs("pf-custom").checked = !!p.Custom;
+    qs("pf-enabled").checked = p.Enabled !== false;
+
+    function syncFields() {
+      var kind = qs("pf-kind").value;
+      var unlimited = qs("pf-unlimited").checked;
+      var custom = qs("pf-custom").checked;
+      qs("pf-days-wrap").style.display = kind === "duration" && !unlimited && !custom ? "" : "none";
+      qs("pf-count-wrap").style.display = kind === "count" && !custom ? "" : "none";
+      qs("pf-expiry-days-wrap").style.display = kind === "count" ? "" : "none";
+      qs("pf-unlimited-wrap").style.display = kind === "duration" ? "" : "none";
+      if (kind === "count") qs("pf-unlimited").checked = false;
+      if (unlimited || custom) qs("pf-days-wrap").style.display = "none";
+    }
+    qs("pf-kind").addEventListener("change", syncFields);
+    qs("pf-unlimited").addEventListener("change", syncFields);
+    qs("pf-custom").addEventListener("change", syncFields);
+    syncFields();
+
+    modalSubmit = function () {
+      var kind = qs("pf-kind").value;
+      var unlimited = qs("pf-unlimited").checked;
+      var custom = qs("pf-custom").checked;
+      var payload = {
+        label: qs("pf-label").value.trim(), kind: kind,
+        days: kind === "duration" && !unlimited && !custom ? (Number(qs("pf-days").value) || 0) : 0,
+        quota_count: kind === "count" && !custom ? (Number(qs("pf-count").value) || 0) : 0,
+        unlimited: kind === "duration" && unlimited,
+        custom: custom,
+        expiry_days: kind === "count" ? (Number(qs("pf-expiry-days").value) || 0) : 0,
+        enabled: qs("pf-enabled").checked,
+        sort: Number(qs("pf-sort").value) || 0,
+        price_cents: Math.round((Number(qs("pf-price").value) || 0) * 100),
+        currency: qs("pf-currency").value.trim() || "CNY",
+        description: qs("pf-description").value.trim(),
+        badge: qs("pf-badge").value.trim(),
+      };
+      var url = editing ? "/plans/" + encodeURIComponent(p.Code) : "/plans";
+      api(url, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) }).then(function (res) {
+        if (!res.success) { toast(res.message, "error"); return; }
+        closeModal();
+        loadPlans();
+        toast(editing ? "套餐已更新" : "套餐已创建", "success");
+      });
+    };
+    qs("modal").classList.remove("hidden");
+  }
+
+  qs("pl-add").addEventListener("click", function () { openPlanModal(null); });
+  qs("pl-refresh").addEventListener("click", loadPlans);
+  qs("pl-table").addEventListener("click", async function (e) {
+    var btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    var code = btn.getAttribute("data-code");
+    var p = userState.planMap[code];
+    if (!p) return;
+    var act = btn.getAttribute("data-act");
+    if (act === "edit") { openPlanModal(p); return; }
+    if (act === "toggle") {
+      api("/plans/" + encodeURIComponent(code), {
+        method: "PUT", body: JSON.stringify(planToPayload(p, { enabled: p.Enabled === false })),
+      }).then(function (res) {
+        if (!res.success) { toast(res.message, "error"); return; }
+        loadPlans();
+      });
+      return;
+    }
+    if (act === "delete") {
+      if (!(await confirmDialog("删除套餐「" + p.Label + "」？有用户或卡密引用时只能停用。", { danger: true, okText: "删除" }))) return;
+      api("/plans/" + encodeURIComponent(code), { method: "DELETE" }).then(function (res) {
+        if (!res.success) { toast(res.message, "error"); return; }
+        loadPlans();
+        toast("套餐已删除", "success");
+      });
+    }
+  });
 
   qs("u-table").addEventListener("click", async function (e) {
     var btn = e.target.closest("button[data-act]");
@@ -1991,16 +2246,30 @@
     var sel = qs("rd-plan");
     var keep = sel.value;
     sel.innerHTML = userState.plans.filter(function (p) {
+      if (p.Enabled === false) return false;
       if (kind === "count") return p.Kind === "count";
       return p.Kind === "duration" && !p.Unlimited;
     }).map(function (p) {
       return '<option value="' + esc(p.Code) + '">' + esc(p.Label) + "</option>";
     }).join("");
-    if (keep && userState.planMap[keep]) sel.value = keep;
+    if (keep && userState.planMap[keep] && userState.planMap[keep].Enabled !== false) sel.value = keep;
     if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
-    var current = userState.planMap[sel.value];
-    if (kind === "duration" && current && !current.Custom && current.Days) {
-      qs("rd-days").value = current.Days;
+    syncRedeemFields();
+  }
+
+  function syncRedeemFields() {
+    var kind = qs("rd-kind").value;
+    var p = userState.planMap[qs("rd-plan").value] || {};
+    if (kind === "count") {
+      qs("rd-amount").value = p.Custom ? (qs("rd-amount").value || 100) : (p.QuotaCount || 0);
+      qs("rd-amount").disabled = !p.Custom;
+      qs("rd-days").value = p.ExpiryDays || 0;
+      qs("rd-days").disabled = true;
+    } else {
+      qs("rd-days").value = p.Custom ? (qs("rd-days").value || 30) : (p.Days || 0);
+      qs("rd-days").disabled = !p.Custom;
+      qs("rd-amount").value = 0;
+      qs("rd-amount").disabled = true;
     }
   }
 
@@ -2048,7 +2317,7 @@
   }
 
   qs("rd-kind").addEventListener("change", fillRedeemPlans);
-  qs("rd-plan").addEventListener("change", fillRedeemPlans);
+  qs("rd-plan").addEventListener("change", syncRedeemFields);
 
   qs("rd-create").addEventListener("click", function () {
     var kind = qs("rd-kind").value;

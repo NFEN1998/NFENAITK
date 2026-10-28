@@ -61,7 +61,7 @@
             </svg>
           </div>
           <div v-if="importMenuOpen" class="import-menu">
-            <button class="menu-item" @click="importSoftwareExportedFile">导入ZError导出的文件</button>
+            <button class="menu-item" @click="importSoftwareExportedFile">导入NFENTK导出的文件</button>
           </div>
 
           <!-- 导出按钮 -->

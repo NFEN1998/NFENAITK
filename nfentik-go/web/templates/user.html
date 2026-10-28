@@ -97,10 +97,11 @@
         </div>
         <div class="plan-grid">
           <div class="plan-item"><span class="label">用户令牌</span><strong id="user-name" class="mono">-</strong></div>
-          <div class="plan-item"><span class="label">套餐</span><strong id="user-plan-label">-</strong></div>
+          <div class="plan-item"><span class="label">当前权益</span><strong id="user-plan-label">-</strong></div>
           <div class="plan-item"><span class="label">开始时间</span><strong id="user-start">-</strong></div>
           <div class="plan-item"><span class="label">到期时间</span><strong id="user-expire">-</strong></div>
         </div>
+        <div id="user-entitlements" class="plan-grid entitlement-grid"></div>
         <div id="user-quota" class="quota hidden">
           <div class="quota-head">
             <span id="user-quota-label">剩余次数</span>
@@ -190,10 +191,43 @@
 
       <section class="card">
         <div class="plan-head">
-          <h2>URL 模式调用</h2>
+          <h2>URL 模式1调用</h2>
+          <button id="user-copy-url1" class="btn primary small">复制接口</button>
+        </div>
+        <p class="muted small">MOGO 题库对接模式。把短接口填入 MOGO 的题库设置或外置接口，MOGO 会自动追加 <code>q</code>、<code>info</code>、<code>kcinfo</code>；MOGO 的 info 与 data 分割符号请设置为 <code>###</code>。链接已包含你的个人令牌，请勿泄露。</p>
+        <div class="field url-field">
+          <label>接口示例（填到 MOGO）</label>
+          <div class="url-row">
+            <input id="user-url-mogo" class="mono" readonly spellcheck="false">
+            <button type="button" data-copy="user-url-mogo" class="btn ghost small">复制</button>
+          </div>
+        </div>
+        <div class="field url-field">
+          <label>完整调试示例</label>
+          <div class="url-row">
+            <input id="user-url-mogo-debug" class="mono" readonly spellcheck="false">
+            <button type="button" data-copy="user-url-mogo-debug" class="btn ghost small">复制</button>
+          </div>
+        </div>
+        <div class="sample-grid">
+          <div class="sample">
+            <label>成功返回</label>
+            <pre class="response-sample">{"code":1,"data":"答案"}</pre>
+            <pre class="response-sample">{"code":1,"data":"答案1###答案2"}</pre>
+          </div>
+          <div class="sample">
+            <label>失败返回</label>
+            <pre class="response-sample">{"code":-1}</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="plan-head">
+          <h2>URL 模式2调用</h2>
           <button id="user-copy-url" class="btn primary small">复制接口</button>
         </div>
-        <p class="muted small">直接用 GET 请求调用，把 <code>title</code> 换成题目内容即可；<code>q</code> 与 <code>title</code> 等价。链接已包含你的个人令牌，请勿泄露。</p>
+        <p class="muted small">原有 <code>/query</code> URL 模式，返回 OCS 结构，适合非 MOGO 场景。把 <code>title</code> 换成题目内容即可；<code>q</code> 与 <code>title</code> 等价。链接已包含你的个人令牌，请勿泄露。</p>
         <div class="field url-field">
           <label>示例（title）</label>
           <div class="url-row">
@@ -206,6 +240,16 @@
           <div class="url-row">
             <input id="user-url-q" class="mono" readonly spellcheck="false">
             <button type="button" data-copy="user-url-q" class="btn ghost small">复制</button>
+          </div>
+        </div>
+        <div class="sample-grid">
+          <div class="sample">
+            <label>成功返回</label>
+            <pre class="response-sample">{"code":1,"data":{"id":12,"question":"题目内容","answer":"答案","is_ai":false,"is_pending_correction":false}}</pre>
+          </div>
+          <div class="sample">
+            <label>失败返回</label>
+            <pre class="response-sample">{"code":0,"message":"AI未能给出有效答案"}</pre>
           </div>
         </div>
       </section>

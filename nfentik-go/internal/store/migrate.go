@@ -248,6 +248,53 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_redeem_codes_status ON RedemptionCodes (Status)`,
 		},
 	},
+
+	{
+		Version: 9,
+		Name:    "plans_catalogue",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS Plans (
+				Code VARCHAR(32) PRIMARY KEY,
+				Label VARCHAR(64) NOT NULL,
+				Kind VARCHAR(16) NOT NULL,
+				Days INTEGER NOT NULL DEFAULT 0,
+				QuotaCount BIGINT NOT NULL DEFAULT 0,
+				Unlimited BOOLEAN NOT NULL DEFAULT FALSE,
+				Custom BOOLEAN NOT NULL DEFAULT FALSE,
+				ExpiryDays INTEGER NOT NULL DEFAULT 0,
+				Enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				Sort INTEGER NOT NULL DEFAULT 0,
+				PriceCents BIGINT NOT NULL DEFAULT 0,
+				Currency VARCHAR(8) NOT NULL DEFAULT 'CNY',
+				Description VARCHAR(255) NOT NULL DEFAULT '',
+				Badge VARCHAR(32) NOT NULL DEFAULT '',
+				CreatedAt TIMESTAMP DEFAULT NOW(),
+				UpdatedAt TIMESTAMP DEFAULT NOW()
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_plans_sort ON Plans(Sort, Code)`,
+		},
+	},
+	{
+		Version: 10,
+		Name:    "user_entitlements",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS UserEntitlements (
+				UserId BIGINT NOT NULL,
+				Kind VARCHAR(16) NOT NULL,
+				PlanCode VARCHAR(64) NOT NULL DEFAULT '',
+				PlanLabel VARCHAR(128) NOT NULL DEFAULT '',
+				StartAt TEXT NOT NULL DEFAULT '',
+				ExpireAt TEXT,
+				Unlimited BOOLEAN NOT NULL DEFAULT FALSE,
+				TotalCount BIGINT,
+				UsedCount BIGINT NOT NULL DEFAULT 0,
+				RemainCount BIGINT,
+				UpdatedAt TIMESTAMP DEFAULT NOW(),
+				PRIMARY KEY (UserId, Kind)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_entitlements_plan ON UserEntitlements(PlanCode)`,
+		},
+	},
 }
 
 // coreTables are the tables every release expects. They are folded into the
@@ -264,6 +311,8 @@ var coreTables = []string{
 	"accountsessions",
 	"redemptionbatches",
 	"redemptioncodes",
+	"plans",
+	"userentitlements",
 }
 
 // canonicalTables maps the lowercased table names used by the integrity checks
@@ -281,6 +330,8 @@ var canonicalTables = map[string]string{
 	"accountsessions":    "AccountSessions",
 	"redemptionbatches":  "RedemptionBatches",
 	"redemptioncodes":    "RedemptionCodes",
+	"plans":              "Plans",
+	"userentitlements":   "UserEntitlements",
 	"schemamigrations":   "SchemaMigrations",
 }
 
@@ -310,6 +361,8 @@ var coreColumns = map[string][]string{
 	"accountsessions":    {"id", "accountid", "tokenhash", "expiresat", "createdat", "lastseenat", "ip", "useragent"},
 	"redemptionbatches":  {"id", "batchno", "kind", "plancode", "amount", "days", "quantity", "note", "createdat"},
 	"redemptioncodes":    {"id", "batchid", "codehash", "kind", "amount", "days", "expiresat", "status", "usedby", "usedat", "createdat"},
+	"plans":              {"code", "label", "kind", "days", "quotacount", "unlimited", "custom", "expirydays", "enabled", "sort", "pricecents", "currency", "description", "badge", "createdat", "updatedat"},
+	"userentitlements":   {"userid", "kind", "plancode", "planlabel", "startat", "expireat", "unlimited", "totalcount", "usedcount", "remaincount", "updatedat"},
 }
 
 // ColumnIssue names a single missing column on a table.
@@ -752,6 +805,41 @@ var mysqlTableDDL = []string{
 		UNIQUE KEY idx_redeem_codes_hash (CodeHash),
 		KEY idx_redeem_codes_batch (BatchId),
 		KEY idx_redeem_codes_status (Status)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS Plans (
+		Code VARCHAR(32) NOT NULL,
+		Label VARCHAR(64) NOT NULL,
+		Kind VARCHAR(16) NOT NULL,
+		Days INT NOT NULL DEFAULT 0,
+		QuotaCount BIGINT NOT NULL DEFAULT 0,
+		Unlimited TINYINT(1) NOT NULL DEFAULT 0,
+		Custom TINYINT(1) NOT NULL DEFAULT 0,
+		ExpiryDays INT NOT NULL DEFAULT 0,
+		Enabled TINYINT(1) NOT NULL DEFAULT 1,
+		Sort INT NOT NULL DEFAULT 0,
+		PriceCents BIGINT NOT NULL DEFAULT 0,
+		Currency VARCHAR(8) NOT NULL DEFAULT 'CNY',
+		Description VARCHAR(255) NOT NULL DEFAULT '',
+		Badge VARCHAR(32) NOT NULL DEFAULT '',
+		CreatedAt DATETIME DEFAULT NOW(),
+		UpdatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (Code),
+		KEY idx_plans_sort (Sort, Code)
+	)` + mysqlTableOptions,
+	`CREATE TABLE IF NOT EXISTS UserEntitlements (
+		UserId BIGINT NOT NULL,
+		Kind VARCHAR(16) NOT NULL,
+		PlanCode VARCHAR(64) NOT NULL DEFAULT '',
+		PlanLabel VARCHAR(128) NOT NULL DEFAULT '',
+		StartAt VARCHAR(32) NOT NULL DEFAULT '',
+		ExpireAt VARCHAR(32) NULL,
+		Unlimited TINYINT(1) NOT NULL DEFAULT 0,
+		TotalCount BIGINT NULL,
+		UsedCount BIGINT NOT NULL DEFAULT 0,
+		RemainCount BIGINT NULL,
+		UpdatedAt DATETIME DEFAULT NOW(),
+		PRIMARY KEY (UserId, Kind),
+		KEY idx_user_entitlements_plan (PlanCode)
 	)` + mysqlTableOptions,
 }
 
@@ -1207,6 +1295,9 @@ func (s *Store) writeQuestionHashBatch(items []pendingHash) error {
 // concurrent multi-channel inserts safe. Idempotent: it runs after
 // ensureQuestionHash on every startup and does nothing once the index exists.
 func (s *Store) ensureOptionsHash() error {
+	if err := s.ensureOptionsHashVersion(); err != nil {
+		return err
+	}
 	if err := s.backfillOptionsHash(); err != nil {
 		return err
 	}
@@ -1218,6 +1309,54 @@ func (s *Store) ensureOptionsHash() error {
 		s.dedupeBankRows()
 	}
 	return s.ensureOptionsUniqueIndex()
+}
+
+const optionsHashVersionKey = "options_hash_version"
+
+// ensureOptionsHashVersion rehashes every options digest when the normalization
+// algorithm changes. OptionsHash is part of the uniqueness key and the cache
+// key, so a stale digest would make formula options collide or miss.
+func (s *Store) ensureOptionsHashVersion() error {
+	raw, found, err := s.GetSetting(optionsHashVersionKey)
+	if err != nil {
+		return fmt.Errorf("读取 OptionsHash 版本: %w", err)
+	}
+	if found && decodeNormalizerVersion(raw) == match.NormalizerVersion {
+		return nil
+	}
+	if err := s.rehashOptionsHash(); err != nil {
+		return err
+	}
+	return s.SetSetting(optionsHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion)))
+}
+
+// rehashOptionsHash recomputes OptionsHash for every row in bounded, key
+// ordered batches.
+func (s *Store) rehashOptionsHash() error {
+	const batchSize = 2000
+	log.Printf("归一化算法已更新，开始重算 OptionsHash（分批进行）")
+	lastID := int64(0)
+	for {
+		rows, err := s.query(
+			`SELECT Id, COALESCE(Options, '') FROM AIResponses WHERE Id > $1 ORDER BY Id LIMIT $2`,
+			lastID, batchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("读取待重算选项: %w", err)
+		}
+		items, err := scanPendingOptions(rows)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			log.Printf("OptionsHash 重算完成")
+			return nil
+		}
+		if err := s.writeOptionsHashBatch(items); err != nil {
+			return err
+		}
+		lastID = items[len(items)-1].id
+	}
 }
 
 // backfillOptionsHash fills OptionsHash for every row still missing one, in

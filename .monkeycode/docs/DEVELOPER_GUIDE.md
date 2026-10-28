@@ -2,7 +2,7 @@
 
 ## 项目目的
 
-nfentik-go 是 ZError 的 Go 服务端实现，用于为 OCS 网课助手提供本地 + 第三方 + AI 的多级题库查询服务。它在系统中担任后端服务角色，通过单一 HTTP 端口提供查询接口、管理控制台与用户中心。
+nfentik-go 是 NFENTK 的 Go 服务端实现，用于为 OCS 网课助手提供本地 + 第三方 + AI 的多级题库查询服务。它在系统中担任后端服务角色，通过单一 HTTP 端口提供查询接口、管理控制台与用户中心。
 
 **核心职责**
 - 解析 `/query` 请求并返回答案（缓存 → 本地题库 → 第三方题库 → AI）
@@ -18,7 +18,7 @@ nfentik-go 是 ZError 的 Go 服务端实现，用于为 OCS 网课助手提供�
 
 ### 前置条件
 
-- Go 1.25（`go.mod` 声明）或更高
+- Go 1.27（`go.mod` 声明）或更高
 - PostgreSQL 13+ 或 MySQL 5.7+ / MariaDB 10.2+
 - CGO 工具链（`gcc`）：gojieba 与 go-sqlite3 依赖 CGO，`CGO_ENABLED=0` 构建会失败
 - Redis 6+（可选）

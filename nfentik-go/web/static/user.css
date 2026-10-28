@@ -116,6 +116,7 @@ body {
 .plan-item { display: flex; flex-direction: column; gap: 4px; }
 .plan-item .label { color: var(--muted); font-size: 12px; }
 .plan-item strong { font-size: 15px; word-break: break-word; }
+.entitlement-grid { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; background: #eef0f3; color: #4b5563; }
 .pill.active { background: #dcfce7; color: #15803d; }
@@ -151,6 +152,16 @@ body {
   border-radius: var(--radius-sm); font-size: 13px; background: var(--panel-2); color: inherit;
 }
 .url-row .btn { flex: 0 0 auto; }
+
+.sample-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.sample label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.response-sample {
+  margin: 0 0 8px; padding: 10px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; white-space: pre-wrap; word-break: break-all;
+}
+.response-sample:last-child { margin-bottom: 0; }
 
 .table-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; box-shadow: var(--shadow-sm); }
 table { width: 100%; border-collapse: collapse; }
@@ -191,6 +202,7 @@ tbody tr:hover { background: var(--panel-2); }
   .user-main { padding: 14px 12px 32px; }
   .card { padding: 15px; }
   .table-wrap table { min-width: 720px; }
+  .sample-grid { grid-template-columns: 1fr; }
   .login-field input, .note-edit textarea, .editor { font-size: 16px; }
   .pager { justify-content: space-between; }
   .pager .btn { flex: 1; }

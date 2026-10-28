@@ -21,6 +21,7 @@ var (
 	ErrCodeNeedsDuration    = errors.New("当前套餐请使用时长卡密")
 	ErrCodeNeedsCount       = errors.New("当前套餐请使用次数卡密")
 	ErrCodeNoNeed           = errors.New("当前套餐无需充值")
+	ErrCodeUnlimited        = errors.New("当前已是无限时长套餐，无需使用时长卡")
 	ErrCodeInvalidBatch     = errors.New("卡密批次参数无效")
 	ErrCodeInvalidCodeInput = errors.New("卡密格式无效")
 	ErrRedeemUserDisabled   = errors.New("账号已停用")
@@ -149,15 +150,25 @@ func (s *Store) CreateRedemptionBatch(kind, planCode string, amount int64, days,
 			planCode = "monthly"
 		}
 	}
-	p, ok := plan.Lookup(planCode)
-	if !ok || string(p.Kind) != kind || p.Unlimited {
+	p, err := s.GetPlan(planCode)
+	if err != nil {
+		return RedemptionBatch{}, nil, ErrCodeInvalidBatch
+	}
+	if !p.Enabled || string(p.Kind) != kind || p.Unlimited {
 		return RedemptionBatch{}, nil, ErrCodeInvalidBatch
 	}
 	if kind == string(plan.KindCount) {
-		if amount <= 0 {
-			return RedemptionBatch{}, nil, errors.New("次数卡密需要大于 0 的额度")
+		if p.Custom {
+			if amount <= 0 {
+				return RedemptionBatch{}, nil, errors.New("次数卡密需要大于 0 的额度")
+			}
+		} else {
+			amount = p.QuotaCount
+			if amount <= 0 {
+				return RedemptionBatch{}, nil, ErrCodeInvalidBatch
+			}
 		}
-		days = 0
+		days = p.ExpiryDays
 	} else {
 		if p.Custom {
 			if days <= 0 {
@@ -276,7 +287,9 @@ func (s *Store) RevokeRedemptionBatch(batchID int64) (int64, error) {
 	return n, nil
 }
 
-// RedeemCode applies one code to a user inside a single transaction.
+// RedeemCode applies one code to a user inside a single transaction. Duration
+// codes extend the duration entitlement; count codes add to the count
+// entitlement. The other entitlement is preserved.
 func (s *Store) RedeemCode(userID int64, codeHash string) (RedeemResult, error) {
 	codeHash = strings.TrimSpace(codeHash)
 	if codeHash == "" {
@@ -326,16 +339,27 @@ func (s *Store) RedeemCode(userID int64, codeHash string) (RedeemResult, error) 
 		return RedeemResult{}, ErrRedeemUserDisabled
 	}
 
-	next, err := applyRedemption(u, code, now)
+	label := code.PlanCode
+	if p, err := s.GetPlan(code.PlanCode); err == nil && strings.TrimSpace(p.Label) != "" {
+		label = p.Label
+	}
+	ents, err := s.loadEntitlementsTx(tx, userID)
 	if err != nil {
 		return RedeemResult{}, err
 	}
-	if _, err := execOn(s.dialect, tx, `UPDATE Users
-		SET PlanType=$1, PlanCode=$2, PlanLabel=$3, StartAt=$4, ExpireAt=$5,
-		    TotalCount=$6, RemainCount=$7, UsedCount=$8, UpdatedAt=NOW()
-		WHERE Id=$9`,
-		next.PlanType, next.PlanCode, next.PlanLabel, next.StartAt, next.ExpireAt,
-		next.TotalCount, next.RemainCount, next.UsedCount, u.ID); err != nil {
+	switch code.Kind {
+	case string(plan.KindCount):
+		if err := s.applyCountRedemptionTx(tx, userID, code, label, ents, now); err != nil {
+			return RedeemResult{}, err
+		}
+	case string(plan.KindDuration):
+		if err := s.applyDurationRedemptionTx(tx, userID, code, label, ents, now); err != nil {
+			return RedeemResult{}, err
+		}
+	default:
+		return RedeemResult{}, fmt.Errorf("%w: %s", ErrCodeInvalid, code.Kind)
+	}
+	if err := s.syncPrimaryPlanTx(tx, userID); err != nil {
 		return RedeemResult{}, err
 	}
 	res, err := execOn(s.dialect, tx, `UPDATE RedemptionCodes SET Status='used', UsedBy=$1, UsedAt=$2
@@ -368,93 +392,75 @@ func (s *Store) RedeemCode(userID int64, codeHash string) (RedeemResult, error) 
 	return RedeemResult{User: updated, BatchID: code.BatchID, Kind: code.Kind, Amount: code.Amount, Days: code.Days}, nil
 }
 
-// applyRedemption computes the user's next plan without touching the database.
-func applyRedemption(u User, code RedemptionCode, now time.Time) (User, error) {
-	next := u
-	zeroQuota := u.PlanType == string(plan.KindCount) &&
-		u.TotalCount != nil && *u.TotalCount == 0 &&
-		u.RemainCount != nil && *u.RemainCount == 0 &&
-		u.UsedCount == 0
-
-	var currentExpiry time.Time
-	hasExpiry := false
-	if u.ExpireAt != nil {
-		if t, err := parseTime(*u.ExpireAt); err == nil {
-			currentExpiry = t
-			hasExpiry = true
+func (s *Store) applyDurationRedemptionTx(tx *sql.Tx, userID int64, code RedemptionCode, label string, ents []Entitlement, now time.Time) error {
+	if code.Days <= 0 {
+		return errors.New("时长卡密天数无效")
+	}
+	current := findEntitlement(ents, string(plan.KindDuration))
+	if current != nil && current.Unlimited {
+		return ErrCodeUnlimited
+	}
+	base := now
+	e := Entitlement{
+		UserID: userID, Kind: string(plan.KindDuration),
+		PlanCode: code.PlanCode, PlanLabel: label,
+		StartAt: now.Format("2006-01-02 15:04:05"),
+	}
+	if current != nil {
+		e.StartAt = current.StartAt
+		e.UsedCount = current.UsedCount
+		if current.ExpireAt != nil {
+			if t, err := parseTime(*current.ExpireAt); err == nil && t.After(now) {
+				base = t
+			}
 		}
 	}
-
-	switch code.Kind {
-	case string(plan.KindCount):
-		if !zeroQuota && u.PlanType != string(plan.KindCount) {
-			if !hasExpiry {
-				return next, ErrCodeNoNeed
-			}
-			if currentExpiry.After(now) {
-				return next, ErrCodeNeedsDuration
-			}
-		}
-		next.PlanType = string(plan.KindCount)
-		next.PlanCode = code.PlanCode
-		next.PlanLabel = planLabel(code.PlanCode, "按次")
-		next.ExpireAt = nil
-		if u.PlanType == string(plan.KindCount) {
-			total := int64(0)
-			if u.TotalCount != nil {
-				total = *u.TotalCount
-			}
-			remain := int64(0)
-			if u.RemainCount != nil {
-				remain = *u.RemainCount
-			}
-			total += code.Amount
-			remain += code.Amount
-			next.TotalCount = int64ptr(total)
-			next.RemainCount = int64ptr(remain)
-			if hasExpiry && currentExpiry.After(now) {
-				exp := currentExpiry.Format("2006-01-02 15:04:05")
-				next.ExpireAt = &exp
-			}
-		} else {
-			next.StartAt = now.Format("2006-01-02 15:04:05")
-			next.TotalCount = int64ptr(code.Amount)
-			next.RemainCount = int64ptr(code.Amount)
-			next.UsedCount = 0
-		}
-	case string(plan.KindDuration):
-		if !zeroQuota && u.PlanType == string(plan.KindCount) {
-			if u.RemainCount != nil && *u.RemainCount > 0 {
-				return next, ErrCodeNeedsCount
-			}
-		}
-		if !zeroQuota && u.PlanType == string(plan.KindDuration) && !hasExpiry {
-			return next, ErrCodeNoNeed
-		}
-		base := now
-		if hasExpiry && currentExpiry.After(now) {
-			base = currentExpiry
-		}
-		exp := base.AddDate(0, 0, code.Days).Format("2006-01-02 15:04:05")
-		if u.PlanType != string(plan.KindDuration) {
-			next.StartAt = now.Format("2006-01-02 15:04:05")
-			next.UsedCount = 0
-		}
-		next.PlanType = string(plan.KindDuration)
-		next.PlanCode = code.PlanCode
-		next.PlanLabel = planLabel(code.PlanCode, "时长套餐")
-		next.TotalCount = nil
-		next.RemainCount = nil
-		next.ExpireAt = &exp
-	default:
-		return next, fmt.Errorf("%w: %s", ErrCodeInvalid, code.Kind)
-	}
-	return next, nil
+	exp := base.AddDate(0, 0, code.Days).Format("2006-01-02 15:04:05")
+	e.ExpireAt = &exp
+	return s.insertEntitlementTx(tx, e)
 }
 
-func planLabel(code, fallback string) string {
-	if p, ok := plan.Lookup(code); ok && p.Label != "" {
-		return p.Label
+func (s *Store) applyCountRedemptionTx(tx *sql.Tx, userID int64, code RedemptionCode, label string, ents []Entitlement, now time.Time) error {
+	if code.Amount <= 0 {
+		return errors.New("次数卡密额度无效")
 	}
-	return fallback
+	current := findEntitlement(ents, string(plan.KindCount))
+	e := Entitlement{
+		UserID: userID, Kind: string(plan.KindCount),
+		PlanCode: code.PlanCode, PlanLabel: label,
+		StartAt:    now.Format("2006-01-02 15:04:05"),
+		TotalCount: int64ptr(code.Amount), RemainCount: int64ptr(code.Amount),
+	}
+	if current != nil && entitlementActive(*current, now) {
+		total := code.Amount
+		if current.TotalCount != nil {
+			total = *current.TotalCount + code.Amount
+		}
+		remain := code.Amount
+		if current.RemainCount != nil {
+			remain = *current.RemainCount + code.Amount
+		}
+		e.StartAt = current.StartAt
+		e.TotalCount = int64ptr(total)
+		e.RemainCount = int64ptr(remain)
+		e.UsedCount = current.UsedCount
+		if code.Days > 0 {
+			base := now
+			if current.ExpireAt != nil {
+				if t, err := parseTime(*current.ExpireAt); err == nil && t.After(now) {
+					base = t
+				}
+			}
+			exp := base.AddDate(0, 0, code.Days).Format("2006-01-02 15:04:05")
+			e.ExpireAt = &exp
+		} else {
+			e.ExpireAt = current.ExpireAt
+		}
+		return s.insertEntitlementTx(tx, e)
+	}
+	if code.Days > 0 {
+		exp := now.AddDate(0, 0, code.Days).Format("2006-01-02 15:04:05")
+		e.ExpireAt = &exp
+	}
+	return s.insertEntitlementTx(tx, e)
 }

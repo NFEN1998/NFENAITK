@@ -16,6 +16,22 @@ func TestNormalizeQuestion(t *testing.T) {
 		{"3+3=", "3×3=", false},
 		{"3+3=", "3*3=", false},
 		{"3+3=", "3-3=", false},
+		{"1.5", "15", false},
+		{"1.5+2.5", "15+25", false},
+		{"1−1", "11", false},
+		{"1:2", "12", false},
+		{"5!", "5", false},
+		{"√2", "2", false},
+		{"|x|", "x", false},
+		{"x²", "x", false},
+		{"a=b", "ab", false},
+		{"[1,2]", "12", false},
+		{"(1,2)", "(12)", false},
+		{"10:30", "1030", false},
+		{"1,000", "1000", true},
+		{"1,000+2", "1000+2", true},
+		{"Hello!", "Hello", true},
+		{"第1题：", "第1题", true},
 		{"苹果", "香蕉", false},
 	}
 	for _, c := range cases {
@@ -72,6 +88,40 @@ func TestOperatorsCompatibleLeavesProseAlone(t *testing.T) {
 	} {
 		if !operatorsCompatible(c[0], c[1]) {
 			t.Errorf("operatorsCompatible(%q, %q) should allow prose", c[0], c[1])
+		}
+	}
+}
+
+func TestScoreCanonicalizesEquivalentOperators(t *testing.T) {
+	for _, c := range [][2]string{
+		{"1×2", "1*2"},
+		{"1÷2", "1/2"},
+		{"1≤2", "1<=2"},
+		{"1≥2", "1>=2"},
+		{"1≠2", "1!=2"},
+		{"1−1", "1-1"},
+		{"x²", "x^2"},
+	} {
+		if _, ok := Score(c[0], c[1]); !ok {
+			t.Errorf("Score(%q, %q) rejected equivalent operators", c[0], c[1])
+		}
+	}
+}
+
+func TestScoreRejectsFormulaSymbolLoss(t *testing.T) {
+	for _, c := range [][2]string{
+		{"1.5", "15"},
+		{"1−1", "11"},
+		{"1:2", "12"},
+		{"5!", "5"},
+		{"√2", "2"},
+		{"|x|", "x"},
+		{"x²", "x"},
+		{"a=b", "ab"},
+		{"1+2*3", "(1+2)*3"},
+	} {
+		if _, ok := Score(c[0], c[1]); ok {
+			t.Errorf("Score(%q, %q) accepted a different formula", c[0], c[1])
 		}
 	}
 }

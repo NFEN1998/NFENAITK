@@ -104,7 +104,7 @@ type Settings struct {
 
 // Default site branding shown on the landing page, console and user portal.
 const (
-	DefaultSiteName     = "nfentik"
+	DefaultSiteName     = "NFENTK"
 	DefaultSiteSubtitle = "智能题库查询服务"
 )
 
