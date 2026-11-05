@@ -1,0 +1,398 @@
+{{define "user_page_overview"}}
+<div class="page-head">
+  <div>
+    <h1>下午好，<span id="ov-name">用户</span></h1>
+    <p>欢迎回来。这里是你的账户状态、额度和最近活动。</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/user/integrate">查看接入配置</a>
+    <a class="btn primary" href="/user/redeem">去充值</a>
+  </div>
+</div>
+
+<div class="split">
+  <div class="grid">
+    <section class="card">
+      <div class="plan-hero">
+        <div>
+          <span id="user-status-pill" class="pill ok">使用中</span>
+          <h2 class="name" id="ov-plan-name" style="margin-top:10px">我的套餐</h2>
+          <div class="sub" id="ov-plan-sub">正在加载套餐信息…</div>
+          <div class="stats">
+            <div class="stat"><div class="k">今日调用</div><div class="v" id="ov-stat-calls">-</div></div>
+            <div class="stat"><div class="k">平均耗时</div><div class="v" id="ov-stat-latency">-</div></div>
+            <div class="stat"><div class="k">题库命中</div><div class="v" id="ov-stat-hit">-</div></div>
+          </div>
+        </div>
+        <div class="quota-box">
+          <div class="num"><span id="user-quota-text">-</span></div>
+          <div class="cap">剩余查询次数</div>
+          <div class="progress"><i id="user-quota-fill" style="width:0%"></i></div>
+          <div class="progress-row"><span id="ov-used">已用 -</span><span id="ov-expire">-</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>最近调用</h2>
+        <a class="small muted" href="/user/logs">全部记录 →</a>
+      </div>
+      <div class="activity" id="ov-recent">
+        <div class="empty">正在加载调用记录…</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>快捷操作</h2></div>
+      <div class="quick">
+        <a href="/user/redeem"><span class="ico">＋</span><strong>兑换卡密</strong><span>次数或时长</span></a>
+        <button type="button" data-copy-token><span class="ico">⧉</span><strong>复制令牌</strong><span>用于接入配置</span></button>
+        <a href="/user/integrate"><span class="ico">⌘</span><strong>接入配置</strong><span>OCS / URL</span></a>
+        <a href="/user/logs"><span class="ico">≡</span><strong>调用记录</strong><span>查看明细</span></a>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>账户与接入</h2><a class="small muted" href="/user/account">管理 →</a></div>
+      <div class="kv"><span>用户名</span><b id="ov-account-username">-</b></div>
+      <div class="kv"><span>用户令牌</span><b class="mono" id="ov-account-token">-</b></div>
+      <div class="kv"><span>OCS 配置</span><b>已生成</b></div>
+      <div class="kv"><span>接口状态</span><b style="color:var(--ok)">正常</b></div>
+    </section>
+
+    <div class="notice info">
+      <span>提示</span>
+      <div>次数低于 100 时会提前提醒。也可以随时在「卡密充值」页兑换次数卡或时长卡。</div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "user_page_plan"}}
+<div class="page-head">
+  <div>
+    <h1>套餐与额度</h1>
+    <p>查看当前套餐、权益明细与剩余查询次数。</p>
+  </div>
+  <div class="page-actions"><a class="btn primary" href="/user/redeem">兑换卡密</a></div>
+</div>
+
+<div class="split">
+  <div class="grid">
+    <section class="card">
+      <div class="plan-hero">
+        <div>
+          <span id="user-status-pill" class="pill ok">使用中</span>
+          <h2 class="name" id="ov-plan-name" style="margin-top:10px">我的套餐</h2>
+          <div class="sub" id="ov-plan-sub">正在加载套餐信息…</div>
+          <div class="stats">
+            <div class="stat"><div class="k">套餐类型</div><div class="v" id="plan-kind">-</div></div>
+            <div class="stat"><div class="k">已用次数</div><div class="v" id="user-used">-</div></div>
+            <div class="stat"><div class="k">剩余天数</div><div class="v" id="user-days">-</div></div>
+          </div>
+        </div>
+        <div class="quota-box">
+          <div class="num"><span id="user-quota-text">-</span></div>
+          <div class="cap">剩余查询次数</div>
+          <div class="progress"><i id="user-quota-fill" style="width:0%"></i></div>
+          <div class="progress-row"><span id="plan-quota-cap">-</span><span id="ov-expire">-</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>权益明细</h2><span class="hint">实时生效</span></div>
+      <div class="ent-grid" id="user-entitlements">
+        <div class="ent"><div class="k">时长权益</div><div class="v">-</div><div class="d">正在加载…</div></div>
+        <div class="ent"><div class="k">次数权益</div><div class="v">-</div><div class="d">正在加载…</div></div>
+      </div>
+      <div class="card-foot">次数低于 100 时，概览页与接入页会显示提醒。</div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>我的备注</h2><button id="user-note-save" class="btn ghost sm">保存</button></div>
+      <div class="field" style="margin:0">
+        <label for="user-note-input">仅自己可见，最多 200 字</label>
+        <textarea id="user-note-input" placeholder="例如：用于高数题库查询，月底前续费。"></textarea>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>套餐信息</h2></div>
+      <div class="kv"><span>套餐名称</span><b id="plan-label">-</b></div>
+      <div class="kv"><span>套餐编码</span><b class="mono" id="plan-code">-</b></div>
+      <div class="kv"><span>状态</span><b id="plan-status" style="color:var(--ok)">-</b></div>
+      <div class="kv"><span>开通时间</span><b id="user-start">-</b></div>
+      <div class="kv"><span>到期时间</span><b id="user-expire">-</b></div>
+      <div class="kv"><span>用户令牌</span><b class="mono" id="user-token">-</b></div>
+      <div class="card-foot"><button class="btn ghost sm" data-copy-target="#user-token">复制令牌</button></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>额度规则</h2></div>
+      <div class="kv"><span>单次查询</span><b>消耗 1 次</b></div>
+      <div class="kv"><span>题库命中</span><b>同样计次</b></div>
+      <div class="kv"><span>失败请求</span><b>不计次</b></div>
+      <div class="kv"><span>时长到期</span><b>次数权益保留</b></div>
+    </section>
+
+    <div class="notice warn" id="plan-expire-notice">
+      <span>提醒</span>
+      <div>正在加载套餐到期信息…</div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "user_page_account"}}
+<div class="page-head">
+  <div>
+    <h1>账号与安全</h1>
+    <p>管理登录账号、用户令牌与密码。</p>
+  </div>
+</div>
+
+<div class="split">
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>账号信息</h2><span id="account-status-pill" class="pill">未绑定</span></div>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+        <span class="avatar" id="account-avatar" style="width:48px;height:48px;font-size:18px">A</span>
+        <div>
+          <div style="font-size:18px;font-weight:700;letter-spacing:-.01em" id="account-name">-</div>
+          <div class="muted small" id="account-hint">正在加载账号信息…</div>
+        </div>
+      </div>
+      <div class="kv"><span>用户名</span><b id="account-username-view">-</b></div>
+      <div class="kv"><span>用户 ID</span><b class="mono" id="account-id">-</b></div>
+      <div class="kv"><span>绑定令牌</span><b class="mono" id="account-token-view">-</b></div>
+      <div class="kv"><span>登录方式</span><b id="account-auth">-</b></div>
+      <div id="account-bind-wrap" class="hidden">
+        <div class="card-foot" style="border:0;padding-bottom:0">
+          <div class="field"><label for="bind-username">用户名</label><input id="bind-username" type="text" placeholder="字母开头，3-32 位" autocomplete="username"></div>
+          <div class="field"><label for="bind-password">密码</label><input id="bind-password" type="password" placeholder="至少 8 位" autocomplete="new-password"></div>
+          <button id="bind-btn" class="btn primary sm">绑定账号</button>
+          <p id="bind-error" class="error" style="color:var(--danger);min-height:18px"></p>
+        </div>
+      </div>
+      <div id="account-actions" class="card-foot hidden">
+        <button class="btn ghost sm" data-copy-token>复制令牌</button>
+        <button id="account-logout-btn" class="btn ghost sm">退出账号</button>
+      </div>
+    </section>
+
+    <section class="card" id="password-card">
+      <div class="card-head"><h2>修改密码</h2><span class="hint">修改后其他设备将退出登录</span></div>
+      <div class="field"><label for="old-password">原密码</label><input id="old-password" type="password" placeholder="请输入原密码" autocomplete="current-password"></div>
+      <div class="field"><label for="new-password">新密码</label><input id="new-password" type="password" placeholder="至少 8 位" autocomplete="new-password"></div>
+      <div class="field"><label for="new-password2">确认新密码</label><input id="new-password2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div>
+      <button id="password-save" class="btn primary">保存新密码</button>
+      <p id="password-error" class="error" style="color:var(--danger);min-height:18px"></p>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>用户令牌</h2></div>
+      <p class="muted small" style="margin:0 0 12px">令牌用于 OCS 与 URL 接入，请勿泄露给他人。</p>
+      <div class="input-row">
+        <input class="mono" id="user-token" readonly value="">
+        <button class="btn ghost" data-copy-target="#user-token">复制</button>
+      </div>
+      <div class="card-foot" id="token-updated">已登录</div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>安全设置</h2></div>
+      <div class="kv"><span>登录状态</span><b style="color:var(--ok)">当前设备在线</b></div>
+      <div class="kv"><span>最近登录</span><b id="security-last-login">-</b></div>
+      <div class="kv"><span>二次验证</span><b class="muted">未开启</b></div>
+      <div class="kv"><span>密码强度</span><b id="security-password-strength">-</b></div>
+      <div class="card-foot"><button class="btn ghost sm" data-toast="已打开登录设备管理（演示）">管理登录设备</button></div>
+    </section>
+
+    <section class="card" style="border-color:#fecaca">
+      <div class="card-head"><h2 style="color:var(--danger)">重置令牌</h2><span class="pill danger">高风险</span></div>
+      <p class="muted small" style="margin:0 0 14px;line-height:1.7">重置后旧令牌立即失效，需要重新登录，并更新 OCS 与 URL 接入配置。</p>
+      <button id="user-reset-token" class="btn danger">重置我的令牌</button>
+    </section>
+  </div>
+</div>
+{{end}}
+
+{{define "user_page_redeem"}}
+<div class="page-head">
+  <div>
+    <h1>卡密充值</h1>
+    <p>输入卡密为当前账号充值。次数卡增加查询次数，时长卡顺延到期时间。</p>
+  </div>
+</div>
+
+<div class="split">
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>输入卡密</h2><span class="hint">不区分大小写</span></div>
+      <div class="input-row" style="gap:10px">
+        <input id="redeem-code" class="mono" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" style="font-size:15px;letter-spacing:.06em;padding:12px 14px">
+        <button id="redeem-btn" class="btn primary">立即兑换</button>
+      </div>
+      <p id="redeem-error" class="error" style="color:var(--danger);min-height:18px"></p>
+      <div class="notice info" style="margin-top:14px">
+        <span>说明</span>
+        <div>兑换成功后额度即时到账。若卡密已被使用或已过期，会给出对应提示。</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>兑换说明</h2></div>
+      <div class="activity">
+        <div class="row"><span class="time">01</span><span class="q">购买后获得 16 位卡密，通常以 XXXX-XXXX-XXXX-XXXX 形式展示。</span></div>
+        <div class="row"><span class="time">02</span><span class="q">在上方输入框粘贴卡密，点击「立即兑换」。</span></div>
+        <div class="row"><span class="time">03</span><span class="q">次数卡增加查询次数；时长卡在现有到期时间上顺延。</span></div>
+      </div>
+      <div class="card-foot">卡密仅能绑定当前登录账号，兑换后不可转移。</div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>当前额度</h2><a class="small muted" href="/user/plan">查看套餐 →</a></div>
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span id="rd-quota-text" style="font-size:30px;font-weight:700;letter-spacing:-.03em">-</span>
+      </div>
+      <div class="progress" style="margin-top:10px"><i id="rd-quota-fill" style="width:0%"></i></div>
+      <div class="progress-row"><span id="rd-used">-</span><span id="rd-expire">-</span></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>最近兑换</h2></div>
+      <div class="activity" id="rd-history">
+        <div class="empty">暂无兑换记录</div>
+      </div>
+      <div class="card-foot">兑换记录保存在当前浏览器中。</div>
+    </section>
+  </div>
+</div>
+{{end}}
+
+{{define "user_page_integrate"}}
+<div class="page-head">
+  <div>
+    <h1>接入配置</h1>
+    <p>选择适合你的接入方式。所有链接与配置都已包含个人令牌，请勿泄露。</p>
+  </div>
+  <div class="page-actions"><button class="btn primary" data-copy-target="#user-ocs-json">复制 OCS 配置</button></div>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>接入方式</h2>
+    <div class="tabs" data-tabs>
+      <button class="active" data-tab="ocs">OCS 配置</button>
+      <button data-tab="url1">URL 模式1</button>
+      <button data-tab="url2">URL 模式2</button>
+    </div>
+  </div>
+
+  <div class="pane active" data-pane="ocs">
+    <div class="code-box">
+      <div class="code-top"><span>粘贴到 OCS 用户脚本的题库配置</span><button class="btn ghost sm" data-copy-target="#user-ocs-json">复制</button></div>
+      <pre id="user-ocs-json">loading…</pre>
+    </div>
+    <div class="notice info" style="margin-top:14px"><span>提示</span><div>替换题库地址后即可使用。令牌已包含在配置中，请勿分享给他人。</div></div>
+  </div>
+
+  <div class="pane" data-pane="url1">
+    <div class="code-box">
+      <div class="code-top"><span>MOGO 题库对接短接口 · info 与 data 分割符设为 ###</span><button class="btn ghost sm" data-copy-target="#user-url-mogo">复制接口</button></div>
+      <pre id="user-url-mogo">loading…</pre>
+    </div>
+    <div class="code-box" style="margin-top:12px">
+      <div class="code-top"><span>完整调试示例</span><button class="btn ghost sm" data-copy-target="#user-url-mogo-debug">复制</button></div>
+      <pre id="user-url-mogo-debug">loading…</pre>
+    </div>
+  </div>
+
+  <div class="pane" data-pane="url2">
+    <div class="code-box">
+      <div class="code-top"><span>原有 /query 模式，返回 OCS 结构</span><button class="btn ghost sm" data-copy-target="#user-url-title">复制接口</button></div>
+      <pre id="user-url-title">loading…</pre>
+    </div>
+    <div class="code-box" style="margin-top:12px">
+      <div class="code-top"><span>q 与 title 等价</span><button class="btn ghost sm" data-copy-target="#user-url-q">复制</button></div>
+      <pre id="user-url-q">loading…</pre>
+    </div>
+  </div>
+</section>
+
+<div class="grid cols-2" style="margin-top:16px">
+  <section class="card">
+    <div class="card-head"><h2>返回示例 · 模式1</h2></div>
+    <div class="code-box"><pre>{"code":1,"data":"答案"}
+{"code":1,"data":"答案1###答案2"}</pre></div>
+    <div class="card-foot">失败时返回 <code>{"code":-1}</code>。</div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>返回示例 · 模式2</h2></div>
+    <div class="code-box"><pre>{"code":1,"data":{"id":12,"question":"题目内容","answer":"答案","is_ai":false}}</pre></div>
+    <div class="card-foot">失败时返回 code 0 与 message。</div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>接入检查</h2><span class="pill ok">全部正常</span></div>
+  <div class="grid cols-3">
+    <div class="kv" style="border:0;padding:0"><span>令牌状态</span><b style="color:var(--ok)" id="int-token-status">有效</b></div>
+    <div class="kv" style="border:0;padding:0"><span>查询接口</span><b style="color:var(--ok)">可访问</b></div>
+    <div class="kv" style="border:0;padding:0"><span>剩余额度</span><b id="int-quota">-</b></div>
+  </div>
+</section>
+{{end}}
+
+{{define "user_page_logs"}}
+<div class="page-head">
+  <div>
+    <h1>调用记录</h1>
+    <p>查看每一次查询的来源、结果与耗时。</p>
+  </div>
+  <div class="page-actions"><button id="user-logs-refresh" class="btn ghost">刷新</button></div>
+</div>
+
+<section class="card">
+  <div class="filters">
+    <input id="log-search" placeholder="搜索题目或答案" style="flex:1;min-width:200px">
+    <select id="log-source" aria-label="来源">
+      <option value="">全部来源</option>
+      <option value="bank">题库</option>
+      <option value="cache">缓存</option>
+      <option value="ai">AI</option>
+    </select>
+    <select id="log-status" aria-label="状态">
+      <option value="">全部状态</option>
+      <option value="ok">成功</option>
+      <option value="pending">待修正</option>
+      <option value="denied">拒绝</option>
+      <option value="error">失败</option>
+    </select>
+    <button id="log-filter-btn" class="btn">查询</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>时间</th><th>题目</th><th>答案</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
+      <tbody id="user-logs"><tr><td colspan="6" class="empty">正在加载调用记录…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <button id="user-logs-prev" class="btn ghost sm">上一页</button>
+    <span id="user-logs-pageinfo">第 1 页</span>
+    <button id="user-logs-next" class="btn ghost sm">下一页</button>
+  </div>
+</section>
+{{end}}

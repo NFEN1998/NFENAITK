@@ -7,7 +7,7 @@
           <img class="app-icon-image" src="/icons/favicon.ico" alt="logo">
         </div>
         <div class="app-details">
-          <h3 class="app-name">ZError</h3>
+          <h3 class="app-name">NFENTK</h3>
           <p class="app-version">版本 {{ currentVersion }}</p>
           <p class="app-description">支持OCS的AI题库</p>
         </div>
@@ -124,7 +124,7 @@
             </svg>
             <h3 class="setting-title">官方网站</h3>
           </div>
-          <p class="setting-description">访问 ZError 官方网站</p>
+          <p class="setting-description">访问 NFENTK 官方网站</p>
         </div>
         <div class="setting-control">
           <a href="https://app.zerror.cc" target="_blank" class="plain-link">app.zerror.cc</a>
@@ -139,7 +139,7 @@
             </svg>
             <h3 class="setting-title">QQ 频道</h3>
           </div>
-          <p class="setting-description">加入 ZError QQ 频道，获取最新动态与交流支持</p>
+          <p class="setting-description">加入 NFENTK QQ 频道，获取最新动态与交流支持</p>
         </div>
         <div class="setting-control">
           <a href="https://pd.qq.com/s/b0vebzqkc" target="_blank" class="plain-link">pd.qq.com/s/b0vebzqkc</a>

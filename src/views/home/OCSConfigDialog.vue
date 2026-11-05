@@ -60,7 +60,7 @@ const emit = defineEmits<{
 const copySuccess = ref(false)
 
 const ocsConfig = [{
-  "name": "ZE题库(自建版)",
+  "name": "NFENTK题库(自建版)",
   "homepage": "http://app.zerror.cc",
   "url": "http://localhost:3002/query",
   "method": "get",

@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal · NfenTik 用户中心</title>
+<style>
+  :root {
+    --bg: #070b0d; --panel: #0d1417; --panel-2: #0a1013; --line: #1e2b30;
+    --ink: #d7e3e7; --muted: #7d919a; --dim: #53666d;
+    --lime: #b6ff3c; --cyan: #35d6ff; --amber: #ffc857; --red: #ff5d73; --green: #55e6a5;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font-family: var(--mono);
+    font-size: 13px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(900px 400px at 15% -10%, rgba(53,214,255,.10) 0%, transparent 60%),
+      radial-gradient(700px 380px at 90% 0%, rgba(182,255,60,.07) 0%, transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: inherit; }
+  .muted { color: var(--muted); }
+  .dim { color: var(--dim); }
+  .lime { color: var(--lime); }
+  .cyan { color: var(--cyan); }
+  .amber { color: var(--amber); }
+  .red { color: var(--red); }
+  .green { color: var(--green); }
+
+  .shell { max-width: 1240px; margin: 0 auto; padding: 0 22px 64px; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 20; backdrop-filter: blur(12px);
+    background: rgba(7,11,13,.82); border-bottom: 1px solid var(--line);
+  }
+  .top-inner { max-width: 1240px; margin: 0 auto; padding: 0 22px; height: 62px; display: flex; align-items: center; gap: 18px; }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-mark {
+    width: 30px; height: 30px; border: 1px solid var(--lime); border-radius: 6px;
+    display: grid; place-items: center; color: var(--lime); font-weight: 700; font-size: 14px;
+    box-shadow: 0 0 18px -4px rgba(182,255,60,.5);
+  }
+  .logo b { font-weight: 600; letter-spacing: .04em; }
+  .logo span { color: var(--dim); font-size: 10.5px; }
+  .nav { display: flex; gap: 4px; margin-left: 8px; overflow-x: auto; }
+  .nav a {
+    text-decoration: none; color: var(--muted); font-size: 11.5px; padding: 6px 9px;
+    border: 1px solid transparent; border-radius: 5px; white-space: nowrap;
+  }
+  .nav a:hover { color: var(--ink); border-color: var(--line); }
+  .nav a.active { color: var(--lime); border-color: rgba(182,255,60,.35); background: rgba(182,255,60,.06); }
+  .top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--green);
+    border: 1px solid rgba(85,230,165,.28); background: rgba(85,230,165,.06); padding: 4px 9px; border-radius: 4px;
+  }
+  .chip::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 5px; padding: 7px 12px; font: inherit; font-size: 11.5px; cursor: pointer; transition: .15s;
+  }
+  .btn:hover { border-color: #33505a; background: #101a1e; }
+  .btn.lime { border-color: var(--lime); background: var(--lime); color: #08110a; font-weight: 700; }
+  .btn.lime:hover { background: #c9ff6e; }
+  .btn.cyan { border-color: rgba(53,214,255,.45); color: var(--cyan); background: rgba(53,214,255,.06); }
+  .btn.red { border-color: rgba(255,93,115,.45); color: var(--red); background: rgba(255,93,115,.06); }
+  .btn.sm { padding: 5px 9px; font-size: 10.5px; }
+
+  .hero { padding: 34px 0 26px; border-bottom: 1px solid var(--line); }
+  .prompt { font-size: 11.5px; color: var(--dim); margin-bottom: 12px; }
+  .prompt .user { color: var(--cyan); }
+  .prompt .path { color: var(--lime); }
+  .cursor { display: inline-block; width: 7px; height: 13px; background: var(--lime); vertical-align: -2px; margin-left: 4px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  h1 { margin: 0; font-size: clamp(24px, 3.4vw, 34px); font-weight: 500; letter-spacing: -.02em; line-height: 1.2; }
+  h1 .thin { color: var(--muted); font-weight: 400; }
+  .hero p { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; max-width: 720px; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); gap: 16px; margin-top: 22px; align-items: start; }
+  .col { display: grid; gap: 16px; }
+  .panel { border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border-radius: 8px; overflow: hidden; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.015);
+  }
+  .panel-head h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+  .panel-head .tag { font-size: 10px; color: var(--dim); letter-spacing: .12em; text-transform: uppercase; }
+  .panel-body { padding: 18px 16px; }
+
+  .plan { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .plan .name { font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+  .plan .sub { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  .quota { min-width: 220px; text-align: right; }
+  .quota .nums { font-size: 30px; letter-spacing: -.02em; color: var(--lime); }
+  .quota .nums small { font-size: 13px; color: var(--muted); }
+  .quota .cap { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); margin-top: 2px; }
+  .segments { display: flex; gap: 3px; margin-top: 14px; }
+  .segments i { flex: 1; height: 6px; border-radius: 1px; background: #1a262b; }
+  .segments i.on { background: var(--lime); box-shadow: 0 0 8px -1px rgba(182,255,60,.6); }
+  .segments i.fade { background: rgba(182,255,60,.35); }
+  .seg-labels { display: flex; justify-content: space-between; margin-top: 7px; font-size: 10px; color: var(--dim); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-top: 18px; }
+  .stat { border: 1px solid var(--line); border-radius: 6px; padding: 11px 12px; background: #0a1013; }
+  .stat .k { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .stat .v { font-size: 16px; margin-top: 3px; }
+
+  .ent { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .ent > div { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: #0a1013; }
+  .ent .k { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .ent .v { font-size: 15px; margin-top: 4px; color: var(--ink); }
+  .ent .d { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px dashed #182327; font-size: 11.5px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv span { color: var(--dim); }
+  .kv b { font-weight: 500; color: var(--ink); word-break: break-all; text-align: right; }
+
+  .cmd { display: flex; flex-direction: column; }
+  .cmd button {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: transparent; border: 0; border-bottom: 1px solid #182327; padding: 11px 0;
+    color: var(--ink); font: inherit; cursor: pointer;
+  }
+  .cmd button:last-child { border-bottom: 0; }
+  .cmd button:hover { color: var(--lime); }
+  .cmd .p { color: var(--dim); font-size: 11px; }
+  .cmd .t { font-size: 12.5px; }
+  .cmd .a { margin-left: auto; color: var(--dim); }
+  .cmd button:hover .a { color: var(--lime); }
+
+  .field { margin-top: 10px; }
+  .field label { display: block; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  input {
+    width: 100%; border: 1px solid var(--line); background: #070d10; color: var(--ink);
+    border-radius: 5px; padding: 9px 11px; font: inherit; font-size: 12px; outline: none;
+  }
+  input:focus { border-color: rgba(53,214,255,.55); box-shadow: 0 0 0 3px rgba(53,214,255,.1); }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+
+  .tabs { display: flex; gap: 4px; }
+  .tabs button {
+    border: 1px solid transparent; background: transparent; color: var(--muted);
+    padding: 5px 9px; border-radius: 4px; font: inherit; font-size: 10.5px; cursor: pointer;
+  }
+  .tabs button.active { color: var(--lime); border-color: rgba(182,255,60,.35); background: rgba(182,255,60,.06); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  .code-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0 7px; font-size: 10.5px; color: var(--dim); }
+  pre {
+    margin: 0; border: 1px solid var(--line); border-radius: 6px; background: #060b0d;
+    padding: 13px 14px; font-family: var(--mono); font-size: 10.8px; line-height: 1.75;
+    color: #a9c0c7; overflow: auto; max-height: 220px;
+  }
+  pre .s { color: var(--lime); }
+  pre .k { color: var(--cyan); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th { text-align: left; color: var(--dim); font-weight: 500; font-size: 9.5px; letter-spacing: .13em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 9px 10px; border-bottom: 1px solid #131d21; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: rgba(255,255,255,.012); }
+  td.clamp { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 9.5px; border: 1px solid; }
+  .badge.ok { color: var(--green); border-color: rgba(85,230,165,.3); background: rgba(85,230,165,.06); }
+  .badge.ai { color: var(--cyan); border-color: rgba(53,214,255,.3); background: rgba(53,214,255,.06); }
+  .badge.warn { color: var(--amber); border-color: rgba(255,200,87,.3); background: rgba(255,200,87,.06); }
+  .badge.err { color: var(--red); border-color: rgba(255,93,115,.3); background: rgba(255,93,115,.06); }
+  .pager { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 12px; font-size: 10.5px; color: var(--dim); }
+
+  .danger { border-color: rgba(255,93,115,.28); }
+  .danger .panel-head { border-color: rgba(255,93,115,.2); }
+  .danger .panel-head h2 { color: var(--red); }
+  .danger p { margin: 0 0 12px; color: #c98f98; font-size: 11.5px; line-height: 1.7; }
+
+  /* login */
+  .login-overlay {
+    position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 20px;
+    background: rgba(3,6,7,.8); backdrop-filter: blur(8px);
+  }
+  .login-overlay.open { display: grid; }
+  .login-card { width: min(430px, 100%); border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 28px; position: relative; box-shadow: 0 40px 100px -30px #000; }
+  .login-card .logo { margin-bottom: 22px; }
+  .login-card h2 { margin: 0 0 4px; font-size: 20px; font-weight: 500; }
+  .login-card .sub { margin: 0 0 18px; color: var(--muted); font-size: 11.5px; }
+  .login-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .login-tabs button { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--muted); padding: 7px; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer; }
+  .login-tabs button.active { color: var(--lime); border-color: rgba(182,255,60,.35); background: rgba(182,255,60,.06); }
+  .login-panel { display: none; }
+  .login-panel.active { display: block; }
+  .login-submit { width: 100%; margin-top: 14px; padding: 10px; background: var(--lime); color: #08110a; border: 0; border-radius: 5px; font: inherit; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .close-login { position: absolute; top: 12px; right: 12px; border: 0; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 16px); opacity: 0;
+    background: var(--lime); color: #08110a; padding: 9px 15px; border-radius: 5px;
+    font-size: 11.5px; font-weight: 700; transition: .22s; pointer-events: none; z-index: 80;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 980px) {
+    .grid { grid-template-columns: 1fr; }
+    .nav { display: none; }
+  }
+  @media (max-width: 640px) {
+    .shell { padding: 0 14px 48px; }
+    .top-inner { padding: 0 14px; gap: 10px; }
+    .logo span, .top-actions .chip { display: none; }
+    .hero { padding: 24px 0 20px; }
+    .stats { grid-template-columns: 1fr; }
+    .ent { grid-template-columns: 1fr; }
+    .plan { flex-direction: column; align-items: flex-start; }
+    .quota { width: 100%; text-align: left; }
+    .table-wrap { overflow-x: auto; }
+    table { min-width: 720px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="logo"><span class="logo-mark">N</span><b>nfentik</b><span>/user-center</span></div>
+    <nav class="nav">
+      <a class="active" href="#plan">plan</a>
+      <a href="#account">account</a>
+      <a href="#redeem">redeem</a>
+      <a href="#integrate">integrate</a>
+      <a href="#logs">logs</a>
+    </nav>
+    <div class="top-actions">
+      <span class="chip">all systems operational</span>
+      <button class="btn" data-login-open>登录页</button>
+      <button class="btn lime">退出</button>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <section class="hero" id="top">
+    <div class="prompt"><span class="user">alice</span>@<span class="path">nfentik</span>:~$ status --user alice<span class="cursor"></span></div>
+    <h1>下午好，alice <span class="thin">// 账户运行正常</span></h1>
+    <p>套餐、额度、接入配置与调用记录都在这里。所有请求都通过你的个人令牌认证。</p>
+  </section>
+
+  <div class="grid">
+    <div class="col">
+      <section class="panel" id="plan">
+        <div class="panel-head"><h2>PLAN &amp; QUOTA</h2><span class="tag">professional.monthly</span></div>
+        <div class="panel-body">
+          <div class="plan">
+            <div>
+              <div class="name">专业版 · 包月</div>
+              <div class="sub"><span class="green">● active</span> · 时长权益有效至 2026-12-31</div>
+            </div>
+            <div class="quota">
+              <div class="nums">860<small> / 1,000</small></div>
+              <div class="cap">remaining queries</div>
+            </div>
+          </div>
+          <div class="segments">
+            <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+            <i class="on"></i><i class="on"></i><i class="on"></i><i class="fade"></i><i></i>
+          </div>
+          <div class="seg-labels"><span>0</span><span>used 140</span><span>1,000</span></div>
+
+          <div class="stats">
+            <div class="stat"><div class="k">Today</div><div class="v">128 <span class="dim" style="font-size:11px">req</span></div></div>
+            <div class="stat"><div class="k">Avg latency</div><div class="v">312 <span class="dim" style="font-size:11px">ms</span></div></div>
+            <div class="stat"><div class="k">Hit rate</div><div class="v">94.2<span class="dim" style="font-size:11px">%</span></div></div>
+          </div>
+
+          <div class="ent">
+            <div><div class="k">Duration</div><div class="v">包月 · 有效</div><div class="d">2026-12-31 到期</div></div>
+            <div><div class="k">Credits</div><div class="v">860 / 1,000</div><div class="d">每次查询消耗 1 次</div></div>
+          </div>
+
+          <div class="kv" style="margin-top:14px"><span>token</span><b>nf_8f3a9c2e7b1d4f60c21</b></div>
+          <div class="kv"><span>start_at</span><b>2026-11-01 00:00</b></div>
+          <div class="kv"><span>expire_at</span><b>2026-12-31 23:59</b></div>
+        </div>
+      </section>
+
+      <section class="panel" id="integrate">
+        <div class="panel-head">
+          <h2>INTEGRATION</h2>
+          <div class="tabs" data-tabs>
+            <button class="active" data-tab="ocs">OCS</button>
+            <button data-tab="url1">URL_MODE_1</button>
+            <button data-tab="url2">URL_MODE_2</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="pane active" data-pane="ocs">
+            <div class="code-top"><span># paste into OCS userscript config</span><button class="btn sm cyan" data-copy="ocs-code">copy</button></div>
+            <pre id="ocs-code">[
+  {
+    "name": "NfenTik",
+    "homepage": "https://bank.example.com",
+    "url": "https://bank.example.com/query",
+    "method": "get",
+    "type": "GM_xmlhttpRequest",
+    "contentType": "json",
+    "data": {
+      "title": "${title}",
+      "options": "${options}",
+      "type": "${type}",
+      "token": "nf_8f3a9c2e7b1d4f60c21"
+    },
+    "handler": "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]"
+  }
+]</pre>
+          </div>
+          <div class="pane" data-pane="url1">
+            <div class="code-top"><span># MOGO bank endpoint · delimiter ###</span><button class="btn sm cyan" data-copy="url1-code">copy</button></div>
+            <pre id="url1-code">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+            <div class="code-top"><span># full debug example</span><button class="btn sm cyan" data-copy="url1-debug">copy</button></div>
+            <pre id="url1-debug">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=%E7%A4%BA%E4%BE%8B%E9%A2%98%E7%9B%AE&info=%E5%8D%95%E9%80%89%E9%A2%98****%5B%E9%80%89%E9%A1%B91%23%23%23%E9%80%89%E9%A1%B92%5D</pre>
+          </div>
+          <div class="pane" data-pane="url2">
+            <div class="code-top"><span># generic OCS-compatible endpoint</span><button class="btn sm cyan" data-copy="url2-code">copy</button></div>
+            <pre id="url2-code">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&title=</pre>
+            <div class="code-top"><span># q is equivalent to title</span><button class="btn sm cyan" data-copy="url2-q">copy</button></div>
+            <pre id="url2-q">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="logs">
+        <div class="panel-head"><h2>CALL LOG</h2><button class="btn sm" data-toast="refreshed">refresh</button></div>
+        <div class="panel-body" style="padding:6px 10px 12px">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>timestamp</th><th>question</th><th>answer</th><th>source</th><th>status</th><th>latency</th></tr></thead>
+              <tbody>
+                <tr><td class="dim">11-05 14:32:11</td><td class="clamp">下列哪项属于操作系统调度算法</td><td class="clamp">时间片轮转</td><td><span class="badge ai">bank</span></td><td><span class="badge ok">ok</span></td><td class="muted">12ms</td></tr>
+                <tr><td class="dim">11-05 14:31:58</td><td class="clamp">计算机网络中 IP 协议位于哪一层</td><td class="clamp">网络层</td><td><span class="badge ai">cache</span></td><td><span class="badge ok">ok</span></td><td class="muted">3ms</td></tr>
+                <tr><td class="dim">11-05 14:30:42</td><td class="clamp">求函数 f(x)=x²+2x 的最小值</td><td class="clamp">-1</td><td><span class="badge ai">ai</span></td><td><span class="badge ok">ok</span></td><td class="muted">1.8s</td></tr>
+                <tr><td class="dim">11-05 14:28:07</td><td class="clamp">中国共产党成立于哪一年</td><td class="clamp">1921 年</td><td><span class="badge ai">bank</span></td><td><span class="badge warn">pending</span></td><td class="muted">9ms</td></tr>
+                <tr><td class="dim">11-05 14:25:33</td><td class="clamp">英语阅读理解：The author's purpose is to</td><td class="clamp">-</td><td><span class="badge ai">ai</span></td><td><span class="badge err">denied</span></td><td class="muted">0ms</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pager"><button class="btn sm">prev</button><span>page 1 / 24</span><button class="btn sm">next</button></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="col">
+      <section class="panel">
+        <div class="panel-head"><h2>QUICK COMMANDS</h2><span class="tag">actions</span></div>
+        <div class="panel-body" style="padding-top:6px;padding-bottom:6px">
+          <div class="cmd">
+            <button data-toast="open redeem"><span class="p">$</span><span class="t">redeem</span><span class="a">卡密充值</span></button>
+            <button data-copy="nf_8f3a9c2e7b1d4f60c21"><span class="p">$</span><span class="t">copy-token</span><span class="a">复制令牌</span></button>
+            <button data-toast="open reset confirm"><span class="p">$</span><span class="t">reset-token</span><span class="a">重置令牌</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="account">
+        <div class="panel-head"><h2>ACCOUNT</h2><span class="tag">bound</span></div>
+        <div class="panel-body">
+          <div class="kv"><span>username</span><b>alice</b></div>
+          <div class="kv"><span>token</span><b>nf_8f3a···c21</b></div>
+          <div class="kv"><span>auth</span><b>account + token</b></div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn sm" data-copy="nf_8f3a9c2e7b1d4f60c21">copy</button>
+            <button class="btn sm" data-toast="open change password">change password</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="redeem">
+        <div class="panel-head"><h2>REDEEM</h2><span class="tag">credits / duration</span></div>
+        <div class="panel-body">
+          <div class="field"><label>redemption code</label><input placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false"></div>
+          <button class="btn lime" style="width:100%;margin-top:10px;padding:9px" data-toast="code submitted">redeem</button>
+          <p class="dim" style="margin:10px 0 0;font-size:10.5px">last: 2026-11-01 · credits 1,000</p>
+        </div>
+      </section>
+
+      <section class="panel danger">
+        <div class="panel-head"><h2>DANGER ZONE</h2><span class="tag red">irreversible</span></div>
+        <div class="panel-body">
+          <p>重置后旧令牌立即失效，需要重新登录并更新 OCS 配置。</p>
+          <button class="btn red" data-toast="open reset confirm">reset my token</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div class="login-overlay" data-login>
+  <div class="login-card">
+    <button class="close-login" data-login-close aria-label="关闭">×</button>
+    <div class="logo"><span class="logo-mark">N</span><b>nfentik</b><span>/user-center</span></div>
+    <h2>authenticate</h2>
+    <p class="sub">登录后查看套餐、额度与接入配置。</p>
+    <div class="login-tabs" data-login-tabs>
+      <button class="active" data-login-tab="token">TOKEN</button>
+      <button data-login-tab="account">ACCOUNT</button>
+      <button data-login-tab="register">REGISTER</button>
+    </div>
+    <div class="login-panel active" data-login-pane="token">
+      <div class="field"><label>user token</label><input type="password" value="nf_8f3a9c2e7b1d4f60c21"></div>
+      <button class="login-submit" data-toast="login ok (mock)">enter user center</button>
+    </div>
+    <div class="login-panel" data-login-pane="account">
+      <div class="field"><label>username</label><input placeholder="username"></div>
+      <div class="field"><label>password</label><input type="password" placeholder="password"></div>
+      <button class="login-submit" data-toast="login ok (mock)">sign in</button>
+    </div>
+    <div class="login-panel" data-login-pane="register">
+      <div class="field"><label>username</label><input placeholder="3-32 chars"></div>
+      <div class="field"><label>password</label><input type="password" placeholder="min 8 chars"></div>
+      <div class="field"><label>existing token (optional)</label><input type="password" placeholder="bind an existing token"></div>
+      <button class="login-submit" data-toast="registered (mock)">create account</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-toast-host></div>
+
+<script>
+  (function () {
+    var toastEl = document.querySelector("[data-toast-host]");
+    var timer = null;
+    function toast(msg) {
+      if (!toastEl || !msg) return;
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toastEl.classList.remove("show"); }, 1800);
+    }
+    document.addEventListener("click", function (e) {
+      var copy = e.target.closest("[data-copy]");
+      if (copy) {
+        var text = copy.getAttribute("data-copy");
+        var el = document.getElementById(text);
+        if (el) text = el.textContent;
+        if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function () {});
+        toast("copied");
+        return;
+      }
+      var t = e.target.closest("[data-toast]");
+      if (t) toast(t.getAttribute("data-toast"));
+    });
+    var tabs = document.querySelector("[data-tabs]");
+    if (tabs) {
+      tabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-tab]");
+        if (!btn) return;
+        tabs.querySelectorAll("[data-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        document.querySelectorAll("#integrate [data-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-pane") === btn.getAttribute("data-tab"));
+        });
+      });
+    }
+    var login = document.querySelector("[data-login]");
+    document.querySelectorAll("[data-login-open]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.add("open"); });
+    });
+    document.querySelectorAll("[data-login-close]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.remove("open"); });
+    });
+    login.addEventListener("click", function (e) { if (e.target === login) login.classList.remove("open"); });
+    var ltabs = document.querySelector("[data-login-tabs]");
+    if (ltabs) {
+      ltabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-login-tab]");
+        if (!btn) return;
+        ltabs.querySelectorAll("[data-login-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        login.querySelectorAll("[data-login-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-login-pane") === btn.getAttribute("data-login-tab"));
+        });
+      });
+    }
+  })();
+</script>
+</body>
+</html>

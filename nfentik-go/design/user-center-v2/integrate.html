@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>接入配置 · NfenTik 用户中心</title>
+<link rel="stylesheet" href="assets/app.css">
+<script>try{var a=localStorage.getItem("nfentik-accent");if(a)document.documentElement.dataset.accent=a}catch(e){}</script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><div><strong>NfenTik</strong><small>用户中心</small></div></a>
+    <nav class="nav">
+      <span class="nav-label">导航</span>
+      <a class="nav-item" href="index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</a>
+      <a class="nav-item" href="plan.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg>套餐与额度</a>
+      <a class="nav-item" href="account.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>账号与安全</a>
+      <a class="nav-item" href="redeem.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg>卡密充值</a>
+      <a class="nav-item active" href="integrate.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14"/></svg>接入配置</a>
+      <a class="nav-item" href="logs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>调用记录</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="plan-mini">
+        <div class="row"><span>专业版 · 包月</span><b>86%</b></div>
+        <div class="bar"><i></i></div>
+        <div class="cap"><span>860 次剩余</span><span>12-31 到期</span></div>
+      </div>
+      <a class="user-mini" href="account.html"><span class="avatar">A</span><div><strong>alice</strong><span>查看账号</span></div></a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="打开菜单" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="crumb"><span>用户中心</span><span class="sep">/</span><b>接入配置</b></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" data-accent-toggle title="切换主题" aria-label="切换主题"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></button>
+        <span class="status">服务正常</span>
+        <a class="btn ghost sm" href="login.html">退出</a>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1>接入配置</h1>
+          <p>选择适合你的接入方式。所有链接与配置都已包含个人令牌，请勿泄露。</p>
+        </div>
+        <div class="page-actions"><button class="btn primary" data-copy="#ocs-code">复制 OCS 配置</button></div>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>接入方式</h2>
+          <div class="tabs" data-tabs>
+            <button class="active" data-tab="ocs">OCS 配置</button>
+            <button data-tab="url1">URL 模式1</button>
+            <button data-tab="url2">URL 模式2</button>
+          </div>
+        </div>
+
+        <div class="pane active" data-pane="ocs">
+          <div class="code-box">
+            <div class="code-top"><span>粘贴到 OCS 用户脚本的题库配置</span><button class="btn ghost sm" data-copy="#ocs-code">复制</button></div>
+            <pre id="ocs-code">[
+  {
+    "name": "NfenTik",
+    "homepage": "https://bank.example.com",
+    "url": "https://bank.example.com/query",
+    "method": "get",
+    "type": "GM_xmlhttpRequest",
+    "contentType": "json",
+    "data": {
+      "title": "${title}",
+      "options": "${options}",
+      "type": "${type}",
+      "token": "nf_8f3a9c2e7b1d4f60c21"
+    },
+    "handler": "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]"
+  }
+]</pre>
+          </div>
+          <div class="notice info" style="margin-top:14px"><span>提示</span><div>替换题库地址后即可使用。令牌已包含在配置中，请勿分享给他人。</div></div>
+        </div>
+
+        <div class="pane" data-pane="url1">
+          <div class="code-box">
+            <div class="code-top"><span>MOGO 题库对接短接口 · info 与 data 分割符设为 ###</span><button class="btn ghost sm" data-copy="#url1-code">复制接口</button></div>
+            <pre id="url1-code">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+          </div>
+          <div class="code-box" style="margin-top:12px">
+            <div class="code-top"><span>完整调试示例</span><button class="btn ghost sm" data-copy="#url1-debug">复制</button></div>
+            <pre id="url1-debug">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=%E7%A4%BA%E4%BE%8B%E9%A2%98%E7%9B%AE&info=%E5%8D%95%E9%80%89%E9%A2%98****%5B%E9%80%89%E9%A1%B91%23%23%23%E9%80%89%E9%A1%B92%5D</pre>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="url2">
+          <div class="code-box">
+            <div class="code-top"><span>原有 /query 模式，返回 OCS 结构</span><button class="btn ghost sm" data-copy="#url2-code">复制接口</button></div>
+            <pre id="url2-code">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&title=</pre>
+          </div>
+          <div class="code-box" style="margin-top:12px">
+            <div class="code-top"><span>q 与 title 等价</span><button class="btn ghost sm" data-copy="#url2-q">复制</button></div>
+            <pre id="url2-q">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+          </div>
+        </div>
+      </section>
+
+      <div class="grid cols-2" style="margin-top:16px">
+        <section class="card">
+          <div class="card-head"><h2>返回示例 · 模式1</h2></div>
+          <div class="code-box"><pre>{"code":1,"data":"答案"}
+{"code":1,"data":"答案1###答案2"}</pre></div>
+          <div class="card-foot">失败时返回 <code>{"code":-1}</code>。</div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>返回示例 · 模式2</h2></div>
+          <div class="code-box"><pre>{"code":1,"data":{"id":12,"question":"题目内容","answer":"答案","is_ai":false}}</pre></div>
+          <div class="card-foot">失败时返回 code 0 与 message。</div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:16px">
+        <div class="card-head"><h2>接入检查</h2><span class="pill ok">全部正常</span></div>
+        <div class="grid cols-3">
+          <div class="kv" style="border:0;padding:0"><span>令牌状态</span><b style="color:var(--ok)">有效</b></div>
+          <div class="kv" style="border:0;padding:0"><span>查询接口</span><b style="color:var(--ok)">可访问</b></div>
+          <div class="kv" style="border:0;padding:0"><span>剩余额度</span><b>860 次</b></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="backdrop" id="backdrop"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

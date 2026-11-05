@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editorial · NfenTik 用户中心</title>
+<style>
+  :root {
+    --bg: #faf7f2; --paper: #fffdf9; --ink: #20251f; --muted: #7a766c;
+    --line: #e7e0d4; --line-strong: #d8cfbf; --green: #1f6f50; --green-soft: #eef5f0;
+    --amber: #a8611a; --red: #a33a32; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --serif: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .serif { font-family: var(--serif); }
+
+  .masthead {
+    position: sticky; top: 0; z-index: 20; background: rgba(250,247,242,.9);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+  }
+  .masthead-inner {
+    max-width: 1180px; margin: 0 auto; padding: 0 28px; height: 66px;
+    display: flex; align-items: center; gap: 26px;
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
+  .wordmark strong { font-family: var(--serif); font-size: 22px; letter-spacing: -.02em; }
+  .wordmark span { color: var(--muted); font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; }
+  .topnav { display: flex; gap: 22px; margin-left: 12px; }
+  .topnav a { text-decoration: none; color: var(--muted); font-size: 12.5px; padding: 6px 0; border-bottom: 1px solid transparent; }
+  .topnav a:hover, .topnav a.active { color: var(--ink); border-color: var(--ink); }
+  .mast-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .status { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--green); }
+  .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .linkish { border: 1px solid var(--line-strong); background: transparent; color: var(--ink); border-radius: 5px; padding: 7px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  .linkish:hover { background: var(--paper); }
+  .linkish.solid { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .linkish.solid:hover { background: #000; }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 46px 28px 70px; }
+  .intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 26px; border-bottom: 1px solid var(--line); }
+  .intro .kicker { font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+  .intro h1 { font-family: var(--serif); font-size: clamp(34px, 5vw, 52px); font-weight: 400; letter-spacing: -.03em; line-height: 1.1; margin: 10px 0 8px; }
+  .intro p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 520px; }
+  .intro .meta { text-align: right; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  .intro .meta b { display: block; font-family: var(--serif); font-size: 20px; color: var(--ink); font-weight: 400; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr); gap: 34px; margin-top: 34px; align-items: start; }
+  .col { display: grid; gap: 22px; }
+  .panel { background: transparent; border-top: 1px solid var(--line-strong); padding-top: 20px; }
+  .panel:first-child { border-top: 0; padding-top: 0; }
+  .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+  .panel-head h2 { font-family: var(--serif); font-weight: 400; font-size: 21px; letter-spacing: -.01em; margin: 0; }
+  .panel-head .eyebrow { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+
+  .plan-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+  .plan-name { font-family: var(--serif); font-size: 30px; letter-spacing: -.02em; margin: 0 0 4px; font-weight: 400; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 10.5px; letter-spacing: .04em; background: var(--green-soft); color: var(--green); }
+  .badge.warn { background: #fbf3e6; color: var(--amber); }
+  .badge.red { background: #fbeeed; color: var(--red); }
+  .quota { flex: 0 0 auto; text-align: right; }
+  .quota .num { font-family: var(--serif); font-size: 40px; line-height: 1; letter-spacing: -.03em; }
+  .quota .num small { font-size: 16px; color: var(--muted); }
+  .quota .cap { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-top: 5px; }
+  .bar { height: 2px; background: var(--line); margin: 18px 0 8px; position: relative; }
+  .bar i { position: absolute; left: 0; top: 0; height: 2px; width: 86%; background: var(--green); }
+  .bar-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; margin-top: 22px; }
+  .fact { padding: 12px 0; border-top: 1px solid var(--line); }
+  .fact .k { font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+  .fact .v { margin-top: 4px; font-size: 13.5px; word-break: break-word; }
+
+  .ent-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 22px; }
+  .ent { border: 1px solid var(--line); background: var(--paper); padding: 16px 18px; border-radius: 4px; }
+  .ent .k { font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+  .ent .v { font-family: var(--serif); font-size: 18px; margin: 6px 0 3px; }
+  .ent .d { font-size: 11.5px; color: var(--muted); }
+
+  .note { margin-top: 22px; padding: 14px 16px; border-left: 2px solid var(--green); background: var(--green-soft); font-size: 12.5px; color: #2f4a3c; }
+
+  .actions { display: grid; gap: 0; }
+  .action {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    background: transparent; border: 0; border-bottom: 1px solid var(--line); padding: 13px 2px;
+    font: inherit; cursor: pointer; color: var(--ink);
+  }
+  .action:last-child { border-bottom: 0; }
+  .action:hover .arrow { transform: translateX(3px); }
+  .action .idx { font-family: var(--mono); font-size: 10.5px; color: var(--muted); width: 20px; }
+  .action strong { font-weight: 500; font-size: 13.5px; }
+  .action .arrow { margin-left: auto; color: var(--muted); transition: transform .15s; }
+
+  .field { display: grid; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+  input, textarea {
+    width: 100%; border: 1px solid var(--line-strong); background: var(--paper);
+    border-radius: 4px; padding: 10px 12px; font: inherit; font-size: 13px; color: var(--ink); outline: none;
+  }
+  input:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(31,111,80,.12); }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+
+  .kv { display: flex; justify-content: space-between; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv span { color: var(--muted); }
+  .kv b { font-weight: 500; text-align: right; word-break: break-all; }
+
+  .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .tabs button {
+    border: 0; background: transparent; padding: 0 0 9px; font: inherit; font-size: 12px;
+    color: var(--muted); cursor: pointer; border-bottom: 1px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button.active { color: var(--ink); border-color: var(--ink); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  .code-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 11.5px; color: var(--muted); }
+  pre {
+    margin: 0; background: #f4f0e8; border: 1px solid var(--line); border-radius: 4px;
+    padding: 15px 16px; font-family: var(--mono); font-size: 11.5px; line-height: 1.7;
+    overflow: auto; max-height: 220px; color: #3b3a33;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 9px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  td { padding: 11px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.clamp { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src { font-size: 11px; color: var(--muted); }
+  .ok { color: var(--green); }
+  .warn { color: var(--amber); }
+  .err { color: var(--red); }
+  .pager { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; font-size: 11.5px; color: var(--muted); }
+
+  .danger { border: 1px solid #eccfcb; background: #fdf6f5; padding: 18px; border-radius: 4px; }
+  .danger h3 { font-family: var(--serif); font-weight: 400; font-size: 18px; margin: 0 0 6px; color: var(--red); }
+  .danger p { margin: 0 0 12px; font-size: 12px; color: #7d4a44; line-height: 1.65; }
+  .btn-danger { background: transparent; border: 1px solid #d9a7a2; color: var(--red); border-radius: 4px; padding: 8px 13px; font: inherit; font-size: 12px; cursor: pointer; }
+  .btn-danger:hover { background: #fbeeed; }
+
+  /* login */
+  .login-overlay {
+    position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 22px;
+    background: rgba(32,37,31,.55); backdrop-filter: blur(6px);
+  }
+  .login-overlay.open { display: grid; }
+  .login-card { width: min(420px, 100%); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; padding: 34px; position: relative; }
+  .login-card .wordmark { margin-bottom: 26px; }
+  .login-card h2 { font-family: var(--serif); font-weight: 400; font-size: 28px; margin: 0 0 4px; letter-spacing: -.02em; }
+  .login-card .sub { margin: 0 0 22px; color: var(--muted); font-size: 12.5px; }
+  .login-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .login-tabs button { border: 0; background: transparent; padding: 0 0 9px; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; border-bottom: 1px solid transparent; margin-bottom: -1px; }
+  .login-tabs button.active { color: var(--ink); border-color: var(--ink); }
+  .login-panel { display: none; }
+  .login-panel.active { display: block; }
+  .login-submit { width: 100%; margin-top: 16px; padding: 11px; background: var(--ink); color: var(--paper); border: 0; border-radius: 4px; font: inherit; font-size: 13.5px; cursor: pointer; }
+  .close-login { position: absolute; top: 14px; right: 14px; border: 0; background: transparent; color: var(--muted); font-size: 20px; cursor: pointer; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 16px); opacity: 0;
+    background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: 4px;
+    font-size: 12px; transition: .22s; pointer-events: none; z-index: 80;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; gap: 30px; }
+    .topnav { display: none; }
+    .intro { flex-direction: column; align-items: flex-start; }
+    .intro .meta { text-align: left; }
+  }
+  @media (max-width: 680px) {
+    .masthead-inner { padding: 0 16px; height: 60px; }
+    .page { padding: 30px 16px 54px; }
+    .status { display: none; }
+    .facts, .ent-row { grid-template-columns: 1fr; gap: 0; }
+    .ent-row { gap: 12px; }
+    .plan-top { flex-direction: column; }
+    .quota { text-align: left; }
+    .facts { gap: 0; }
+    table { min-width: 720px; }
+    .table-wrap { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="#top"><strong>NfenTik</strong><span>User Center</span></a>
+    <nav class="topnav">
+      <a class="active" href="#plan">套餐</a>
+      <a href="#account">账号</a>
+      <a href="#redeem">充值</a>
+      <a href="#integrate">接入</a>
+      <a href="#logs">记录</a>
+    </nav>
+    <div class="mast-actions">
+      <span class="status">服务正常</span>
+      <button class="linkish" data-login-open>登录页预览</button>
+      <button class="linkish solid">退出</button>
+    </div>
+  </div>
+</header>
+
+<main class="page" id="top">
+  <section class="intro">
+    <div>
+      <div class="kicker">Member Overview</div>
+      <h1>下午好，alice。</h1>
+      <p>这里记录你的套餐、剩余额度与接入方式。所有配置都可以随时复制，令牌只会出现在你的账户中。</p>
+    </div>
+    <div class="meta">
+      <b>2026.11.05</b>
+      专业版 · 包月 · 使用中
+    </div>
+  </section>
+
+  <div class="layout">
+    <div class="col">
+      <section class="panel" id="plan">
+        <div class="panel-head"><h2>我的套餐</h2><span class="eyebrow">Plan &amp; Quota</span></div>
+        <div class="plan-top">
+          <div>
+            <div class="plan-name">专业版 · 包月</div>
+            <span class="badge">使用中</span>
+            <span class="badge">时长有效</span>
+          </div>
+          <div class="quota">
+            <div class="num">860<small> / 1,000</small></div>
+            <div class="cap">剩余次数</div>
+          </div>
+        </div>
+        <div class="bar"><i></i></div>
+        <div class="bar-row"><span>已使用 140 次</span><span>有效期至 2026-12-31</span></div>
+
+        <div class="facts">
+          <div class="fact"><div class="k">用户令牌</div><div class="v mono">nf_8f3a9c2e7b1d4f60c21</div></div>
+          <div class="fact"><div class="k">当前权益</div><div class="v">专业版 · 包月</div></div>
+          <div class="fact"><div class="k">开始时间</div><div class="v">2026-11-01 00:00</div></div>
+          <div class="fact"><div class="k">到期时间</div><div class="v">2026-12-31 23:59</div></div>
+        </div>
+
+        <div class="ent-row">
+          <div class="ent"><div class="k">时长权益</div><div class="v">包月 · 有效</div><div class="d">2026-12-31 到期，可兑换时长卡顺延</div></div>
+          <div class="ent"><div class="k">次数权益</div><div class="v">860 / 1,000</div><div class="d">每次查询消耗 1 次，时长到期后启用</div></div>
+        </div>
+
+        <div class="note">当前状态良好。次数低于 100 时建议提前兑换，避免影响查询。</div>
+      </section>
+
+      <section class="panel" id="integrate">
+        <div class="panel-head"><h2>接入配置</h2><span class="eyebrow">Integration</span></div>
+        <div class="tabs" data-tabs>
+          <button class="active" data-tab="ocs">OCS 配置</button>
+          <button data-tab="url1">URL 模式1</button>
+          <button data-tab="url2">URL 模式2</button>
+        </div>
+        <div class="pane active" data-pane="ocs">
+          <div class="code-label"><span>粘贴到 OCS 用户脚本的题库配置，已包含个人令牌</span><button class="linkish" data-copy="ocs-code">复制配置</button></div>
+          <pre id="ocs-code">[
+  {
+    "name": "NfenTik",
+    "homepage": "https://bank.example.com",
+    "url": "https://bank.example.com/query",
+    "method": "get",
+    "type": "GM_xmlhttpRequest",
+    "contentType": "json",
+    "data": {
+      "title": "${title}",
+      "options": "${options}",
+      "type": "${type}",
+      "token": "nf_8f3a9c2e7b1d4f60c21"
+    },
+    "handler": "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]"
+  }
+]</pre>
+        </div>
+        <div class="pane" data-pane="url1">
+          <div class="code-label"><span>MOGO 题库对接模式，info 与 data 分割符设置为 ###</span><button class="linkish" data-copy="url1-code">复制接口</button></div>
+          <pre id="url1-code">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+          <div class="code-label" style="margin-top:14px"><span>完整调试示例</span><button class="linkish" data-copy="url1-debug">复制</button></div>
+          <pre id="url1-debug">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=%E7%A4%BA%E4%BE%8B%E9%A2%98%E7%9B%AE&info=%E5%8D%95%E9%80%89%E9%A2%98****%5B%E9%80%89%E9%A1%B91%23%23%23%E9%80%89%E9%A1%B92%5D</pre>
+        </div>
+        <div class="pane" data-pane="url2">
+          <div class="code-label"><span>返回 OCS 结构，适合非 MOGO 场景</span><button class="linkish" data-copy="url2-code">复制接口</button></div>
+          <pre id="url2-code">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&title=</pre>
+          <div class="code-label" style="margin-top:14px"><span>q 与 title 等价</span><button class="linkish" data-copy="url2-q">复制</button></div>
+          <pre id="url2-q">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+        </div>
+      </section>
+
+      <section class="panel" id="logs">
+        <div class="panel-head"><h2>我的调用记录</h2><button class="linkish" data-toast="已刷新记录">刷新</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>题目</th><th>答案</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
+            <tbody>
+              <tr><td class="muted">11-05 14:32</td><td class="clamp">下列哪项属于操作系统调度算法</td><td class="clamp">时间片轮转</td><td class="src">题库</td><td class="ok">成功</td><td>12 ms</td></tr>
+              <tr><td class="muted">11-05 14:31</td><td class="clamp">计算机网络中 IP 协议位于哪一层</td><td class="clamp">网络层</td><td class="src">缓存</td><td class="ok">成功</td><td>3 ms</td></tr>
+              <tr><td class="muted">11-05 14:30</td><td class="clamp">求函数 f(x)=x²+2x 的最小值</td><td class="clamp">-1</td><td class="src">AI</td><td class="ok">成功</td><td>1.8 s</td></tr>
+              <tr><td class="muted">11-05 14:28</td><td class="clamp">中国共产党成立于哪一年</td><td class="clamp">1921 年</td><td class="src">题库</td><td class="warn">待修正</td><td>9 ms</td></tr>
+              <tr><td class="muted">11-05 14:25</td><td class="clamp">英语阅读理解：The author's purpose is to</td><td class="clamp">-</td><td class="src">AI</td><td class="err">拒绝</td><td>0 ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pager"><button class="linkish">上一页</button><span>第 1 页 / 共 24 页</span><button class="linkish">下一页</button></div>
+      </section>
+    </div>
+
+    <aside class="col">
+      <section class="panel">
+        <div class="panel-head"><h2>快捷操作</h2></div>
+        <div class="actions">
+          <button class="action" data-toast="已打开卡密兑换"><span class="idx">01</span><strong>兑换卡密</strong><span class="arrow">→</span></button>
+          <button class="action" data-copy="nf_8f3a9c2e7b1d4f60c21"><span class="idx">02</span><strong>复制用户令牌</strong><span class="arrow">→</span></button>
+          <button class="action" data-toast="已打开重置令牌确认"><span class="idx">03</span><strong>重置令牌</strong><span class="arrow">→</span></button>
+        </div>
+      </section>
+
+      <section class="panel" id="account">
+        <div class="panel-head"><h2>账号</h2><span class="eyebrow">Account</span></div>
+        <div class="kv"><span>用户名</span><b>alice</b></div>
+        <div class="kv"><span>绑定令牌</span><b class="mono">nf_8f3a···c21</b></div>
+        <div class="kv"><span>登录方式</span><b>账号 + 令牌</b></div>
+        <div class="row" style="margin-top:14px">
+          <button class="linkish" data-copy="nf_8f3a9c2e7b1d4f60c21">复制令牌</button>
+          <button class="linkish" data-toast="已打开修改密码">修改密码</button>
+        </div>
+      </section>
+
+      <section class="panel" id="redeem">
+        <div class="panel-head"><h2>卡密充值</h2><span class="eyebrow">Redeem</span></div>
+        <p class="muted small" style="margin:0 0 14px;line-height:1.7">次数卡增加查询次数，时长卡顺延到期时间。</p>
+        <div class="field"><label>卡密</label><input class="mono" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false"></div>
+        <button class="linkish solid" style="width:100%;padding:10px" data-toast="已提交兑换">兑换</button>
+        <p class="muted small" style="margin:12px 0 0">最近：2026-11-01 · 次数卡 1,000 次</p>
+      </section>
+
+      <section class="panel danger">
+        <h3>令牌安全</h3>
+        <p>重置后旧令牌立即失效，需要重新登录并更新 OCS 配置。</p>
+        <button class="btn-danger" data-toast="已进入重置令牌确认">重置我的令牌</button>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<div class="login-overlay" data-login>
+  <div class="login-card">
+    <button class="close-login" data-login-close aria-label="关闭">×</button>
+    <a class="wordmark" href="#"><strong>NfenTik</strong><span>User Center</span></a>
+    <h2>欢迎回来。</h2>
+    <p class="sub">登录后查看套餐、额度与接入配置。</p>
+    <div class="login-tabs" data-login-tabs>
+      <button class="active" data-login-tab="token">令牌登录</button>
+      <button data-login-tab="account">账号登录</button>
+      <button data-login-tab="register">注册</button>
+    </div>
+    <div class="login-panel active" data-login-pane="token">
+      <div class="field"><label>用户令牌</label><input type="password" value="nf_8f3a9c2e7b1d4f60c21"></div>
+      <button class="login-submit" data-toast="登录成功（样板演示）">进入用户中心</button>
+    </div>
+    <div class="login-panel" data-login-pane="account">
+      <div class="field"><label>用户名</label><input placeholder="请输入用户名"></div>
+      <div class="field"><label>密码</label><input type="password" placeholder="请输入密码"></div>
+      <button class="login-submit" data-toast="登录成功（样板演示）">账号登录</button>
+    </div>
+    <div class="login-panel" data-login-pane="register">
+      <div class="field"><label>用户名</label><input placeholder="字母开头，3-32 位"></div>
+      <div class="field"><label>密码</label><input type="password" placeholder="至少 8 位"></div>
+      <div class="field"><label>已有令牌（可选）</label><input type="password" placeholder="填写后绑定已有令牌"></div>
+      <button class="login-submit" data-toast="注册成功（样板演示）">注册并登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-toast-host></div>
+
+<script>
+  (function () {
+    var toastEl = document.querySelector("[data-toast-host]");
+    var timer = null;
+    function toast(msg) {
+      if (!toastEl || !msg) return;
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toastEl.classList.remove("show"); }, 1800);
+    }
+    document.addEventListener("click", function (e) {
+      var copy = e.target.closest("[data-copy]");
+      if (copy) {
+        var text = copy.getAttribute("data-copy");
+        var el = document.getElementById(text);
+        if (el) text = el.textContent;
+        if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function () {});
+        toast("已复制");
+        return;
+      }
+      var t = e.target.closest("[data-toast]");
+      if (t) toast(t.getAttribute("data-toast"));
+    });
+    var tabs = document.querySelector("[data-tabs]");
+    if (tabs) {
+      tabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-tab]");
+        if (!btn) return;
+        tabs.querySelectorAll("[data-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        document.querySelectorAll("#integrate [data-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-pane") === btn.getAttribute("data-tab"));
+        });
+      });
+    }
+    var login = document.querySelector("[data-login]");
+    document.querySelectorAll("[data-login-open]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.add("open"); });
+    });
+    document.querySelectorAll("[data-login-close]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.remove("open"); });
+    });
+    login.addEventListener("click", function (e) { if (e.target === login) login.classList.remove("open"); });
+    var ltabs = document.querySelector("[data-login-tabs]");
+    if (ltabs) {
+      ltabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-login-tab]");
+        if (!btn) return;
+        ltabs.querySelectorAll("[data-login-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        login.querySelectorAll("[data-login-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-login-pane") === btn.getAttribute("data-login-tab"));
+        });
+      });
+    }
+  })();
+</script>
+</body>
+</html>

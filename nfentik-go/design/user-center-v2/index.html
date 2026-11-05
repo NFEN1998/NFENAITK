@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>概览 · NfenTik 用户中心</title>
+<link rel="stylesheet" href="assets/app.css">
+<script>try{var a=localStorage.getItem("nfentik-accent");if(a)document.documentElement.dataset.accent=a}catch(e){}</script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">N</span>
+      <div><strong>NfenTik</strong><small>用户中心</small></div>
+    </a>
+    <nav class="nav">
+      <span class="nav-label">导航</span>
+      <a class="nav-item active" href="index.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        概览
+      </a>
+      <a class="nav-item" href="plan.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg>
+        套餐与额度
+      </a>
+      <a class="nav-item" href="account.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        账号与安全
+      </a>
+      <a class="nav-item" href="redeem.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg>
+        卡密充值
+      </a>
+      <a class="nav-item" href="integrate.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14"/></svg>
+        接入配置
+      </a>
+      <a class="nav-item" href="logs.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+        调用记录
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="plan-mini">
+        <div class="row"><span>专业版 · 包月</span><b>86%</b></div>
+        <div class="bar"><i></i></div>
+        <div class="cap"><span>860 次剩余</span><span>12-31 到期</span></div>
+      </div>
+      <a class="user-mini" href="account.html">
+        <span class="avatar">A</span>
+        <div><strong>alice</strong><span>查看账号</span></div>
+      </a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="打开菜单" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="crumb"><span>用户中心</span><span class="sep">/</span><b>概览</b></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" data-accent-toggle title="切换主题" aria-label="切换主题">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <span class="status">服务正常</span>
+        <a class="btn ghost sm" href="login.html">退出</a>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1>下午好，alice</h1>
+          <p>欢迎回来。这里是你的账户状态、额度和最近活动。</p>
+        </div>
+        <div class="page-actions">
+          <a class="btn" href="integrate.html">查看接入配置</a>
+          <a class="btn primary" href="redeem.html">去充值</a>
+        </div>
+      </div>
+
+      <div class="split">
+        <div class="grid">
+          <section class="card">
+            <div class="plan-hero">
+              <div>
+                <span class="pill ok">使用中</span>
+                <h2 class="name" style="margin-top:10px">专业版 · 包月</h2>
+                <div class="sub">时长权益有效至 2026-12-31，次数额度与时长权益同时生效。</div>
+                <div class="stats">
+                  <div class="stat"><div class="k">今日调用</div><div class="v">128</div></div>
+                  <div class="stat"><div class="k">平均耗时</div><div class="v">312 ms</div></div>
+                  <div class="stat"><div class="k">题库命中</div><div class="v">94.2%</div></div>
+                </div>
+              </div>
+              <div class="quota-box">
+                <div class="num">860<small> / 1,000</small></div>
+                <div class="cap">剩余查询次数</div>
+                <div class="progress"><i style="width:86%"></i></div>
+                <div class="progress-row"><span>已用 140</span><span>2026-12-31 到期</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>最近调用</h2>
+              <a class="small muted" href="logs.html">全部记录 →</a>
+            </div>
+            <div class="activity">
+              <div class="row"><span class="time">14:32</span><span class="q">下列哪项属于操作系统调度算法</span><span class="pill ok">成功</span></div>
+              <div class="row"><span class="time">14:31</span><span class="q">计算机网络中 IP 协议位于哪一层</span><span class="pill ok">成功</span></div>
+              <div class="row"><span class="time">14:30</span><span class="q">求函数 f(x)=x²+2x 的最小值</span><span class="pill ok">成功</span></div>
+              <div class="row"><span class="time">14:28</span><span class="q">中国共产党成立于哪一年</span><span class="pill warn">待修正</span></div>
+              <div class="row"><span class="time">14:25</span><span class="q">英语阅读理解：The author's purpose is to</span><span class="pill danger">拒绝</span></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <div class="card-head"><h2>快捷操作</h2></div>
+            <div class="quick">
+              <a href="redeem.html"><span class="ico">＋</span><strong>兑换卡密</strong><span>次数或时长</span></a>
+              <button data-copy="#user-token"><span class="ico">⧉</span><strong>复制令牌</strong><span>用于接入配置</span></button>
+              <a href="integrate.html"><span class="ico">⌘</span><strong>接入配置</strong><span>OCS / URL</span></a>
+              <a href="logs.html"><span class="ico">≡</span><strong>调用记录</strong><span>查看明细</span></a>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>账户与接入</h2><a class="small muted" href="account.html">管理 →</a></div>
+            <div class="kv"><span>用户名</span><b>alice</b></div>
+            <div class="kv"><span>用户令牌</span><b class="mono" id="user-token">nf_8f3a9c2e7b1d4f60c21</b></div>
+            <div class="kv"><span>OCS 配置</span><b>已生成</b></div>
+            <div class="kv"><span>接口状态</span><b class="ok-text" style="color:var(--ok)">正常</b></div>
+          </section>
+
+          <div class="notice info">
+            <span>提示</span>
+            <div>次数低于 100 时会提前提醒。也可以随时在「卡密充值」页兑换次数卡或时长卡。</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="backdrop" id="backdrop"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -2,9 +2,9 @@
   <div class="app-header" :class="{ 'macos-header': isMacOS }" data-tauri-drag-region>
     <div class="header-left" :class="{ 'macos-left': isMacOS }">
       <div class="app-logo">
-        <img src="/icons/favicon.ico" alt="ZError Logo" width="20" height="20" />
+        <img src="/icons/favicon.ico" alt="NFENTK Logo" width="20" height="20" />
       </div>
-      <div class="app-title">ZError</div>
+      <div class="app-title">NFENTK</div>
     </div>
     
     <div class="header-center">
