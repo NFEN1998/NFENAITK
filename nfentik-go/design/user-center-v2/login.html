@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · NfenTik 用户中心</title>
+<link rel="stylesheet" href="assets/app.css">
+<script>try{var a=localStorage.getItem("nfentik-accent");if(a)document.documentElement.dataset.accent=a}catch(e){}</script>
+</head>
+<body>
+<div class="login-page">
+  <aside class="login-brand">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">N</span>
+      <div><strong>NfenTik</strong><small>用户中心</small></div>
+    </a>
+    <div>
+      <h1>你的题库账户，<br>清楚、安静、随时可用。</h1>
+      <p>登录后查看套餐额度、管理用户令牌，并把 OCS 或 URL 接入配置复制到你的查询工具里。</p>
+      <ul>
+        <li>套餐、次数与到期时间一目了然</li>
+        <li>一次配置，支持 OCS 与 MOGO</li>
+        <li>调用记录可查，额度使用透明</li>
+      </ul>
+    </div>
+    <div class="foot">NfenTik · 智能题库查询服务</div>
+  </aside>
+
+  <div class="login-form-wrap">
+    <div class="login-card">
+      <h2>欢迎回来</h2>
+      <p class="sub">使用用户令牌或账号密码登录。</p>
+
+      <div class="login-tabs" data-login-tabs>
+        <button class="active" data-login-tab="token">令牌登录</button>
+        <button data-login-tab="account">账号登录</button>
+        <button data-login-tab="register">注册</button>
+      </div>
+
+      <div class="login-panel active" data-login-pane="token">
+        <div class="field">
+          <label for="token">用户令牌</label>
+          <div class="pw-wrap">
+            <input id="token" type="password" value="nf_8f3a9c2e7b1d4f60c21" autocomplete="off">
+            <button class="pw-toggle" type="button" data-pw-toggle="token">显示</button>
+          </div>
+          <span class="help">令牌由管理员分配，或注册后自动生成。</span>
+        </div>
+        <a class="btn primary login-submit" href="index.html">进入用户中心</a>
+      </div>
+
+      <div class="login-panel" data-login-pane="account">
+        <div class="field">
+          <label for="username">用户名</label>
+          <input id="username" type="text" placeholder="请输入用户名" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <div class="pw-wrap">
+            <input id="password" type="password" placeholder="请输入密码" autocomplete="current-password">
+            <button class="pw-toggle" type="button" data-pw-toggle="password">显示</button>
+          </div>
+        </div>
+        <a class="btn primary login-submit" href="index.html">账号登录</a>
+      </div>
+
+      <div class="login-panel" data-login-pane="register">
+        <div class="field">
+          <label for="reg-user">用户名</label>
+          <input id="reg-user" type="text" placeholder="字母开头，3-32 位" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="reg-pw">密码</label>
+          <div class="pw-wrap">
+            <input id="reg-pw" type="password" placeholder="至少 8 位" autocomplete="new-password">
+            <button class="pw-toggle" type="button" data-pw-toggle="reg-pw">显示</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="reg-pw2">确认密码</label>
+          <input id="reg-pw2" type="password" placeholder="再次输入密码" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="reg-token">已有令牌（可选）</label>
+          <input id="reg-token" type="password" placeholder="填写后绑定已有令牌" autocomplete="off">
+        </div>
+        <a class="btn primary login-submit" href="index.html">注册并登录</a>
+      </div>
+
+      <div class="login-foot">登录即表示你已阅读并同意服务条款</div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

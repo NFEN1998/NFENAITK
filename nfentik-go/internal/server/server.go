@@ -167,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	// ---- User endpoints (usertoken protected) ----
 	mux.HandleFunc("/api/user/", s.handleUser)
 	mux.HandleFunc("/user", s.handleUserPage)
+	mux.HandleFunc("/user/", s.handleUserPage)
 
 	// ---- Admin API (token protected) ----
 	mux.HandleFunc("/api/admin/", s.handleAdmin)

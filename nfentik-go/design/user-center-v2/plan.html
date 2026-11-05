@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>套餐与额度 · NfenTik 用户中心</title>
+<link rel="stylesheet" href="assets/app.css">
+<script>try{var a=localStorage.getItem("nfentik-accent");if(a)document.documentElement.dataset.accent=a}catch(e){}</script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><div><strong>NfenTik</strong><small>用户中心</small></div></a>
+    <nav class="nav">
+      <span class="nav-label">导航</span>
+      <a class="nav-item" href="index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</a>
+      <a class="nav-item active" href="plan.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg>套餐与额度</a>
+      <a class="nav-item" href="account.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>账号与安全</a>
+      <a class="nav-item" href="redeem.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg>卡密充值</a>
+      <a class="nav-item" href="integrate.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14"/></svg>接入配置</a>
+      <a class="nav-item" href="logs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>调用记录</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="plan-mini">
+        <div class="row"><span>专业版 · 包月</span><b>86%</b></div>
+        <div class="bar"><i></i></div>
+        <div class="cap"><span>860 次剩余</span><span>12-31 到期</span></div>
+      </div>
+      <a class="user-mini" href="account.html"><span class="avatar">A</span><div><strong>alice</strong><span>查看账号</span></div></a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="打开菜单" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="crumb"><span>用户中心</span><span class="sep">/</span><b>套餐与额度</b></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" data-accent-toggle title="切换主题" aria-label="切换主题"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></button>
+        <span class="status">服务正常</span>
+        <a class="btn ghost sm" href="login.html">退出</a>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1>套餐与额度</h1>
+          <p>查看当前套餐、权益明细与剩余查询次数。</p>
+        </div>
+        <div class="page-actions"><a class="btn primary" href="redeem.html">兑换卡密</a></div>
+      </div>
+
+      <div class="split">
+        <div class="grid">
+          <section class="card">
+            <div class="plan-hero">
+              <div>
+                <span class="pill ok">使用中</span>
+                <h2 class="name" style="margin-top:10px">专业版 · 包月</h2>
+                <div class="sub">2026-11-01 开通 · 2026-12-31 到期</div>
+                <div class="stats">
+                  <div class="stat"><div class="k">套餐类型</div><div class="v">时长 + 次数</div></div>
+                  <div class="stat"><div class="k">已用次数</div><div class="v">140</div></div>
+                  <div class="stat"><div class="k">剩余天数</div><div class="v">56 天</div></div>
+                </div>
+              </div>
+              <div class="quota-box">
+                <div class="num">860<small> / 1,000</small></div>
+                <div class="cap">剩余查询次数</div>
+                <div class="progress"><i style="width:86%"></i></div>
+                <div class="progress-row"><span>86% 可用</span><span>2026-12-31</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>权益明细</h2><span class="hint">实时生效</span></div>
+            <div class="ent-grid">
+              <div class="ent">
+                <div class="k">时长权益</div>
+                <div class="v">包月 · 有效</div>
+                <div class="d">2026-12-31 23:59 到期，兑换时长卡可顺延。</div>
+              </div>
+              <div class="ent">
+                <div class="k">次数权益</div>
+                <div class="v">860 / 1,000</div>
+                <div class="d">每次查询消耗 1 次，时长到期后启用剩余次数。</div>
+              </div>
+            </div>
+            <div class="card-foot">次数低于 100 时，概览页与接入页会显示提醒。</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>我的备注</h2><button class="btn ghost sm" data-toast="备注已保存（样板演示）">保存</button></div>
+            <div class="field" style="margin:0">
+              <label for="note">仅自己可见，最多 200 字</label>
+              <textarea id="note" placeholder="例如：用于高数题库查询，月底前续费。">用于高数题库查询，月底前续费。</textarea>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <div class="card-head"><h2>套餐信息</h2></div>
+            <div class="kv"><span>套餐名称</span><b>专业版 · 包月</b></div>
+            <div class="kv"><span>套餐编码</span><b class="mono">professional</b></div>
+            <div class="kv"><span>状态</span><b style="color:var(--ok)">使用中</b></div>
+            <div class="kv"><span>开通时间</span><b>2026-11-01 00:00</b></div>
+            <div class="kv"><span>到期时间</span><b>2026-12-31 23:59</b></div>
+            <div class="kv"><span>用户令牌</span><b class="mono" id="user-token">nf_8f3a9c2e7b1d4f60c21</b></div>
+            <div class="card-foot"><button class="btn ghost sm" data-copy="#user-token">复制令牌</button></div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>额度规则</h2></div>
+            <div class="kv"><span>单次查询</span><b>消耗 1 次</b></div>
+            <div class="kv"><span>题库命中</span><b>同样计次</b></div>
+            <div class="kv"><span>失败请求</span><b>不计次</b></div>
+            <div class="kv"><span>时长到期</span><b>次数权益保留</b></div>
+          </section>
+
+          <div class="notice warn">
+            <span>提醒</span>
+            <div>当前套餐将在 56 天后到期。如需继续使用，请提前兑换时长卡密。</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="backdrop" id="backdrop"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NfenTik 用户中心 · 设计样板</title>
+<style>
+  :root {
+    --ink: #101828; --muted: #667085; --line: #e7e9ee; --bg: #f5f6fa;
+    --indigo: #4f46e5; --cyan: #06b6d4; --green: #1f6f50; --cream: #faf7f2;
+    --lime: #b6ff3c; --dark: #070b0d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink); background:
+      radial-gradient(1200px 600px at 10% -10%, #e8ebff 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #e0f7fb 0%, transparent 50%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 56px 22px 72px; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--indigo); text-transform: uppercase; }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--indigo); }
+  h1 { font-size: clamp(30px, 5vw, 46px); letter-spacing: -.03em; line-height: 1.1; margin: 16px 0 12px; }
+  .lead { max-width: 640px; color: var(--muted); font-size: 15px; line-height: 1.75; margin: 0; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 42px; }
+  .card {
+    display: flex; flex-direction: column; background: #fff; border: 1px solid var(--line);
+    border-radius: 18px; overflow: hidden; text-decoration: none; color: inherit;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 18px 40px -28px rgba(16,24,40,.35);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 28px 60px -28px rgba(16,24,40,.4); }
+  .thumb { height: 190px; position: relative; overflow: hidden; padding: 18px; }
+  .thumb .bar { height: 8px; border-radius: 99px; margin-bottom: 8px; opacity: .9; }
+  .thumb .panel { border-radius: 10px; height: 54px; margin-bottom: 8px; }
+  .thumb .row { display: flex; gap: 8px; }
+  .thumb .row > div { flex: 1; border-radius: 8px; height: 40px; }
+  .v1 { background: linear-gradient(135deg, #0e1526 0%, #1b2450 55%, #0e3b4f 100%); }
+  .v1 .bar { background: linear-gradient(90deg, #4f46e5, #06b6d4); }
+  .v1 .panel { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.14); }
+  .v1 .row > div { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.12); }
+  .v1 .ring { position: absolute; right: 18px; top: 22px; width: 64px; height: 64px; border-radius: 50%; background: conic-gradient(#06b6d4 0 72%, rgba(255,255,255,.14) 72% 100%); }
+  .v1 .ring::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: #0e1526; }
+  .v2 { background: var(--cream); }
+  .v2 .bar { background: #1f6f50; height: 3px; }
+  .v2 .panel { background: #fff; border: 1px solid #e7e1d6; }
+  .v2 .row > div { background: #fff; border: 1px solid #e7e1d6; }
+  .v2 .serif { position: absolute; right: 18px; top: 16px; font-family: Georgia, "Songti SC", serif; font-size: 44px; color: #d9d0bf; }
+  .v3 { background: var(--dark); }
+  .v3 .bar { background: var(--lime); height: 3px; }
+  .v3 .panel { background: #0d1417; border: 1px solid #1e2b30; }
+  .v3 .row > div { background: #0d1417; border: 1px solid #1e2b30; }
+  .v3 .prompt { position: absolute; right: 18px; top: 16px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--lime); }
+  .body { padding: 20px 20px 22px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .tag { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h2 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
+  .desc { color: var(--muted); font-size: 13px; line-height: 1.65; margin: 0; flex: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 11px; color: #475467; background: #f2f4f7; border-radius: 999px; padding: 4px 9px; }
+  .open { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--indigo); margin-top: 4px; }
+  .open::after { content: "→"; transition: transform .18s ease; }
+  .card:hover .open::after { transform: translateX(3px); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+  footer b { color: var(--ink); }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .thumb { height: 160px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="eyebrow">User Center Redesign</span>
+  <h1>用户中心，三种方向。</h1>
+  <p class="lead">基于现有功能重新设计的桌面端与手机端自适应样板：套餐与额度、账号安全、卡密充值、OCS / URL 接入、调用记录。三版都保留完整信息结构，区别在气质与信息密度。点开任意一版即可预览，并可在右上角切换登录页样式。</p>
+
+  <div class="grid">
+    <a class="card" href="v1-aurora.html">
+      <div class="thumb v1">
+        <div class="ring"></div>
+        <div class="bar" style="width:42%"></div>
+        <div class="bar" style="width:26%"></div>
+        <div class="panel"></div>
+        <div class="row"><div></div><div></div></div>
+      </div>
+      <div class="body">
+        <span class="tag">Direction A</span>
+        <h2>Aurora · 高级 SaaS</h2>
+        <p class="desc">深色侧栏配渐变额度环，Bento 卡片承载套餐、快捷操作与接入配置。信息层级清晰，适合作为正式产品的默认皮肤。</p>
+        <div class="chips"><span class="chip">侧边导航</span><span class="chip">额度环</span><span class="chip">渐变强调</span></div>
+        <span class="open">查看样板</span>
+      </div>
+    </a>
+
+    <a class="card" href="v2-editorial.html">
+      <div class="thumb v2">
+        <div class="serif">N°</div>
+        <div class="bar" style="width:36%"></div>
+        <div class="panel"></div>
+        <div class="row"><div></div><div></div></div>
+      </div>
+      <div class="body">
+        <span class="tag">Direction B</span>
+        <h2>Editorial · 温和纸感</h2>
+        <p class="desc">米白底色、衬线标题、细线与大留白，像一份精致的账户手册。阅读舒适，适合希望弱化“工具感”的产品。</p>
+        <div class="chips"><span class="chip">衬线标题</span><span class="chip">暖白纸感</span><span class="chip">低饱和</span></div>
+        <span class="open">查看样板</span>
+      </div>
+    </a>
+
+    <a class="card" href="v3-terminal.html">
+      <div class="thumb v3">
+        <div class="prompt">~/user-center $</div>
+        <div class="bar" style="width:32%"></div>
+        <div class="panel"></div>
+        <div class="row"><div></div><div></div></div>
+      </div>
+      <div class="body">
+        <span class="tag">Direction C</span>
+        <h2>Terminal · 开发者控制台</h2>
+        <p class="desc">深色界面、等宽字体与荧光绿强调，接入配置和调用记录像终端输出。适合技术型用户，辨识度最强。</p>
+        <div class="chips"><span class="chip">暗色</span><span class="chip">等宽字体</span><span class="chip">终端气质</span></div>
+        <span class="open">查看样板</span>
+      </div>
+    </a>
+  </div>
+
+  <footer>
+    <b>说明</b>：样板使用模拟数据，仅用于视觉与交互评审；最终实现会接入现有 <code>/api/user/*</code> 接口，并保留全部功能。手机端请用浏览器开发者工具切换到 390px 宽度查看。
+  </footer>
+</div>
+</body>
+</html>

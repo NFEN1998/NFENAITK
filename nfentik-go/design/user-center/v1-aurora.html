@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurora · NfenTik 用户中心</title>
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #fff; --ink: #101828; --muted: #667085; --line: #e7e9ee;
+    --sidebar: #0e1526; --sidebar-2: #131c33; --indigo: #4f46e5; --indigo-2: #6366f1;
+    --cyan: #06b6d4; --green: #12b76a; --amber: #f79009; --red: #f04438;
+    --radius: 16px; --shadow: 0 1px 2px rgba(16,24,40,.04), 0 18px 40px -30px rgba(16,24,40,.35);
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+
+  .shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+
+  /* sidebar */
+  .sidebar {
+    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column;
+    background: linear-gradient(180deg, var(--sidebar) 0%, #0b1220 100%);
+    color: #cbd5e1; padding: 22px 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; padding: 2px 8px 22px; }
+  .brand-mark {
+    width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--indigo) 0%, var(--cyan) 100%);
+    color: #fff; font-weight: 800; font-size: 18px; box-shadow: 0 8px 22px -8px rgba(79,70,229,.8);
+  }
+  .brand strong { display: block; color: #fff; font-size: 15px; letter-spacing: .2px; }
+  .brand small { color: #7c8aa5; font-size: 11px; }
+  .nav { display: flex; flex-direction: column; gap: 3px; }
+  .nav-label { color: #5d6b85; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; padding: 14px 12px 7px; }
+  .nav a {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px;
+    text-decoration: none; color: #aebbd0; font-size: 13.5px; transition: background .15s, color .15s;
+  }
+  .nav a svg { width: 16px; height: 16px; opacity: .8; }
+  .nav a:hover { background: rgba(255,255,255,.05); color: #fff; }
+  .nav a.active { background: rgba(99,102,241,.18); color: #fff; box-shadow: inset 2px 0 0 var(--indigo-2); }
+  .sidebar-foot { margin-top: auto; padding: 14px 10px 4px; border-top: 1px solid rgba(255,255,255,.08); }
+  .user-chip { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    background: linear-gradient(135deg, #22d3ee 0%, #6366f1 100%); color: #fff; font-weight: 700; font-size: 13px;
+  }
+  .user-chip strong { display: block; color: #e2e8f0; font-size: 12.5px; }
+  .user-chip span { color: #6f7f99; font-size: 11px; }
+  .sidebar-foot .sub { margin-top: 12px; font-size: 10.5px; color: #56637c; }
+
+  /* main */
+  .main { min-width: 0; padding: 26px 30px 54px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 22px; }
+  .topbar h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+  .topbar p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .top-actions { display: flex; align-items: center; gap: 9px; }
+  .status-dot { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #067647; background: #ecfdf3; border: 1px solid #abefc6; border-radius: 999px; padding: 6px 11px; }
+  .status-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(18,183,106,.18); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    border: 1px solid transparent; border-radius: 9px; padding: 9px 14px; font: inherit; font-weight: 600;
+    font-size: 13px; cursor: pointer; background: #eceef3; color: var(--ink); transition: .15s;
+  }
+  .btn:hover { filter: brightness(.98); }
+  .btn.primary { background: linear-gradient(135deg, var(--indigo) 0%, var(--indigo-2) 100%); color: #fff; box-shadow: 0 8px 20px -10px rgba(79,70,229,.8); }
+  .btn.ghost { background: #fff; border-color: var(--line); }
+  .btn.danger { background: #fff; border-color: #fecdca; color: #b42318; }
+  .btn.sm { padding: 6px 11px; font-size: 12px; border-radius: 7px; }
+
+  .content { max-width: 1160px; display: grid; gap: 16px; }
+
+  /* hero */
+  .hero {
+    position: relative; overflow: hidden; border-radius: 20px; padding: 26px 28px;
+    background: radial-gradient(900px 300px at 85% -30%, rgba(6,182,212,.4) 0%, transparent 60%),
+                linear-gradient(120deg, #101a35 0%, #1b2450 55%, #0d3b4a 100%);
+    color: #fff; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 26px; align-items: center;
+    box-shadow: 0 24px 60px -34px rgba(16,24,40,.6);
+  }
+  .hero::after {
+    content: ""; position: absolute; right: -60px; bottom: -90px; width: 280px; height: 280px;
+    border-radius: 50%; background: radial-gradient(circle, rgba(99,102,241,.35) 0%, transparent 65%);
+  }
+  .hero .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: #7dd3fc; text-transform: uppercase; }
+  .hero h2 { margin: 10px 0 6px; font-size: 26px; letter-spacing: -.02em; }
+  .hero .desc { margin: 0; color: #a9b8d4; font-size: 13px; }
+  .hero-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+  .stat {
+    border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.07);
+    border-radius: 11px; padding: 10px 14px; min-width: 118px;
+  }
+  .stat span { display: block; color: #8fa1c2; font-size: 10.5px; letter-spacing: .04em; }
+  .stat strong { display: block; margin-top: 4px; font-size: 14px; font-weight: 700; }
+  .ring-wrap { position: relative; width: 148px; height: 148px; display: grid; place-items: center; }
+  .ring {
+    width: 148px; height: 148px; border-radius: 50%;
+    background: conic-gradient(#22d3ee 0 86%, rgba(255,255,255,.12) 86% 100%);
+    display: grid; place-items: center; box-shadow: 0 0 40px -6px rgba(34,211,238,.4);
+  }
+  .ring::before { content: ""; position: absolute; inset: 11px; border-radius: 50%; background: #101a35; }
+  .ring-core { position: relative; text-align: center; z-index: 1; }
+  .ring-core strong { display: block; font-size: 26px; letter-spacing: -.03em; }
+  .ring-core span { color: #8fa1c2; font-size: 11px; }
+
+  /* bento */
+  .bento { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow); min-width: 0;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+  .card-head h3 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+  .card-head .hint { color: var(--muted); font-size: 11.5px; }
+  .span-4 { grid-column: span 4; }
+  .span-5 { grid-column: span 5; }
+  .span-6 { grid-column: span 6; }
+  .span-7 { grid-column: span 7; }
+  .span-8 { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
+
+  .actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+  .action {
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fbfcfe;
+    display: flex; flex-direction: column; gap: 6px; cursor: pointer; transition: .15s; text-align: left;
+  }
+  .action:hover { border-color: #c7d2fe; background: #f5f7ff; transform: translateY(-1px); }
+  .action .ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: #eef2ff; color: var(--indigo); font-size: 14px; }
+  .action strong { font-size: 13px; }
+  .action span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+  .ent { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ent-item { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fbfcfe; }
+  .ent-item .label { color: var(--muted); font-size: 11px; }
+  .ent-item strong { display: block; margin: 6px 0 3px; font-size: 15px; }
+  .ent-item span { color: var(--muted); font-size: 11.5px; }
+
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv span { color: var(--muted); }
+  .kv strong { font-weight: 600; text-align: right; word-break: break-all; }
+  .tag { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; background: #eef2ff; color: #4338ca; }
+  .tag.green { background: #ecfdf3; color: #067647; }
+
+  .field { display: grid; gap: 7px; margin-top: 4px; }
+  .field label { font-size: 11.5px; font-weight: 600; color: #475467; }
+  input, textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+    font: inherit; font-size: 13px; background: #fbfcfe; color: var(--ink); outline: none;
+  }
+  input:focus, textarea:focus { border-color: #a5b4fc; background: #fff; box-shadow: 0 0 0 4px rgba(99,102,241,.13); }
+  .row { display: flex; gap: 9px; }
+  .row input { flex: 1; }
+
+  /* tabs */
+  .tabs { display: inline-flex; padding: 3px; background: #f2f4f8; border-radius: 9px; gap: 2px; }
+  .tabs button {
+    border: 0; background: transparent; padding: 6px 11px; border-radius: 7px; font: inherit;
+    font-size: 11.5px; font-weight: 600; color: var(--muted); cursor: pointer;
+  }
+  .tabs button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.1); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  pre {
+    margin: 0; background: #0f172a; color: #c8d5f0; border-radius: 12px; padding: 15px 16px;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.7; overflow: auto; max-height: 210px;
+  }
+  pre .k { color: #93c5fd; } pre .s { color: #86efac; } pre .c { color: #64748b; }
+  .code-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+  .code-top span { color: var(--muted); font-size: 11.5px; }
+
+  /* table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: .03em; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 11px 10px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.clamp { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+  .badge.ok { background: #ecfdf3; color: #067647; }
+  .badge.ai { background: #eef2ff; color: #4338ca; }
+  .badge.warn { background: #fffaeb; color: #b54708; }
+  .badge.err { background: #fef3f2; color: #b42318; }
+  .pager { display: flex; justify-content: flex-end; align-items: center; gap: 11px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+
+  .danger-zone { border-color: #fecdca; background: linear-gradient(180deg, #fff 0%, #fffbfa 100%); }
+  .danger-zone h3 { color: #b42318; }
+
+  /* login overlay */
+  .login-overlay {
+    position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 20px;
+    background: radial-gradient(800px 500px at 20% 0%, rgba(79,70,229,.35) 0%, transparent 55%),
+                radial-gradient(700px 500px at 90% 100%, rgba(6,182,212,.28) 0%, transparent 55%),
+                #0b1220;
+  }
+  .login-overlay.open { display: grid; }
+  .login-card {
+    width: min(410px, 100%); background: #fff; border-radius: 20px; padding: 30px;
+    box-shadow: 0 40px 90px -30px rgba(0,0,0,.6);
+  }
+  .login-card .brand { padding: 0 0 20px; }
+  .login-card .brand strong { color: var(--ink); }
+  .login-card .brand small { color: var(--muted); }
+  .login-card h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -.02em; }
+  .login-card p.sub { margin: 0 0 18px; color: var(--muted); font-size: 12.5px; }
+  .login-tabs { display: flex; gap: 4px; background: #f2f4f8; border-radius: 10px; padding: 4px; margin-bottom: 18px; }
+  .login-tabs button { flex: 1; border: 0; background: transparent; padding: 8px; border-radius: 7px; font: inherit; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+  .login-tabs button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.12); }
+  .login-panel { display: none; }
+  .login-panel.active { display: block; }
+  .close-login { position: absolute; top: 18px; right: 20px; border: 0; background: rgba(255,255,255,.1); color: #cbd5e1; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 18px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 20px); opacity: 0;
+    background: #101828; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 12.5px;
+    transition: .25s; pointer-events: none; z-index: 80;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 1080px) {
+    .span-4, .span-5 { grid-column: span 6; }
+    .span-7, .span-8 { grid-column: span 12; }
+  }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; padding: 12px 14px; flex-direction: row; align-items: center; gap: 10px; overflow-x: auto; }
+    .brand { padding: 0; flex: 0 0 auto; }
+    .brand small, .nav-label, .sidebar-foot { display: none; }
+    .nav { flex-direction: row; gap: 2px; overflow-x: auto; }
+    .nav a { white-space: nowrap; padding: 8px 10px; font-size: 12.5px; }
+    .nav a.active { box-shadow: inset 0 -2px 0 var(--indigo-2); }
+    .main { padding: 20px 16px 40px; }
+  }
+  @media (max-width: 720px) {
+    .hero { grid-template-columns: 1fr; padding: 22px; }
+    .ring-wrap { justify-self: start; }
+    .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
+    .actions { grid-template-columns: 1fr; }
+    .ent { grid-template-columns: 1fr; }
+    .topbar { flex-wrap: wrap; }
+    .top-actions { width: 100%; justify-content: space-between; }
+    table { min-width: 760px; }
+  }
+  @media (max-width: 520px) {
+    .topbar h1 { font-size: 19px; }
+    .hero h2 { font-size: 22px; }
+    .hero-stats .stat { flex: 1 1 calc(50% - 5px); min-width: 0; }
+    .card { padding: 16px; border-radius: 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">N</span>
+      <div><strong>NfenTik</strong><small>用户中心</small></div>
+    </div>
+    <nav class="nav">
+      <span class="nav-label">Overview</span>
+      <a class="active" href="#top">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        概览
+      </a>
+      <a href="#plan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        我的套餐
+      </a>
+      <a href="#account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        账号安全
+      </a>
+      <a href="#redeem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg>
+        卡密充值
+      </a>
+      <a href="#integrate">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14"/></svg>
+        接入配置
+      </a>
+      <a href="#logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+        调用记录
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <span class="avatar">A</span>
+        <div><strong>alice</strong><span>专业版 · 包月</span></div>
+      </div>
+      <div class="sub">令牌尾号 ····c21 · 已保护</div>
+    </div>
+  </aside>
+
+  <main class="main" id="top">
+    <div class="topbar">
+      <div>
+        <h1>下午好，alice</h1>
+        <p>这里是你的套餐、额度与接入配置。</p>
+      </div>
+      <div class="top-actions">
+        <span class="status-dot">服务正常</span>
+        <button class="btn ghost" data-login-open>登录页预览</button>
+        <button class="btn primary">退出</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <section class="hero">
+        <div>
+          <span class="eyebrow">Professional Monthly</span>
+          <h2>专业版 · 包月</h2>
+          <p class="desc">额度充足，时长权益有效至 2026-12-31。兑换时长卡密可顺延到期时间。</p>
+          <div class="hero-stats">
+            <div class="stat"><span>剩余次数</span><strong>860 / 1,000</strong></div>
+            <div class="stat"><span>今日调用</span><strong>128 次</strong></div>
+            <div class="stat"><span>平均耗时</span><strong>312 ms</strong></div>
+          </div>
+        </div>
+        <div class="ring-wrap">
+          <div class="ring"></div>
+          <div class="ring-core"><strong>86%</strong><span>次数余额</span></div>
+        </div>
+      </section>
+
+      <div class="bento">
+        <section class="card span-7" id="plan">
+          <div class="card-head"><h3>套餐权益</h3><span class="hint">实时生效</span></div>
+          <div class="ent">
+            <div class="ent-item">
+              <span class="label">时长权益</span>
+              <strong>包月 · 有效</strong>
+              <span>2026-12-31 到期</span>
+            </div>
+            <div class="ent-item">
+              <span class="label">次数权益</span>
+              <strong>860 / 1,000</strong>
+              <span>每次查询消耗 1 次</span>
+            </div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="kv"><span>用户令牌</span><strong class="mono">nf_8f3a9c2e7b1d4f60c21</strong></div>
+            <div class="kv"><span>开始时间</span><strong>2026-11-01 00:00</strong></div>
+            <div class="kv"><span>到期时间</span><strong>2026-12-31 23:59</strong></div>
+          </div>
+        </section>
+
+        <section class="card span-5">
+          <div class="card-head"><h3>快捷操作</h3></div>
+          <div class="actions">
+            <button class="action" data-toast="已打开卡密兑换">
+              <span class="ico">+</span><strong>兑换卡密</strong><span>次数或时长</span>
+            </button>
+            <button class="action" data-copy="nf_8f3a9c2e7b1d4f60c21">
+              <span class="ico">⧉</span><strong>复制令牌</strong><span>用于 OCS 配置</span>
+            </button>
+            <button class="action" data-toast="已进入重置令牌确认">
+              <span class="ico">↻</span><strong>重置令牌</strong><span>旧令牌立即失效</span>
+            </button>
+          </div>
+          <div style="margin-top:16px;padding:13px;border-radius:11px;background:#f8faff;border:1px solid #e5e9f8;font-size:12px;color:#475467;line-height:1.65">
+            当前状态 <b style="color:#067647">使用中</b>。若次数即将用完，可提前兑换次数卡密。
+          </div>
+        </section>
+
+        <section class="card span-6" id="account">
+          <div class="card-head"><h3>账号安全</h3><span class="tag green">已绑定</span></div>
+          <div class="kv"><span>用户名</span><strong>alice</strong></div>
+          <div class="kv"><span>绑定令牌</span><strong class="mono">nf_8f3a···c21</strong></div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn ghost sm" data-copy="nf_8f3a9c2e7b1d4f60c21">复制令牌</button>
+            <button class="btn ghost sm" data-toast="已打开修改密码">修改密码</button>
+            <button class="btn ghost sm" data-toast="已退出账号">退出账号</button>
+          </div>
+        </section>
+
+        <section class="card span-6" id="redeem">
+          <div class="card-head"><h3>卡密充值</h3><span class="hint">次数 / 时长</span></div>
+          <p class="muted small" style="margin:0 0 12px;line-height:1.65">输入卡密为当前令牌充值，次数卡增加查询次数，时长卡顺延到期时间。</p>
+          <div class="row">
+            <input class="mono" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false">
+            <button class="btn primary" data-toast="已提交兑换">兑换</button>
+          </div>
+          <p class="muted small" style="margin:10px 0 0">最近兑换：2026-11-01 · 次数卡 1,000 次</p>
+        </section>
+
+        <section class="card span-12" id="integrate">
+          <div class="card-head">
+            <h3>接入配置</h3>
+            <div class="tabs" data-tabs>
+              <button class="active" data-tab="ocs">OCS</button>
+              <button data-tab="url1">URL 模式1</button>
+              <button data-tab="url2">URL 模式2</button>
+            </div>
+          </div>
+
+          <div class="pane active" data-pane="ocs">
+            <div class="code-top"><span>粘贴到 OCS 用户脚本的题库配置 · 已包含个人令牌</span><button class="btn ghost sm" data-copy="ocs-code">复制配置</button></div>
+            <pre id="ocs-code">[
+  {
+    "name": "NfenTik",
+    "homepage": "https://bank.example.com",
+    "url": "https://bank.example.com/query",
+    "method": "get",
+    "type": "GM_xmlhttpRequest",
+    "contentType": "json",
+    "data": {
+      "title": "${title}",
+      "options": "${options}",
+      "type": "${type}",
+      "token": "nf_8f3a9c2e7b1d4f60c21"
+    },
+    "handler": "return (res)=>res.code === 0 ? [res.message, undefined] : [res.data.question,res.data.answer,{ai: res.data.is_ai}]"
+  }
+]</pre>
+          </div>
+
+          <div class="pane" data-pane="url1">
+            <div class="code-top"><span>MOGO 题库对接模式 · info 与 data 分割符设为 ###</span><button class="btn ghost sm" data-copy="url1-code">复制接口</button></div>
+            <pre id="url1-code">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+            <div class="code-top" style="margin-top:14px"><span>完整调试示例</span><button class="btn ghost sm" data-copy="url1-debug">复制</button></div>
+            <pre id="url1-debug">https://bank.example.com/nfentk?key=nf_8f3a9c2e7b1d4f60c21&q=%E7%A4%BA%E4%BE%8B%E9%A2%98%E7%9B%AE&info=%E5%8D%95%E9%80%89%E9%A2%98****%5B%E9%80%89%E9%A1%B91%23%23%23%E9%80%89%E9%A1%B92%5D</pre>
+          </div>
+
+          <div class="pane" data-pane="url2">
+            <div class="code-top"><span>返回 OCS 结构，适合非 MOGO 场景</span><button class="btn ghost sm" data-copy="url2-code">复制接口</button></div>
+            <pre id="url2-code">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&title=</pre>
+            <div class="code-top" style="margin-top:14px"><span>q 与 title 等价</span><button class="btn ghost sm" data-copy="url2-q">复制</button></div>
+            <pre id="url2-q">https://bank.example.com/query?token=nf_8f3a9c2e7b1d4f60c21&q=</pre>
+          </div>
+        </section>
+
+        <section class="card span-12" id="logs">
+          <div class="card-head"><h3>我的调用记录</h3><button class="btn ghost sm" data-toast="已刷新调用记录">刷新</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>题目</th><th>答案</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
+              <tbody>
+                <tr><td class="muted">11-05 14:32:11</td><td class="clamp">下列哪项属于操作系统调度算法</td><td class="clamp">时间片轮转</td><td><span class="badge ai">题库</span></td><td><span class="badge ok">成功</span></td><td>12 ms</td></tr>
+                <tr><td class="muted">11-05 14:31:58</td><td class="clamp">计算机网络中 IP 协议位于哪一层</td><td class="clamp">网络层</td><td><span class="badge ai">缓存</span></td><td><span class="badge ok">成功</span></td><td>3 ms</td></tr>
+                <tr><td class="muted">11-05 14:30:42</td><td class="clamp">求函数 f(x)=x²+2x 的最小值</td><td class="clamp">-1</td><td><span class="badge ai">AI</span></td><td><span class="badge ok">成功</span></td><td>1.8 s</td></tr>
+                <tr><td class="muted">11-05 14:28:07</td><td class="clamp">中国共产党成立于哪一年</td><td class="clamp">1921 年</td><td><span class="badge ai">题库</span></td><td><span class="badge warn">待修正</span></td><td>9 ms</td></tr>
+                <tr><td class="muted">11-05 14:25:33</td><td class="clamp">英语阅读理解：The author's purpose is to</td><td class="clamp">-</td><td><span class="badge ai">AI</span></td><td><span class="badge err">拒绝</span></td><td>0 ms</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pager"><button class="btn ghost sm">上一页</button><span>第 1 页 / 共 24 页</span><button class="btn ghost sm">下一页</button></div>
+        </section>
+
+        <section class="card span-12 danger-zone">
+          <div class="card-head"><h3>令牌安全</h3><span class="tag" style="background:#fef3f2;color:#b42318">高风险操作</span></div>
+          <p class="muted small" style="margin:0 0 14px;line-height:1.65">重置后旧令牌立即失效，需要重新登录并更新 OCS 配置。请确认已完成新令牌的保存准备。</p>
+          <button class="btn danger" data-toast="已进入重置令牌确认">重置我的令牌</button>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="login-overlay" data-login>
+  <button class="close-login" data-login-close aria-label="关闭">×</button>
+  <div class="login-card">
+    <div class="brand"><span class="brand-mark">N</span><div><strong>NfenTik</strong><small>用户中心</small></div></div>
+    <h2>欢迎回来</h2>
+    <p class="sub">登录后查看套餐、额度与接入配置。</p>
+    <div class="login-tabs" data-login-tabs>
+      <button class="active" data-login-tab="token">令牌登录</button>
+      <button data-login-tab="account">账号登录</button>
+      <button data-login-tab="register">注册</button>
+    </div>
+    <div class="login-panel active" data-login-pane="token">
+      <div class="field"><label>用户令牌</label><input type="password" value="nf_8f3a9c2e7b1d4f60c21"></div>
+      <button class="btn primary" style="width:100%;margin-top:14px" data-toast="登录成功（样板演示）">进入用户中心</button>
+    </div>
+    <div class="login-panel" data-login-pane="account">
+      <div class="field"><label>用户名</label><input placeholder="请输入用户名"></div>
+      <div class="field"><label>密码</label><input type="password" placeholder="请输入密码"></div>
+      <button class="btn primary" style="width:100%;margin-top:14px" data-toast="登录成功（样板演示）">账号登录</button>
+    </div>
+    <div class="login-panel" data-login-pane="register">
+      <div class="field"><label>用户名</label><input placeholder="字母开头，3-32 位"></div>
+      <div class="field"><label>密码</label><input type="password" placeholder="至少 8 位"></div>
+      <div class="field"><label>已有令牌（可选）</label><input type="password" placeholder="填写后绑定已有令牌"></div>
+      <button class="btn primary" style="width:100%;margin-top:14px" data-toast="注册成功（样板演示）">注册并登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-toast-host></div>
+
+<script>
+  (function () {
+    var toastEl = document.querySelector("[data-toast-host]");
+    var timer = null;
+    function toast(msg) {
+      if (!toastEl || !msg) return;
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toastEl.classList.remove("show"); }, 1800);
+    }
+
+    document.addEventListener("click", function (e) {
+      var copy = e.target.closest("[data-copy]");
+      if (copy) {
+        var text = copy.getAttribute("data-copy");
+        var el = document.getElementById(text);
+        if (el) text = el.textContent;
+        if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function () {});
+        toast("已复制");
+        return;
+      }
+      var t = e.target.closest("[data-toast]");
+      if (t) { toast(t.getAttribute("data-toast")); return; }
+    });
+
+    var tabs = document.querySelector("[data-tabs]");
+    if (tabs) {
+      tabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-tab]");
+        if (!btn) return;
+        tabs.querySelectorAll("[data-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        document.querySelectorAll("#integrate [data-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-pane") === btn.getAttribute("data-tab"));
+        });
+      });
+    }
+
+    var login = document.querySelector("[data-login]");
+    document.querySelectorAll("[data-login-open]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.add("open"); });
+    });
+    document.querySelectorAll("[data-login-close]").forEach(function (b) {
+      b.addEventListener("click", function () { login.classList.remove("open"); });
+    });
+    login.addEventListener("click", function (e) { if (e.target === login) login.classList.remove("open"); });
+
+    var ltabs = document.querySelector("[data-login-tabs]");
+    if (ltabs) {
+      ltabs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-login-tab]");
+        if (!btn) return;
+        ltabs.querySelectorAll("[data-login-tab]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        login.querySelectorAll("[data-login-pane]").forEach(function (p) {
+          p.classList.toggle("active", p.getAttribute("data-login-pane") === btn.getAttribute("data-login-tab"));
+        });
+      });
+    }
+  })();
+</script>
+</body>
+</html>

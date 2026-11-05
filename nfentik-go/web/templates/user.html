@@ -6,295 +6,100 @@
 <meta name="app-site-name" content="{{.SiteName}}">
 <title>{{.Title}}</title>
 <link rel="stylesheet" href="/user/static/user.css">
+<script>try{var a=localStorage.getItem("nfentik-accent");if(a)document.documentElement.dataset.accent=a}catch(e){}</script>
 </head>
-<body>
-<div id="app" data-users-on="{{if .UsersOn}}1{{else}}0{{end}}">
-
-  <div id="user-login" class="user-login hidden">
-    <div class="login-card">
-      <div class="login-brand">
-        <span class="login-logo">Z</span>
-        <div>
-          <strong>{{.SiteName}}</strong>
-          <span class="login-sub">用户中心</span>
-        </div>
+<body data-page="{{.Page}}" data-site-name="{{.SiteName}}">
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/user">
+      <span class="brand-mark">N</span>
+      <div><strong>{{.SiteName}}</strong><small>用户中心</small></div>
+    </a>
+    <nav class="nav">
+      <span class="nav-label">导航</span>
+      <a class="nav-item{{if eq .Page "overview"}} active{{end}}" href="/user">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        概览
+      </a>
+      <a class="nav-item{{if eq .Page "plan"}} active{{end}}" href="/user/plan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg>
+        套餐与额度
+      </a>
+      <a class="nav-item{{if eq .Page "account"}} active{{end}}" href="/user/account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        账号与安全
+      </a>
+      <a class="nav-item{{if eq .Page "redeem"}} active{{end}}" href="/user/redeem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M8 15h4"/></svg>
+        卡密充值
+      </a>
+      <a class="nav-item{{if eq .Page "integrate"}} active{{end}}" href="/user/integrate">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13 5l-2 14"/></svg>
+        接入配置
+      </a>
+      <a class="nav-item{{if eq .Page "logs"}} active{{end}}" href="/user/logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+        调用记录
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="plan-mini">
+        <div class="row"><span id="shell-plan-name">我的套餐</span><b id="shell-plan-percent">-</b></div>
+        <div class="bar"><i id="shell-plan-fill" style="width:0%"></i></div>
+        <div class="cap"><span id="shell-quota-left">-</span><span id="shell-quota-expire">-</span></div>
       </div>
-      <h2>欢迎</h2>
-      <div class="login-tabs">
-        <button type="button" class="login-tab active" data-login-tab="token">令牌登录</button>
-        <button type="button" class="login-tab" data-login-tab="account">账号登录</button>
-        <button type="button" class="login-tab" data-login-tab="register">注册</button>
-      </div>
-
-      <div id="login-panel-token" class="login-panel">
-        <p class="login-hint">请输入管理员分配给你的用户令牌</p>
-        <label class="login-label" for="user-token">用户令牌</label>
-        <div class="login-field">
-          <input id="user-token" type="password" placeholder="请输入用户令牌" autocomplete="off">
-          <button type="button" id="user-token-toggle" class="login-eye">显示</button>
-        </div>
-        <button id="user-login-btn" class="btn primary full login-submit">进入用户中心</button>
-        <p id="user-login-error" class="error login-error"></p>
-      </div>
-
-      <div id="login-panel-account" class="login-panel hidden">
-        <p class="login-hint">使用用户名和密码登录用户中心</p>
-        <label class="login-label" for="account-username">用户名</label>
-        <div class="login-field">
-          <input id="account-username" type="text" placeholder="请输入用户名" autocomplete="username">
-        </div>
-        <label class="login-label" for="account-password">密码</label>
-        <div class="login-field">
-          <input id="account-password" type="password" placeholder="请输入密码" autocomplete="current-password">
-        </div>
-        <button id="account-login-btn" class="btn primary full login-submit">账号登录</button>
-        <p id="account-login-error" class="error login-error"></p>
-      </div>
-
-      <div id="login-panel-register" class="login-panel hidden">
-        <p class="login-hint">注册后自动生成零额度令牌，兑换卡密后即可查询</p>
-        <label class="login-label" for="register-username">用户名</label>
-        <div class="login-field">
-          <input id="register-username" type="text" placeholder="字母开头，3-32 位" autocomplete="username">
-        </div>
-        <label class="login-label" for="register-password">密码</label>
-        <div class="login-field">
-          <input id="register-password" type="password" placeholder="至少 8 位" autocomplete="new-password">
-        </div>
-        <label class="login-label" for="register-password2">确认密码</label>
-        <div class="login-field">
-          <input id="register-password2" type="password" placeholder="再次输入密码" autocomplete="new-password">
-        </div>
-        <label class="login-label" for="register-token">已有令牌（可选）</label>
-        <div class="login-field">
-          <input id="register-token" type="password" placeholder="填写后绑定已有令牌" autocomplete="off">
-        </div>
-        <button id="register-btn" class="btn primary full login-submit">注册并登录</button>
-        <p id="register-error" class="error login-error"></p>
-      </div>
+      <a class="user-mini" href="/user/account">
+        <span class="avatar" id="shell-user-avatar">U</span>
+        <div><strong id="shell-user-name">用户</strong><span id="shell-user-sub">查看账号</span></div>
+      </a>
     </div>
-  </div>
+  </aside>
 
-  <div id="user-main" class="user-main hidden">
-    <header class="user-topbar">
-      <div class="brand">
-        <span class="logo">Z</span>
-        <div>
-          <strong>{{.SiteName}}</strong>
-          <small>用户中心</small>
-        </div>
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="打开菜单" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="crumb"><span>用户中心</span><span class="sep">/</span><b>{{.PageTitle}}</b></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" data-accent-toggle title="切换主题" aria-label="切换主题">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <span class="status">服务正常</span>
+        <button class="btn ghost sm" id="user-logout">退出</button>
       </div>
-      <button id="user-logout" class="btn ghost">退出</button>
     </header>
 
-    <div id="user-alert" class="user-alert hidden"></div>
-
-    <main class="user-content">
-      <section class="card plan-card">
-        <div class="plan-head">
-          <h2>我的套餐</h2>
-          <span id="user-status-pill" class="pill">-</span>
-        </div>
-        <div class="plan-grid">
-          <div class="plan-item"><span class="label">用户令牌</span><strong id="user-name" class="mono">-</strong></div>
-          <div class="plan-item"><span class="label">当前权益</span><strong id="user-plan-label">-</strong></div>
-          <div class="plan-item"><span class="label">开始时间</span><strong id="user-start">-</strong></div>
-          <div class="plan-item"><span class="label">到期时间</span><strong id="user-expire">-</strong></div>
-        </div>
-        <div id="user-entitlements" class="plan-grid entitlement-grid"></div>
-        <div id="user-quota" class="quota hidden">
-          <div class="quota-head">
-            <span id="user-quota-label">剩余次数</span>
-            <strong id="user-quota-text">-</strong>
-          </div>
-          <div class="quota-bar"><div id="user-quota-fill" class="quota-fill"></div></div>
-        </div>
-        <div class="field note-field">
-          <label>我的备注</label>
-          <div class="note-view">
-            <span id="user-note" class="muted">（暂无备注）</span>
-            <button id="user-note-edit" class="btn ghost small">编辑</button>
-          </div>
-          <div id="user-note-edit-wrap" class="note-edit hidden">
-            <textarea id="user-note-input" rows="2" placeholder="最多 200 字"></textarea>
-            <div class="note-actions">
-              <button id="user-note-cancel" class="btn ghost small">取消</button>
-              <button id="user-note-save" class="btn primary small">保存</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>账号</h2>
-          <span id="account-status-pill" class="pill">-</span>
-        </div>
-        <p id="account-hint" class="muted small"></p>
-        <div class="grid-2">
-          <div class="kv"><span>用户名</span><strong id="account-username-view">-</strong></div>
-          <div class="kv"><span>绑定令牌</span><strong id="account-token-view" class="mono">-</strong></div>
-        </div>
-        <div id="account-bind-wrap" class="hidden">
-          <div class="field">
-            <label for="bind-username">用户名</label>
-            <input id="bind-username" type="text" placeholder="字母开头，3-32 位" autocomplete="username">
-          </div>
-          <div class="field">
-            <label for="bind-password">密码</label>
-            <input id="bind-password" type="password" placeholder="至少 8 位" autocomplete="new-password">
-          </div>
-          <button id="bind-btn" class="btn primary small">绑定账号</button>
-          <p id="bind-error" class="error"></p>
-        </div>
-        <div id="account-actions" class="hidden">
-          <div class="toolbar">
-            <button id="account-token-copy" class="btn ghost small">复制令牌</button>
-            <button id="password-btn" class="btn ghost small">修改密码</button>
-            <button id="account-logout-btn" class="btn ghost small">退出账号</button>
-          </div>
-          <div id="password-wrap" class="hidden">
-            <div class="field">
-              <label for="old-password">原密码</label>
-              <input id="old-password" type="password" autocomplete="current-password">
-            </div>
-            <div class="field">
-              <label for="new-password">新密码</label>
-              <input id="new-password" type="password" autocomplete="new-password">
-            </div>
-            <button id="password-save" class="btn primary small">保存新密码</button>
-            <p id="password-error" class="error"></p>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>卡密充值</h2>
-        </div>
-        <p class="muted small">输入卡密为当前令牌充值；次数卡增加查询次数，时长卡顺延到期时间。</p>
-        <div class="url-row">
-          <input id="redeem-code" class="mono" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false">
-          <button id="redeem-btn" class="btn primary small">兑换</button>
-        </div>
-        <p id="redeem-error" class="error"></p>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>OCS 配置</h2>
-          <button id="user-copy-ocs" class="btn primary small">复制配置</button>
-        </div>
-        <p class="muted small">把下面的配置粘贴到 OCS 用户脚本的题库配置中；其中已包含你的个人令牌，请勿泄露。</p>
-        <textarea id="user-ocs-json" class="editor" readonly spellcheck="false"></textarea>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>URL 模式1调用</h2>
-          <button id="user-copy-url1" class="btn primary small">复制接口</button>
-        </div>
-        <p class="muted small">MOGO 题库对接模式。把短接口填入 MOGO 的题库设置或外置接口，MOGO 会自动追加 <code>q</code>、<code>info</code>、<code>kcinfo</code>；MOGO 的 info 与 data 分割符号请设置为 <code>###</code>。链接已包含你的个人令牌，请勿泄露。</p>
-        <div class="field url-field">
-          <label>接口示例（填到 MOGO）</label>
-          <div class="url-row">
-            <input id="user-url-mogo" class="mono" readonly spellcheck="false">
-            <button type="button" data-copy="user-url-mogo" class="btn ghost small">复制</button>
-          </div>
-        </div>
-        <div class="field url-field">
-          <label>完整调试示例</label>
-          <div class="url-row">
-            <input id="user-url-mogo-debug" class="mono" readonly spellcheck="false">
-            <button type="button" data-copy="user-url-mogo-debug" class="btn ghost small">复制</button>
-          </div>
-        </div>
-        <div class="sample-grid">
-          <div class="sample">
-            <label>成功返回</label>
-            <pre class="response-sample">{"code":1,"data":"答案"}</pre>
-            <pre class="response-sample">{"code":1,"data":"答案1###答案2"}</pre>
-          </div>
-          <div class="sample">
-            <label>失败返回</label>
-            <pre class="response-sample">{"code":-1}</pre>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>URL 模式2调用</h2>
-          <button id="user-copy-url" class="btn primary small">复制接口</button>
-        </div>
-        <p class="muted small">原有 <code>/query</code> URL 模式，返回 OCS 结构，适合非 MOGO 场景。把 <code>title</code> 换成题目内容即可；<code>q</code> 与 <code>title</code> 等价。链接已包含你的个人令牌，请勿泄露。</p>
-        <div class="field url-field">
-          <label>示例（title）</label>
-          <div class="url-row">
-            <input id="user-url-title" class="mono" readonly spellcheck="false">
-            <button type="button" data-copy="user-url-title" class="btn ghost small">复制</button>
-          </div>
-        </div>
-        <div class="field url-field">
-          <label>示例（q）</label>
-          <div class="url-row">
-            <input id="user-url-q" class="mono" readonly spellcheck="false">
-            <button type="button" data-copy="user-url-q" class="btn ghost small">复制</button>
-          </div>
-        </div>
-        <div class="sample-grid">
-          <div class="sample">
-            <label>成功返回</label>
-            <pre class="response-sample">{"code":1,"data":{"id":12,"question":"题目内容","answer":"答案","is_ai":false,"is_pending_correction":false}}</pre>
-          </div>
-          <div class="sample">
-            <label>失败返回</label>
-            <pre class="response-sample">{"code":0,"message":"AI未能给出有效答案"}</pre>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="plan-head">
-          <h2>我的调用记录</h2>
-          <button id="user-logs-refresh" class="btn ghost small">刷新</button>
-        </div>
-        <div class="table-wrap">
-          <table id="user-logs">
-            <thead><tr><th>时间</th><th>题目</th><th>选项</th><th>答案</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <button id="user-logs-prev" class="btn ghost">上一页</button>
-          <span id="user-logs-pageinfo">第 1 页</span>
-          <button id="user-logs-next" class="btn ghost">下一页</button>
-        </div>
-      </section>
-
-      <section class="card danger-zone">
-        <h2>令牌安全</h2>
-        <p class="muted small">重置后旧令牌立即失效，需要重新登录，并更新 OCS 配置。</p>
-        <button id="user-reset-token" class="btn danger">重置我的令牌</button>
-      </section>
+    <main class="content">
+      <div id="user-alert" class="notice warn hidden" style="margin-bottom:16px"></div>
+      {{if eq .Page "overview"}}{{template "user_page_overview" .}}
+      {{else if eq .Page "plan"}}{{template "user_page_plan" .}}
+      {{else if eq .Page "account"}}{{template "user_page_account" .}}
+      {{else if eq .Page "redeem"}}{{template "user_page_redeem" .}}
+      {{else if eq .Page "integrate"}}{{template "user_page_integrate" .}}
+      {{else if eq .Page "logs"}}{{template "user_page_logs" .}}
+      {{end}}
     </main>
   </div>
+</div>
 
-  <div id="token-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <h2>令牌已重置</h2>
-      <p class="muted small">请立即复制并妥善保存新令牌，旧令牌已失效，关闭后将无法再次查看。</p>
-      <div class="modal-token">
-        <code id="token-modal-value" class="mono"></code>
-        <button type="button" id="token-modal-copy" class="btn primary small">复制</button>
-      </div>
-      <div class="modal-actions">
-        <button type="button" id="token-modal-close" class="btn ghost">我已保存，关闭</button>
-      </div>
+<div class="backdrop" id="backdrop"></div>
+
+<div class="modal-overlay" id="token-modal" role="dialog" aria-modal="true" aria-labelledby="token-modal-title">
+  <div class="modal-card">
+    <h2 id="token-modal-title">令牌已重置</h2>
+    <p class="muted small">请立即复制并妥善保存新令牌，旧令牌已失效，关闭后将无法再次查看。</p>
+    <div class="modal-token">
+      <code id="token-modal-value" class="mono"></code>
+      <button type="button" id="token-modal-copy" class="btn primary sm">复制</button>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="token-modal-close" class="btn ghost">我已保存，关闭</button>
     </div>
   </div>
 </div>
 
+<div class="toast" data-toast-host></div>
 <script src="/user/static/user.js"></script>
 </body>
 </html>
