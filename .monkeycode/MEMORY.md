@@ -45,19 +45,22 @@ Entries discovered by the Agent during task execution should follow this format:
   - PostgreSQL folds unquoted identifiers to lowercase, so sequence lookups must use `pg_get_serial_sequence('folders','id')`
 
 [Project Knowledge Summary]
-- Date: 2026-10-06
+- Date: 2026-11-05 (merged with 2026-10-06 entry)
 - Context: Discovered by Agent while running integration tests for /workspace/nfentik-go
 - Category: Testing Methods
 - Instructions:
   - Integration tests for internal/server and internal/store share the same PostgreSQL database and Redis, and `go test ./...` runs packages in parallel, so the two packages clobber each other's users/logs and fail intermittently (errors like "用户不存在" / "令牌无效")
   - Always run tests serially with `cd /workspace/nfentik-go && go test -p 1 ./...`
   - Override the test database with the `TEST_DATABASE_URL` env var when a throwaway database is available
+  - The environment resets wipe apt-installed services: if `service postgresql status` reports "unrecognized service", reinstall with `DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql redis-server`, start both services, then recreate the test role/db: `runuser -u postgres -- psql -c "CREATE USER zerror WITH PASSWORD 'zerror';" -c "CREATE DATABASE zerror OWNER zerror;"` (default test DSN is postgres://zerror:zerror@127.0.0.1:5432/zerror)
+  - Sandbox storage is slow under sustained write load (~4-5k row updates/sec on a local PostgreSQL, fsync ~1.6ms); migration/rehash benchmarks measured here are a worst case and do not reflect production hardware
 
 [Project Knowledge Summary]
-- Date: 2026-10-25
-- Context: Discovered by Agent while upgrading the Go toolchain to 1.27.3
+- Date: 2026-11-04 (merged with 2026-10-25 entry)
+- Context: Discovered by Agent while packaging nfentik-go release builds for Linux and Windows
 - Category: Environment Configuration
 - Instructions:
-  - The Go toolchain lives at `/usr/local/go` (on PATH); the previous 1.25.5 install was moved to `/usr/local/go1.25.5-backup`
-  - `nfentik-go/go.mod` declares `go 1.27.3`; use Go 1.27+ for builds
-  - Windows cross-builds need `gcc-mingw-w64-x86-64` and `g++-mingw-w64-x86-64` (installed via apt)
+  - The base Go toolchain at `/usr/local/go` may be older than required (e.g. 1.25.6); `nfentik-go/go.mod` declares `go 1.27.3` and `GOTOOLCHAIN=auto` downloads it on first build
+  - `proxy.golang.org` and `go.dev` are unreachable from this environment (connection EOF); always build with `GOPROXY="https://goproxy.cn,direct"` so toolchain and module downloads succeed
+  - Windows cross-builds need `gcc-mingw-w64-x86-64` and `g++-mingw-w64-x86-64`; the environment may reset, reinstall via `DEBIAN_FRONTEND=noninteractive apt-get install -y` if `x86_64-w64-mingw32-gcc` is missing
+  - Release packaging: `bash scripts/packaging/build.sh` (Linux tar.gz) and `bash scripts/packaging/build-windows.sh` (Windows zip) inside nfentik-go; artifacts land in `nfentik-go/dist/` with sha256 files; run builds serially in background terminals (peak ~1.5 GiB each)

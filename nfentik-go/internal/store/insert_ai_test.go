@@ -311,7 +311,7 @@ func TestConcurrentWritesKeepOneRow(t *testing.T) {
 // unique index rejects a duplicate even bypassing the store helpers.
 func TestQuestionUniqueIndexEnforced(t *testing.T) {
 	s := testStore(t)
-	if !s.uniqueQuestion {
+	if !s.uniqueQuestion.Load() {
 		t.Skip("unique question index unavailable in this environment")
 	}
 	question := "唯一索引测试 unique index"

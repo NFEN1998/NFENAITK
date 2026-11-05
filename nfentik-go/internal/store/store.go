@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nfentik/nfentik-go/internal/match"
@@ -58,7 +60,7 @@ type Store struct {
 	// trigram reports whether the pg_trgm extension and its GIN index are
 	// available for ranked fuzzy candidate lookup. When false the query path
 	// falls back to a bounded prefix probe.
-	trigram bool
+	trigram atomic.Bool
 
 	// writeMu serializes bank writes so the check-then-insert dedup is atomic
 	// within the process. Without it, a concurrent import and query write-back
@@ -69,7 +71,14 @@ type Store struct {
 	// uniqueQuestion reports whether the (QuestionHash, OptionsHash) unique
 	// index is present. When it is, inserts use ON CONFLICT DO NOTHING so
 	// duplicates cannot be created even across processes.
-	uniqueQuestion bool
+	uniqueQuestion atomic.Bool
+
+	// bgCtx/bgCancel/bgWG own the asynchronous hash maintenance worker. It
+	// keeps a large bank's rehash, dedupe and index build off the startup path
+	// so a deploy restores service immediately.
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
 }
 
 // OnChange registers a callback fired after every bank mutation.
@@ -172,19 +181,19 @@ func Open(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
 	s := &Store{db: db, dialect: d}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if err := s.migrate(); err != nil {
+		s.bgCancel()
 		db.Close()
 		return nil, err
 	}
 	if err := s.SeedDefaultPlans(); err != nil {
+		s.bgCancel()
 		db.Close()
 		return nil, err
 	}
 	if err := s.BackfillEntitlements(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := s.ensureTrigram(); err != nil {
+		s.bgCancel()
 		db.Close()
 		return nil, err
 	}
@@ -226,7 +235,13 @@ func InspectDSN(dsn string) (IntegrityReport, error) {
 	}
 	return (&Store{db: db, dialect: d}).Inspect()
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
+	s.bgWG.Wait()
+	return s.db.Close()
+}
 
 // Ping verifies the database connection is still alive.
 func (s *Store) Ping() error { return s.db.Ping() }
@@ -363,7 +378,7 @@ func (s *Store) fuzzyCandidates(title string) ([]candidate, error) {
 			rows []candidate
 			err  error
 		)
-		if s.trigram {
+		if s.trigram.Load() {
 			rows, err = s.trigramCandidates(prefix)
 		} else {
 			rows, err = s.prefixCandidates(prefix)
@@ -776,9 +791,9 @@ func (s *Store) storeBankRow(question, answer string, options, questionType *str
 
 	insertSQL := `INSERT INTO AIResponses ` + columns + ` ` + selectValues
 	switch {
-	case s.uniqueQuestion && s.dialect.isPostgres():
+	case s.uniqueQuestion.Load() && s.dialect.isPostgres():
 		insertSQL += ` ON CONFLICT (QuestionHash, OptionsHash) DO NOTHING`
-	case s.uniqueQuestion:
+	case s.uniqueQuestion.Load():
 		insertSQL = `INSERT IGNORE INTO AIResponses ` + columns + ` ` + selectValues
 	default:
 		// No unique index yet: guard the insert with NOT EXISTS. writeMu already

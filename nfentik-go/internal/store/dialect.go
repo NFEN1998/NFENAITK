@@ -86,6 +86,34 @@ type queryer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
+// connQueryer adapts a dedicated *sql.Conn (which only exposes the Context
+// methods) to the queryer interface so migration passes can pin one session.
+type connQueryer struct {
+	conn *sql.Conn
+	ctx  context.Context
+}
+
+// context returns the pinned context, falling back to Background for callers
+// that only need a dedicated connection without cancellation.
+func (c connQueryer) context() context.Context {
+	if c.ctx != nil {
+		return c.ctx
+	}
+	return context.Background()
+}
+
+func (c connQueryer) Query(query string, args ...any) (*sql.Rows, error) {
+	return c.conn.QueryContext(c.context(), query, args...)
+}
+
+func (c connQueryer) QueryRow(query string, args ...any) *sql.Row {
+	return c.conn.QueryRowContext(c.context(), query, args...)
+}
+
+func (c connQueryer) Exec(query string, args ...any) (sql.Result, error) {
+	return c.conn.ExecContext(c.context(), query, args...)
+}
+
 func queryOn(d dialect, q queryer, query string, args ...any) (*sql.Rows, error) {
 	text, a := d.rebind(query, args)
 	return q.Query(text, a...)

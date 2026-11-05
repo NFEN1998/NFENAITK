@@ -1,12 +1,16 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/nfentik/nfentik-go/internal/match"
 )
@@ -155,7 +159,7 @@ var migrations = []migration{
 		Version: 5,
 		Name:    "question_hash_lookup",
 		// Only the column is added here. Backfilling the digest and building the
-		// index are done in ensureQuestionHash after migrations, because both
+		// index are done in ensureHashes after migrations, because both
 		// must run in batches outside a single transaction to stay safe on
 		// multi-million row banks.
 		Statements: []string{
@@ -179,7 +183,7 @@ var migrations = []migration{
 		// writers (an import and a query write-back) from inserting the same
 		// question twice with different answers. Only the column is added here;
 		// the backfill, duplicate merge and unique index run in
-		// ensureOptionsHash so they can be batched.
+		// ensureHashes so they can be batched.
 		Statements: []string{
 			`ALTER TABLE AIResponses ADD COLUMN IF NOT EXISTS OptionsHash TEXT`,
 		},
@@ -623,12 +627,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	// Backfill the question hash column and build its index. Runs in batches so
+	// Backfill the hash columns and build their indexes. Runs in batches so
 	// it stays safe on banks with millions of rows.
-	if err := s.ensureQuestionHash(); err != nil {
-		return err
-	}
-	return s.ensureOptionsHash()
+	return s.ensureHashes()
 }
 
 // migrateMySQL sets up a MySQL database. Because MySQL lacks ADD COLUMN IF NOT
@@ -650,10 +651,7 @@ func (s *Store) migrateMySQL() error {
 			return err
 		}
 	}
-	if err := s.ensureQuestionHash(); err != nil {
-		return err
-	}
-	return s.ensureOptionsHash()
+	return s.ensureHashes()
 }
 
 // mysqlTableDDL creates every table on a fresh MySQL database. Indexes are
@@ -1099,7 +1097,7 @@ func (s *Store) ensureTrigram() error {
 			return nil
 		}
 	}
-	s.trigram = true
+	s.trigram.Store(true)
 	return nil
 }
 
@@ -1123,35 +1121,141 @@ func (s *Store) SchemaVersion() (int, error) {
 	return int(v.Int64), nil
 }
 
-// ensureQuestionHash backfills the QuestionHash column and ensures its index
-// exists. Both steps are idempotent and safe to run on every startup.
-//
-// The backfill is done in bounded batches so a multi-million row bank never
-// holds a long transaction; the index is built with CONCURRENTLY so it does not
-// block reads or writes. CONCURRENTLY cannot run inside a transaction, so the
-// single statements below are issued on the pool directly.
-func (s *Store) ensureQuestionHash() error {
-	// Recompute every digest once when the normalization algorithm changes.
-	// Stored hashes from an older algorithm no longer match lookups computed
-	// with the current one, so a stale version forces a single rehash pass.
-	if err := s.ensureQuestionHashVersion(); err != nil {
+// ensureHashes keeps the digest columns and their indexes consistent with the
+// current normalization algorithm. Small banks are repaired inline; large banks
+// hand the work to a background worker so a deploy restores service in seconds
+// instead of waiting hours for a full rehash.
+func (s *Store) ensureHashes() error {
+	if err := s.refreshCapabilityFlags(); err != nil {
 		return err
 	}
-	// Skip the (potentially expensive) backfill scan once the column is fully
-	// populated. A count with a WHERE ... IS NULL LIMIT would still scan, so we
-	// probe for a single residual row.
-	var pendingCount int
-	if err := s.queryRow(
-		`SELECT COUNT(*) FROM AIResponses WHERE QuestionHash IS NULL`,
-	).Scan(&pendingCount); err != nil {
-		return fmt.Errorf("检查 QuestionHash 回填: %w", err)
+	needed, err := s.hashMaintenanceNeeded()
+	if err != nil {
+		return err
 	}
-	if pendingCount > 0 {
-		if err := s.backfillQuestionHash(); err != nil {
+	if !needed {
+		return nil
+	}
+	if s.bankIsLarge() {
+		log.Printf("题库较大，哈希维护将在后台进行，服务立即启动")
+		s.startHashMaintenance()
+		return nil
+	}
+	return s.runHashMaintenance()
+}
+
+// hashMaintenanceSyncMaxRows is the largest bank still repaired inline. Above
+// it the work moves to the background worker.
+const hashMaintenanceSyncMaxRows = 20000
+
+// bankIsLarge reports whether the bank is above the inline maintenance limit.
+// It probes a bounded offset instead of counting millions of rows.
+func (s *Store) bankIsLarge() bool {
+	var one int
+	err := s.queryRow(
+		`SELECT 1 FROM AIResponses LIMIT 1 OFFSET $1`, hashMaintenanceSyncMaxRows,
+	).Scan(&one)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	// A probe error must never make startup block: assume large and defer.
+	return true
+}
+
+// startHashMaintenance launches the background worker. It is cancelled by
+// Close; a failed or interrupted pass retries on the next startup.
+func (s *Store) startHashMaintenance() {
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		if err := s.runHashMaintenance(); err != nil {
+			log.Printf("后台哈希维护未完成（下次启动继续）: %v", err)
+		}
+	}()
+}
+
+// refreshCapabilityFlags mirrors optional index presence into atomics read by
+// the query and insert paths.
+func (s *Store) refreshCapabilityFlags() error {
+	hasUnique, err := s.indexExists("idx_airesponses_question_options")
+	if err != nil {
+		return err
+	}
+	s.uniqueQuestion.Store(hasUnique)
+	if s.dialect.isPostgres() {
+		hasTrigram, err := s.indexExists("idx_airesponses_question_trgm")
+		if err != nil {
+			return err
+		}
+		s.trigram.Store(hasTrigram)
+	}
+	return nil
+}
+
+// hashMaintenanceNeeded reports whether digest or index work remains. Version
+// keys and catalog lookups are cheap, so the usual "already up to date"
+// startup performs no table scan at all.
+func (s *Store) hashMaintenanceNeeded() (bool, error) {
+	for _, key := range []string{questionHashVersionKey, optionsHashVersionKey} {
+		stale, err := s.hashVersionStale(key)
+		if err != nil {
+			return false, err
+		}
+		if stale {
+			return true, nil
+		}
+	}
+	hasLookup, err := s.indexExists("idx_airesponses_question_hash")
+	if err != nil {
+		return false, err
+	}
+	if !hasLookup || !s.uniqueQuestion.Load() {
+		return true, nil
+	}
+	if s.dialect.isPostgres() && !s.trigram.Load() {
+		return true, nil
+	}
+	return false, nil
+}
+
+// runHashMaintenance performs every hash-related repair in dependency order.
+func (s *Store) runHashMaintenance() error {
+	ctx := s.bgCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Build the lookup index first so reads stay fast while a long rehash runs.
+	// Differential writes keep the incremental index-maintenance cost small.
+	if err := s.ensureQuestionHashIndex(); err != nil {
+		return err
+	}
+	questionStale, err := s.hashVersionStale(questionHashVersionKey)
+	if err != nil {
+		return err
+	}
+	optionsStale, err := s.hashVersionStale(optionsHashVersionKey)
+	if err != nil {
+		return err
+	}
+	if questionStale || optionsStale {
+		if err := s.rehashBank(ctx, questionStale, optionsStale); err != nil {
 			return err
 		}
 	}
-	return s.ensureQuestionHashIndex()
+	// Merging only needs to run while the unique index is missing; once it
+	// exists the database guarantees there are no duplicates.
+	if exists, err := s.indexExists("idx_airesponses_question_options"); err != nil {
+		return err
+	} else if !exists {
+		s.dedupeBankRows()
+	}
+	if err := s.ensureOptionsUniqueIndex(); err != nil {
+		return err
+	}
+	return s.ensureTrigram()
 }
 
 // questionHashVersionKey stores the NormalizeQuestion version used to build the
@@ -1159,21 +1263,58 @@ func (s *Store) ensureQuestionHash() error {
 // and every row is rehashed exactly once.
 const questionHashVersionKey = "question_hash_version"
 
-// ensureQuestionHashVersion rehashes the whole bank when the stored
-// normalization version is missing or older than match.NormalizerVersion, then
-// records the current version.
-func (s *Store) ensureQuestionHashVersion() error {
-	raw, found, err := s.GetSetting(questionHashVersionKey)
+// hashVersionStale reports whether the stored normalization version for one
+// hash column is missing or older than match.NormalizerVersion.
+func (s *Store) hashVersionStale(key string) (bool, error) {
+	raw, found, err := s.GetSetting(key)
 	if err != nil {
-		return fmt.Errorf("读取 QuestionHash 版本: %w", err)
+		return false, fmt.Errorf("读取 %s 版本: %w", key, err)
 	}
-	if found && decodeNormalizerVersion(raw) == match.NormalizerVersion {
-		return nil
-	}
-	if err := s.rehashQuestionHash(); err != nil {
+	return !found || decodeNormalizerVersion(raw) != match.NormalizerVersion, nil
+}
+
+// rehashBank recomputes stale digest columns. The unique index is dropped for
+// the duration because a rehash can make an old row collide with a row that
+// already carries the new digest; duplicates are merged before the index is
+// rebuilt. The lookup index stays in place so reads remain fast while the
+// background pass runs.
+func (s *Store) rehashBank(ctx context.Context, questionStale, optionsStale bool) error {
+	s.dropIndexIfExists("idx_airesponses_question_options")
+
+	if err := s.rehashHashes(ctx, questionStale, optionsStale); err != nil {
 		return err
 	}
-	return s.SetSetting(questionHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion)))
+	// Version keys are recorded only after a full pass, so an interrupted run
+	// simply repeats on the next startup and already-updated rows are skipped
+	// by the digest comparison.
+	if questionStale {
+		if err := s.SetSetting(questionHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion))); err != nil {
+			return err
+		}
+	}
+	if optionsStale {
+		if err := s.SetSetting(optionsHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropIndexIfExists removes an AIResponses index, tolerating absence. A failure
+// is logged and skipped: the rehash still works with the index in place, just
+// slower.
+func (s *Store) dropIndexIfExists(name string) {
+	exists, err := s.indexExists(name)
+	if err != nil || !exists {
+		return
+	}
+	query := "DROP INDEX " + name
+	if s.dialect.isMySQL() {
+		query = "DROP INDEX " + name + " ON AIResponses"
+	}
+	if _, err := s.exec(query); err != nil {
+		log.Printf("警告: 删除索引 %s 失败: %v", name, err)
+	}
 }
 
 // decodeNormalizerVersion parses the stored version, tolerating both a bare
@@ -1199,61 +1340,291 @@ type pendingHash struct {
 	question string
 }
 
-// rehashQuestionHash recomputes QuestionHash for every row in bounded, key
-// ordered batches. It is used when the normalization algorithm changes and,
-// unlike backfillQuestionHash, does not restrict itself to NULL digests.
-func (s *Store) rehashQuestionHash() error {
-	const batchSize = 2000
-	log.Printf("归一化算法已更新，开始重算 QuestionHash（分批进行）")
-	lastID := int64(0)
+// hashProgress emits periodic progress logs during long rehash/backfill passes
+// so a multi-million row migration never looks stuck. It reports every 100k
+// rows with a percentage and an ETA derived from the observed throughput.
+type hashProgress struct {
+	mu      sync.Mutex
+	label   string
+	total   int64
+	done    int64
+	start   time.Time
+	nextLog int64
+}
+
+func newHashProgress(label string, total int64) *hashProgress {
+	return &hashProgress{label: label, total: total, start: time.Now(), nextLog: 100000}
+}
+
+func (p *hashProgress) add(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.done += int64(n)
+	if p.done < p.nextLog {
+		return
+	}
+	elapsed := time.Since(p.start).Round(time.Second)
+	if p.total > 0 {
+		percent := float64(p.done) / float64(p.total) * 100
+		if percent > 100 {
+			percent = 100
+		}
+		eta := ""
+		if p.done < p.total {
+			remain := time.Duration(float64(time.Since(p.start)) / float64(p.done) * float64(p.total-p.done))
+			eta = fmt.Sprintf("，预计剩余 %s", remain.Round(time.Second))
+		}
+		log.Printf("%s进度: %d/%d (%.1f%%)，已耗时 %s%s", p.label, p.done, p.total, percent, elapsed, eta)
+	} else {
+		log.Printf("%s进度: %d 行，已耗时 %s", p.label, p.done, elapsed)
+	}
+	p.nextLog = p.done + 100000
+}
+
+func (p *hashProgress) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	log.Printf("%s完成，共 %d 行，耗时 %s", p.label, p.done, time.Since(p.start).Round(time.Second))
+}
+
+// hashBatchSize is the number of rows per rehash/backfill statement.
+// PostgreSQL's unnest form binds only two array parameters regardless of
+// size, so larger batches amortize the per-statement overhead. MySQL's CASE
+// form binds three placeholders per row and stays smaller to limit parse
+// cost while remaining under the driver parameter limit.
+func (s *Store) hashBatchSize() int {
+	if s.dialect.isPostgres() {
+		return 10000
+	}
+	return 2000
+}
+
+// pendingHashRow is one row read during maintenance together with its stored
+// digests. The stored values let the pass rewrite only rows whose digest
+// actually changed instead of updating every row unconditionally.
+type pendingHashRow struct {
+	id           int64
+	question     string
+	options      string
+	questionHash string
+	optionsHash  string
+}
+
+func scanPendingHashRows(rows *sql.Rows) ([]pendingHashRow, error) {
+	defer rows.Close()
+	var items []pendingHashRow
+	for rows.Next() {
+		var it pendingHashRow
+		if err := rows.Scan(&it.id, &it.question, &it.options, &it.questionHash, &it.optionsHash); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// rehashHashes scans every row once and rewrites only the digests that changed.
+// The scan is split into disjoint Id ranges so several workers can hash text in
+// parallel; the write volume stays proportional to the real delta.
+func (s *Store) rehashHashes(ctx context.Context, questionStale, optionsStale bool) error {
+	var total int64
+	if err := s.queryRow(`SELECT COUNT(*) FROM AIResponses`).Scan(&total); err != nil {
+		return fmt.Errorf("统计题目总数: %w", err)
+	}
+	if total == 0 {
+		log.Printf("哈希重算完成，共 0 行")
+		return nil
+	}
+	var maxID int64
+	if err := s.queryRow(`SELECT COALESCE(MAX(Id), 0) FROM AIResponses`).Scan(&maxID); err != nil {
+		return fmt.Errorf("读取题目最大 ID: %w", err)
+	}
+	workers := envInt("HASH_REHASH_WORKERS", 4)
+	if workers > 16 {
+		workers = 16
+	}
+	if int64(workers) > total {
+		workers = int(total)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	log.Printf("哈希重算开始：%d 行，%d 个并发分片", total, workers)
+
+	progress := newHashProgress("哈希重算", total)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	for i := 0; i < workers; i++ {
+		lo := maxID * int64(i) / int64(workers)
+		hi := maxID * int64(i+1) / int64(workers)
+		if i == workers-1 {
+			hi = maxID
+		}
+		wg.Add(1)
+		go func(lo, hi int64) {
+			defer wg.Done()
+			if err := s.rehashRange(ctx, lo, hi, questionStale, optionsStale, progress); err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				cancel()
+			}
+		}(lo, hi)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	progress.finish()
+	return nil
+}
+
+// rehashRange processes one Id range on its own connection so a worker can relax
+// the PostgreSQL WAL flush latency without affecting the shared pool.
+func (s *Store) rehashRange(ctx context.Context, lo, hi int64, questionStale, optionsStale bool, progress *hashProgress) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if s.dialect.isPostgres() {
+			_, _ = conn.ExecContext(context.Background(), "RESET synchronous_commit")
+		}
+		conn.Close()
+	}()
+	if s.dialect.isPostgres() {
+		if _, err := conn.ExecContext(ctx, "SET synchronous_commit = off"); err != nil {
+			log.Printf("警告: 设置 synchronous_commit 失败: %v", err)
+		}
+	}
+	q := connQueryer{conn: conn, ctx: ctx}
+	batchSize := s.hashBatchSize()
+	lastID := lo
 	for {
-		rows, err := s.query(
-			`SELECT Id, Question FROM AIResponses WHERE Id > $1 ORDER BY Id LIMIT $2`,
-			lastID, batchSize,
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := queryOn(s.dialect, q,
+			`SELECT Id, Question, COALESCE(Options, ''), COALESCE(QuestionHash, ''), COALESCE(OptionsHash, '')
+			 FROM AIResponses WHERE Id > $1 AND Id <= $2 ORDER BY Id LIMIT $3`,
+			lastID, hi, batchSize,
 		)
 		if err != nil {
 			return fmt.Errorf("读取待重算题目: %w", err)
 		}
-		items, err := scanPendingHash(rows)
+		items, err := scanPendingHashRows(rows)
 		if err != nil {
 			return err
 		}
 		if len(items) == 0 {
-			log.Printf("QuestionHash 重算完成")
 			return nil
 		}
-		if err := s.writeQuestionHashBatch(items); err != nil {
+		if _, err := s.writePendingHashes(q, items, questionStale, optionsStale); err != nil {
 			return err
 		}
+		progress.add(len(items))
 		lastID = items[len(items)-1].id
 	}
 }
 
-// backfillQuestionHash fills QuestionHash for every row still missing one. Rows
-// are processed in key-ordered batches so each UPDATE touches a bounded set.
-func (s *Store) backfillQuestionHash() error {
-	const batchSize = 2000
-	log.Printf("开始回填 QuestionHash（分批进行）")
-	for {
-		rows, err := s.query(
-			`SELECT Id, Question FROM AIResponses WHERE QuestionHash IS NULL ORDER BY Id LIMIT $1`,
-			batchSize,
-		)
-		if err != nil {
-			return fmt.Errorf("读取待回填题目: %w", err)
+// hashRow is one (row id, digests) assignment produced by a rehash batch.
+type hashRow struct {
+	id           int64
+	questionHash string
+	optionsHash  string
+}
+
+// writePendingHashes computes the new digests, filters unchanged rows and
+// applies the remainder with a single UPDATE per batch.
+func (s *Store) writePendingHashes(q queryer, items []pendingHashRow, questionStale, optionsStale bool) (int, error) {
+	values := make([]hashRow, 0, len(items))
+	for _, it := range items {
+		qh := it.questionHash
+		if questionStale {
+			qh = match.QuestionHash(it.question)
 		}
-		items, err := scanPendingHash(rows)
-		if err != nil {
-			return err
+		oh := it.optionsHash
+		if optionsStale {
+			opts := it.options
+			oh = match.OptionsHash(&opts)
 		}
-		if len(items) == 0 {
-			log.Printf("QuestionHash 回填完成")
-			return nil
+		if qh == it.questionHash && oh == it.optionsHash {
+			continue
 		}
-		if err := s.writeQuestionHashBatch(items); err != nil {
-			return err
-		}
+		values = append(values, hashRow{id: it.id, questionHash: qh, optionsHash: oh})
 	}
+	if len(values) == 0 {
+		return 0, nil
+	}
+	if err := s.writeHashRowBatch(q, values); err != nil {
+		return 0, err
+	}
+	return len(values), nil
+}
+
+// writeHashRowBatch updates both digest columns in one statement. PostgreSQL
+// unnests three arrays; MySQL uses the CASE form bounded by a primary key IN
+// list, which stays within the driver placeholder limit for the batch sizes
+// produced by hashBatchSize.
+func (s *Store) writeHashRowBatch(q queryer, values []hashRow) error {
+	if len(values) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	if s.dialect.isMySQL() {
+		args := make([]any, 0, len(values)*5)
+		add := func(v any) string {
+			args = append(args, v)
+			return fmt.Sprintf("$%d", len(args))
+		}
+		b.WriteString("UPDATE AIResponses SET QuestionHash = CASE Id")
+		for _, v := range values {
+			b.WriteString(" WHEN ")
+			b.WriteString(add(v.id))
+			b.WriteString(" THEN ")
+			b.WriteString(add(v.questionHash))
+		}
+		b.WriteString(" END, OptionsHash = CASE Id")
+		for _, v := range values {
+			b.WriteString(" WHEN ")
+			b.WriteString(add(v.id))
+			b.WriteString(" THEN ")
+			b.WriteString(add(v.optionsHash))
+		}
+		b.WriteString(" END WHERE Id IN (")
+		for i, v := range values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(add(v.id))
+		}
+		b.WriteString(")")
+		if _, err := execOn(s.dialect, q, b.String(), args...); err != nil {
+			return fmt.Errorf("批量重算哈希失败: %w", err)
+		}
+		return nil
+	}
+	ids := make([]int64, len(values))
+	qhs := make([]string, len(values))
+	ohs := make([]string, len(values))
+	for i, v := range values {
+		ids[i] = v.id
+		qhs[i] = v.questionHash
+		ohs[i] = v.optionsHash
+	}
+	b.WriteString(`UPDATE AIResponses a SET QuestionHash = v.qh, OptionsHash = v.oh
+		FROM unnest($1::bigint[], $2::text[], $3::text[]) AS v(i, qh, oh)
+		WHERE a.Id = v.i`)
+	if _, err := execOn(s.dialect, q, b.String(), ids, qhs, ohs); err != nil {
+		return fmt.Errorf("批量重算哈希失败: %w", err)
+	}
+	return nil
 }
 
 // scanPendingHash reads the (id, question) pairs from a batch query, closing the
@@ -1271,129 +1642,80 @@ func scanPendingHash(rows *sql.Rows) ([]pendingHash, error) {
 	return items, rows.Err()
 }
 
-// writeQuestionHashBatch stores recomputed digests for one batch inside a single
-// transaction.
-func (s *Store) writeQuestionHashBatch(items []pendingHash) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
+// hashPair is one (row id, digest) assignment produced by a rehash batch.
+type hashPair struct {
+	id   int64
+	hash string
+}
+
+// writeQuestionHashBatch stores recomputed digests for one batch with a single
+// UPDATE. A per-row statement would cost one database round trip per row, which
+// turns a multi-million row rehash into hours of network latency; the CASE form
+// keeps the whole batch atomic in one statement on both engines.
+func (s *Store) writeQuestionHashBatch(q queryer, items []pendingHash) error {
+	values := make([]hashPair, 0, len(items))
 	for _, it := range items {
-		if _, err := execOn(s.dialect, tx,
-			`UPDATE AIResponses SET QuestionHash = $1 WHERE Id = $2`,
-			match.QuestionHash(it.question), it.id,
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("回填题目 %d 失败: %w", it.id, err)
+		values = append(values, hashPair{id: it.id, hash: match.QuestionHash(it.question)})
+	}
+	return s.writeHashBatchColumn(q, "QuestionHash", values)
+}
+
+// writeHashBatchColumn applies (id, digest) pairs to one hash column with a
+// single UPDATE. PostgreSQL joins an unnest of two array parameters, which
+// keeps parse/bind cost flat as the batch grows; a CASE expression or a large
+// VALUES parameter list was measurably slower. MySQL keeps the CASE form
+// bounded by a primary key IN list, within the 65535 driver parameter limit
+// for the batch sizes used by callers.
+func (s *Store) writeHashBatchColumn(q queryer, column string, values []hashPair) error {
+	if len(values) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(values)*2)
+	var b strings.Builder
+	if s.dialect.isMySQL() {
+		// MySQL 5.7 has no VALUES table constructor, and a derived-table join
+		// leaves the row access path to the optimizer. The CASE form with a
+		// primary key IN list guarantees only the batch rows are touched.
+		b.WriteString("UPDATE AIResponses SET ")
+		b.WriteString(column)
+		b.WriteString(" = CASE Id")
+		for i, v := range values {
+			fmt.Fprintf(&b, " WHEN $%d THEN $%d", i*2+1, i*2+2)
+			args = append(args, v.id, v.hash)
 		}
+		b.WriteString(" END WHERE Id IN (")
+		for i := range values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "$%d", i*2+1)
+		}
+		b.WriteString(")")
+	} else {
+		// Two array parameters keep the statement tiny and the bind cost flat
+		// regardless of batch size; a per-row VALUES list would bind thousands
+		// of parameters and dominate the runtime on large banks.
+		ids := make([]int64, len(values))
+		hashes := make([]string, len(values))
+		for i, v := range values {
+			ids[i] = v.id
+			hashes[i] = v.hash
+		}
+		b.WriteString("UPDATE AIResponses a SET ")
+		b.WriteString(column)
+		b.WriteString(" = v.h FROM unnest($1::bigint[], $2::text[]) AS v(i, h) WHERE a.Id = v.i")
+		args = append(args, ids, hashes)
 	}
-	return tx.Commit()
+	if _, err := execOn(s.dialect, q, b.String(), args...); err != nil {
+		return fmt.Errorf("批量回填 %s 失败: %w", column, err)
+	}
+	return nil
 }
 
-// ensureOptionsHash backfills the OptionsHash column, merges rows that share a
-// (QuestionHash, OptionsHash) key and creates the unique index that makes
-// concurrent multi-channel inserts safe. Idempotent: it runs after
-// ensureQuestionHash on every startup and does nothing once the index exists.
-func (s *Store) ensureOptionsHash() error {
-	if err := s.ensureOptionsHashVersion(); err != nil {
-		return err
-	}
-	if err := s.backfillOptionsHash(); err != nil {
-		return err
-	}
-	// Merging only needs to run while the unique index is missing; once it
-	// exists the database guarantees there are no duplicates.
-	if exists, err := s.indexExists("idx_airesponses_question_options"); err != nil {
-		return err
-	} else if !exists {
-		s.dedupeBankRows()
-	}
-	return s.ensureOptionsUniqueIndex()
-}
-
-const optionsHashVersionKey = "options_hash_version"
-
-// ensureOptionsHashVersion rehashes every options digest when the normalization
-// algorithm changes. OptionsHash is part of the uniqueness key and the cache
+// optionsHashVersionKey stores the NormalizeQuestion version used to build the
+// OptionsHash column. OptionsHash is part of the uniqueness key and the cache
 // key, so a stale digest would make formula options collide or miss.
-func (s *Store) ensureOptionsHashVersion() error {
-	raw, found, err := s.GetSetting(optionsHashVersionKey)
-	if err != nil {
-		return fmt.Errorf("读取 OptionsHash 版本: %w", err)
-	}
-	if found && decodeNormalizerVersion(raw) == match.NormalizerVersion {
-		return nil
-	}
-	if err := s.rehashOptionsHash(); err != nil {
-		return err
-	}
-	return s.SetSetting(optionsHashVersionKey, json.RawMessage(strconv.Itoa(match.NormalizerVersion)))
-}
-
-// rehashOptionsHash recomputes OptionsHash for every row in bounded, key
-// ordered batches.
-func (s *Store) rehashOptionsHash() error {
-	const batchSize = 2000
-	log.Printf("归一化算法已更新，开始重算 OptionsHash（分批进行）")
-	lastID := int64(0)
-	for {
-		rows, err := s.query(
-			`SELECT Id, COALESCE(Options, '') FROM AIResponses WHERE Id > $1 ORDER BY Id LIMIT $2`,
-			lastID, batchSize,
-		)
-		if err != nil {
-			return fmt.Errorf("读取待重算选项: %w", err)
-		}
-		items, err := scanPendingOptions(rows)
-		if err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			log.Printf("OptionsHash 重算完成")
-			return nil
-		}
-		if err := s.writeOptionsHashBatch(items); err != nil {
-			return err
-		}
-		lastID = items[len(items)-1].id
-	}
-}
-
-// backfillOptionsHash fills OptionsHash for every row still missing one, in
-// bounded batches.
-func (s *Store) backfillOptionsHash() error {
-	var pending int
-	if err := s.queryRow(
-		`SELECT COUNT(*) FROM AIResponses WHERE OptionsHash IS NULL`,
-	).Scan(&pending); err != nil {
-		return fmt.Errorf("检查 OptionsHash 回填: %w", err)
-	}
-	if pending == 0 {
-		return nil
-	}
-	const batchSize = 2000
-	log.Printf("开始回填 OptionsHash（分批进行）")
-	for {
-		rows, err := s.query(
-			`SELECT Id, COALESCE(Options, '') FROM AIResponses WHERE OptionsHash IS NULL ORDER BY Id LIMIT $1`,
-			batchSize,
-		)
-		if err != nil {
-			return fmt.Errorf("读取待回填选项: %w", err)
-		}
-		items, err := scanPendingOptions(rows)
-		if err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			log.Printf("OptionsHash 回填完成")
-			return nil
-		}
-		if err := s.writeOptionsHashBatch(items); err != nil {
-			return err
-		}
-	}
-}
+const optionsHashVersionKey = "options_hash_version"
 
 // pendingOptions is one row awaiting an options digest.
 type pendingOptions struct {
@@ -1414,22 +1736,13 @@ func scanPendingOptions(rows *sql.Rows) ([]pendingOptions, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) writeOptionsHashBatch(items []pendingOptions) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
+func (s *Store) writeOptionsHashBatch(q queryer, items []pendingOptions) error {
+	values := make([]hashPair, 0, len(items))
 	for _, it := range items {
 		opts := it.options
-		if _, err := execOn(s.dialect, tx,
-			`UPDATE AIResponses SET OptionsHash = $1 WHERE Id = $2`,
-			match.OptionsHash(&opts), it.id,
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("回填选项 %d 失败: %w", it.id, err)
-		}
+		values = append(values, hashPair{id: it.id, hash: match.OptionsHash(&opts)})
 	}
-	return tx.Commit()
+	return s.writeHashBatchColumn(q, "OptionsHash", values)
 }
 
 // dedupeBankRows merges rows sharing a (QuestionHash, OptionsHash) key, keeping
@@ -1480,7 +1793,7 @@ func (s *Store) ensureOptionsUniqueIndex() error {
 		return err
 	}
 	if exists {
-		s.uniqueQuestion = true
+		s.uniqueQuestion.Store(true)
 		return nil
 	}
 	if s.dialect.isMySQL() {
@@ -1490,7 +1803,7 @@ func (s *Store) ensureOptionsUniqueIndex() error {
 			log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
 			return nil
 		}
-		s.uniqueQuestion = true
+		s.uniqueQuestion.Store(true)
 		return nil
 	}
 	log.Printf("创建题目唯一索引（CONCURRENTLY）")
@@ -1501,7 +1814,7 @@ func (s *Store) ensureOptionsUniqueIndex() error {
 		log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
 		return nil
 	}
-	s.uniqueQuestion = true
+	s.uniqueQuestion.Store(true)
 	return nil
 }
 
