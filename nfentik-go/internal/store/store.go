@@ -79,6 +79,9 @@ type Store struct {
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bgWG     sync.WaitGroup
+
+	// dedupe tracks the manual question-bank dedupe triggered from the console.
+	dedupe dedupeJob
 }
 
 // OnChange registers a callback fired after every bank mutation.
@@ -103,6 +106,23 @@ func (s *Store) queryRow(query string, args ...any) *sql.Row {
 
 func (s *Store) exec(query string, args ...any) (sql.Result, error) {
 	return execOn(s.dialect, s.db, query, args...)
+}
+
+// Context-aware variants used by the background maintenance worker so a
+// shutdown can cancel long index builds and dedupe scans.
+func (s *Store) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	text, a := s.dialect.rebind(query, args)
+	return s.db.QueryContext(ctx, text, a...)
+}
+
+func (s *Store) queryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	text, a := s.dialect.rebind(query, args)
+	return s.db.QueryRowContext(ctx, text, a...)
+}
+
+func (s *Store) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	text, a := s.dialect.rebind(query, args)
+	return s.db.ExecContext(ctx, text, a...)
 }
 
 // insertReturningID runs an INSERT (without a RETURNING clause) and returns the

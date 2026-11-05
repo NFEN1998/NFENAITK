@@ -539,6 +539,42 @@ func (s *Store) indexExists(name string) (bool, error) {
 	return n > 0, err
 }
 
+// indexUsable reports whether a named index exists and is valid. An interrupted
+// PostgreSQL CREATE INDEX CONCURRENTLY leaves an invalid index behind; queries
+// ignore it and it cannot back ON CONFLICT, so callers must treat it as missing.
+func (s *Store) indexUsable(name string) (bool, error) {
+	if !s.dialect.isPostgres() {
+		return s.indexExists(name)
+	}
+	var n int
+	err := s.queryRow(`SELECT COUNT(*) FROM pg_class c
+		JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+		JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE c.relname = $1 AND nsp.nspname = current_schema() AND i.indisvalid`, name).Scan(&n)
+	return n > 0, err
+}
+
+// dropInvalidIndex removes one of our indexes when it exists in the invalid
+// state left by an interrupted concurrent build, so the ensure* helpers can
+// rebuild it. Valid indexes are left untouched and failures are only logged.
+func (s *Store) dropInvalidIndex(ctx context.Context, name string) {
+	if !s.dialect.isPostgres() {
+		return
+	}
+	usable, err := s.indexUsable(name)
+	if err != nil || usable {
+		return
+	}
+	exists, err := s.indexExists(name)
+	if err != nil || !exists {
+		return
+	}
+	log.Printf("删除中断遗留的无效索引 %s", name)
+	if _, err := s.execContext(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+name); err != nil {
+		log.Printf("警告: 删除无效索引 %s 失败: %v", name, err)
+	}
+}
+
 // targetVersion returns the highest migration version known to this build.
 func targetVersion() int {
 	best := 0
@@ -1070,11 +1106,11 @@ func (s *Store) recordMigration(m migration) error {
 // database permits it. It is a no-op on MySQL, whose fuzzy candidates use the
 // bounded prefix probe. Failure is non-fatal: the query path degrades to that
 // same prefix probe.
-func (s *Store) ensureTrigram() error {
+func (s *Store) ensureTrigram(ctx context.Context) error {
 	if s.dialect.isMySQL() {
 		return nil
 	}
-	if _, err := s.exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
+	if _, err := s.execContext(ctx, `CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
 		// A concurrent creator can win the race and surface a duplicate-key
 		// error even though the extension now exists; verify before giving up.
 		if !s.trigramAvailable() {
@@ -1082,14 +1118,15 @@ func (s *Store) ensureTrigram() error {
 			return nil
 		}
 	}
-	exists, err := s.indexExists("idx_airesponses_question_trgm")
+	s.dropInvalidIndex(ctx, "idx_airesponses_question_trgm")
+	exists, err := s.indexUsable("idx_airesponses_question_trgm")
 	if err != nil {
 		log.Printf("检查 trigram 索引失败，使用前缀回退: %v", err)
 		return nil
 	}
 	if !exists {
 		log.Printf("创建 trigram GIN 索引（CONCURRENTLY）")
-		if _, err := s.exec(
+		if _, err := s.execContext(ctx,
 			`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_trgm
 				ON AIResponses USING gin (Question gin_trgm_ops)`,
 		); err != nil {
@@ -1180,13 +1217,13 @@ func (s *Store) startHashMaintenance() {
 // refreshCapabilityFlags mirrors optional index presence into atomics read by
 // the query and insert paths.
 func (s *Store) refreshCapabilityFlags() error {
-	hasUnique, err := s.indexExists("idx_airesponses_question_options")
+	hasUnique, err := s.indexUsable("idx_airesponses_question_options")
 	if err != nil {
 		return err
 	}
 	s.uniqueQuestion.Store(hasUnique)
 	if s.dialect.isPostgres() {
-		hasTrigram, err := s.indexExists("idx_airesponses_question_trgm")
+		hasTrigram, err := s.indexUsable("idx_airesponses_question_trgm")
 		if err != nil {
 			return err
 		}
@@ -1208,7 +1245,7 @@ func (s *Store) hashMaintenanceNeeded() (bool, error) {
 			return true, nil
 		}
 	}
-	hasLookup, err := s.indexExists("idx_airesponses_question_hash")
+	hasLookup, err := s.indexUsable("idx_airesponses_question_hash")
 	if err != nil {
 		return false, err
 	}
@@ -1229,7 +1266,7 @@ func (s *Store) runHashMaintenance() error {
 	}
 	// Build the lookup index first so reads stay fast while a long rehash runs.
 	// Differential writes keep the incremental index-maintenance cost small.
-	if err := s.ensureQuestionHashIndex(); err != nil {
+	if err := s.ensureQuestionHashIndex(ctx); err != nil {
 		return err
 	}
 	questionStale, err := s.hashVersionStale(questionHashVersionKey)
@@ -1247,15 +1284,17 @@ func (s *Store) runHashMaintenance() error {
 	}
 	// Merging only needs to run while the unique index is missing; once it
 	// exists the database guarantees there are no duplicates.
-	if exists, err := s.indexExists("idx_airesponses_question_options"); err != nil {
+	if usable, err := s.indexUsable("idx_airesponses_question_options"); err != nil {
 		return err
-	} else if !exists {
-		s.dedupeBankRows()
+	} else if !usable {
+		if _, err := s.dedupeBankRows(ctx); err != nil {
+			log.Printf("警告: %v", err)
+		}
 	}
-	if err := s.ensureOptionsUniqueIndex(); err != nil {
+	if err := s.ensureOptionsUniqueIndex(ctx); err != nil {
 		return err
 	}
-	return s.ensureTrigram()
+	return s.ensureTrigram(ctx)
 }
 
 // questionHashVersionKey stores the NormalizeQuestion version used to build the
@@ -1279,7 +1318,7 @@ func (s *Store) hashVersionStale(key string) (bool, error) {
 // rebuilt. The lookup index stays in place so reads remain fast while the
 // background pass runs.
 func (s *Store) rehashBank(ctx context.Context, questionStale, optionsStale bool) error {
-	s.dropIndexIfExists("idx_airesponses_question_options")
+	s.dropIndexIfExists(ctx, "idx_airesponses_question_options")
 
 	if err := s.rehashHashes(ctx, questionStale, optionsStale); err != nil {
 		return err
@@ -1303,16 +1342,16 @@ func (s *Store) rehashBank(ctx context.Context, questionStale, optionsStale bool
 // dropIndexIfExists removes an AIResponses index, tolerating absence. A failure
 // is logged and skipped: the rehash still works with the index in place, just
 // slower.
-func (s *Store) dropIndexIfExists(name string) {
+func (s *Store) dropIndexIfExists(ctx context.Context, name string) {
 	exists, err := s.indexExists(name)
 	if err != nil || !exists {
 		return
 	}
-	query := "DROP INDEX " + name
+	query := "DROP INDEX CONCURRENTLY IF EXISTS " + name
 	if s.dialect.isMySQL() {
 		query = "DROP INDEX " + name + " ON AIResponses"
 	}
-	if _, err := s.exec(query); err != nil {
+	if _, err := s.execContext(ctx, query); err != nil {
 		log.Printf("警告: 删除索引 %s 失败: %v", name, err)
 	}
 }
@@ -1750,22 +1789,21 @@ func (s *Store) writeOptionsHashBatch(q queryer, items []pendingOptions) error {
 // must run before the unique index can be built. A failure is logged and left
 // for the next startup so a data problem never blocks the service; the writer
 // then falls back to the in-process lock.
-func (s *Store) dedupeBankRows() {
+func (s *Store) dedupeBankRows(ctx context.Context) (int64, error) {
 	// Only true (question, options) duplicates matter. Same question text with
 	// different options is a distinct entry and must be left alone.
 	var anyDuplicate int
-	if err := s.queryRow(
+	if err := s.queryRowContext(ctx,
 		`SELECT 1 FROM AIResponses
 			GROUP BY QuestionHash, OptionsHash HAVING COUNT(*) > 1 LIMIT 1`,
 	).Scan(&anyDuplicate); err == sql.ErrNoRows {
-		return
+		return 0, nil
 	} else if err != nil {
-		log.Printf("警告: 检查重复题目失败: %v", err)
-		return
+		return 0, fmt.Errorf("检查重复题目: %w", err)
 	}
 
 	log.Printf("检测到重复题目，开始合并（保留非待纠正、非 AI、最早的一行）")
-	res, err := s.exec(`DELETE FROM AIResponses WHERE Id IN (
+	res, err := s.execContext(ctx, `DELETE FROM AIResponses WHERE Id IN (
 		SELECT Id FROM (
 			SELECT Id, ROW_NUMBER() OVER (
 				PARTITION BY QuestionHash, OptionsHash
@@ -1775,20 +1813,22 @@ func (s *Store) dedupeBankRows() {
 		) ranked WHERE rn > 1
 	)`)
 	if err != nil {
-		log.Printf("警告: 合并重复题目失败: %v", err)
-		return
+		return 0, fmt.Errorf("合并重复题目: %w", err)
 	}
-	if affected, _ := res.RowsAffected(); affected > 0 {
+	affected, _ := res.RowsAffected()
+	if affected > 0 {
 		log.Printf("已合并 %d 行重复题目", affected)
 	}
+	return affected, nil
 }
 
 // ensureOptionsUniqueIndex creates the (QuestionHash, OptionsHash) unique index
 // that backs ON CONFLICT inserts. PostgreSQL builds it CONCURRENTLY; MySQL uses
 // a plain unique index. On failure it is logged and uniqueQuestion stays false,
 // so inserts fall back to the serialized NOT EXISTS path.
-func (s *Store) ensureOptionsUniqueIndex() error {
-	exists, err := s.indexExists("idx_airesponses_question_options")
+func (s *Store) ensureOptionsUniqueIndex(ctx context.Context) error {
+	s.dropInvalidIndex(ctx, "idx_airesponses_question_options")
+	exists, err := s.indexUsable("idx_airesponses_question_options")
 	if err != nil {
 		return err
 	}
@@ -1797,21 +1837,23 @@ func (s *Store) ensureOptionsUniqueIndex() error {
 		return nil
 	}
 	if s.dialect.isMySQL() {
-		if _, err := s.exec(
+		if _, err := s.execContext(ctx,
 			`CREATE UNIQUE INDEX idx_airesponses_question_options ON AIResponses (QuestionHash, OptionsHash)`,
 		); err != nil {
 			log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
+			s.uniqueQuestion.Store(false)
 			return nil
 		}
 		s.uniqueQuestion.Store(true)
 		return nil
 	}
 	log.Printf("创建题目唯一索引（CONCURRENTLY）")
-	if _, err := s.exec(
+	if _, err := s.execContext(ctx,
 		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_options
 			ON AIResponses (QuestionHash, OptionsHash)`,
 	); err != nil {
 		log.Printf("警告: 创建题目唯一索引失败，退化为进程内写锁: %v", err)
+		s.uniqueQuestion.Store(false)
 		return nil
 	}
 	s.uniqueQuestion.Store(true)
@@ -1821,8 +1863,9 @@ func (s *Store) ensureOptionsUniqueIndex() error {
 // ensureQuestionHashIndex creates the lookup index if it is missing. Unique is
 // intentionally avoided here: this narrow index backs the by-question probes,
 // while uniqueness is enforced separately on (QuestionHash, OptionsHash).
-func (s *Store) ensureQuestionHashIndex() error {
-	exists, err := s.indexExists("idx_airesponses_question_hash")
+func (s *Store) ensureQuestionHashIndex(ctx context.Context) error {
+	s.dropInvalidIndex(ctx, "idx_airesponses_question_hash")
+	exists, err := s.indexUsable("idx_airesponses_question_hash")
 	if err != nil {
 		return err
 	}
@@ -1831,7 +1874,7 @@ func (s *Store) ensureQuestionHashIndex() error {
 	}
 	if s.dialect.isMySQL() {
 		log.Printf("创建 QuestionHash 索引")
-		if _, err := s.exec(
+		if _, err := s.execContext(ctx,
 			`CREATE INDEX idx_airesponses_question_hash ON AIResponses (QuestionHash)`,
 		); err != nil {
 			return fmt.Errorf("创建 QuestionHash 索引失败: %w", err)
@@ -1839,7 +1882,7 @@ func (s *Store) ensureQuestionHashIndex() error {
 		return nil
 	}
 	log.Printf("创建 QuestionHash 索引（CONCURRENTLY）")
-	if _, err := s.exec(
+	if _, err := s.execContext(ctx,
 		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_airesponses_question_hash
 			ON AIResponses (QuestionHash)`,
 	); err != nil {

@@ -30,6 +30,39 @@ type Platform struct {
 	Enabled       bool              `json:"enabled"`
 	Models        []Model           `json:"models"`
 	CustomHeaders map[string]string `json:"customHeaders"`
+	// Tier names the provider account tier. Free accounts are capped at
+	// RPMFree requests per minute, enterprise accounts at RPMEnterprise.
+	Tier string `json:"tier"`
+	// RPMLimit overrides the tier default. 0 means "use the tier default";
+	// a negative value disables the limit for this platform.
+	RPMLimit int `json:"rpmLimit"`
+}
+
+// Provider account tiers and their default text-model requests per minute.
+const (
+	RPMFree       = 10
+	RPMEnterprise = 20
+)
+
+// EffectiveRPMLimit returns the outbound requests-per-minute cap for this
+// platform. An explicit RPMLimit wins; otherwise the account tier decides.
+func (p Platform) EffectiveRPMLimit() int {
+	if p.RPMLimit != 0 {
+		return p.RPMLimit
+	}
+	if strings.EqualFold(strings.TrimSpace(p.Tier), "enterprise") {
+		return RPMEnterprise
+	}
+	return RPMFree
+}
+
+// RateKey identifies the upstream quota that a call consumes. A platform maps
+// to one provider account, so all of its models share the same limit.
+func (p Platform) RateKey() string {
+	if id := strings.TrimSpace(p.ID); id != "" {
+		return "platform:" + id
+	}
+	return "base:" + strings.TrimSpace(p.BaseURL)
 }
 
 // ModelSettings mirrors the frontend persisted selection.

@@ -129,6 +129,7 @@ body {
   transition: background .15s, border-color .15s, box-shadow .15s;
 }
 .btn:hover { filter: brightness(0.98); }
+.btn:disabled, .btn:disabled:hover { cursor: not-allowed; opacity: .6; filter: none; }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(79, 70, 229, .25); }
 .btn.primary { background: var(--primary); color: #fff; }
 .btn.primary:hover { background: var(--primary-dark); }

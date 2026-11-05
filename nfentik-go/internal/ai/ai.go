@@ -48,6 +48,12 @@ type Options struct {
 	Thinking    bool
 	Headers     map[string]string
 	Timeout     time.Duration
+	// RPMLimit caps how many requests may start per minute for RateKey.
+	// Values <= 0 disable the cap.
+	RPMLimit int
+	// RateKey identifies the upstream quota. When empty it is derived from
+	// BaseURL, which keeps one account's models sharing a single limit.
+	RateKey string
 }
 
 // Delta is one streamed chunk.
@@ -63,6 +69,10 @@ type Client struct {
 	// caller. A nil channel means unlimited. It provides backpressure so a
 	// burst of queries cannot open an unbounded number of upstream requests.
 	sem chan struct{}
+	// rpm enforces per-account requests-per-minute limits before each upstream
+	// request. It is in-process; a multi-instance deployment would need a
+	// shared limiter to keep the global rate honest.
+	rpm *rpmLimiter
 }
 
 // Transport defaults for the shared HTTP client. Kept generous because a
@@ -82,12 +92,15 @@ func New() *Client { return NewWithLimits(0) }
 // maxConcurrent (<= 0 means unlimited). The transport is sized so a saturated
 // client reuses connections instead of rebuilding TLS for every request.
 func NewWithLimits(maxConcurrent int) *Client {
-	c := &Client{http: &http.Client{Transport: &http.Transport{
-		MaxIdleConns:        defaultMaxIdleConns,
-		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
-		MaxConnsPerHost:     defaultMaxConnsPerHost,
-		IdleConnTimeout:     defaultIdleConnTimeout,
-	}}}
+	c := &Client{
+		http: &http.Client{Transport: &http.Transport{
+			MaxIdleConns:        defaultMaxIdleConns,
+			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+			MaxConnsPerHost:     defaultMaxConnsPerHost,
+			IdleConnTimeout:     defaultIdleConnTimeout,
+		}},
+		rpm: newRPMLimiter(),
+	}
 	if maxConcurrent > 0 {
 		c.sem = make(chan struct{}, maxConcurrent)
 	}
@@ -197,6 +210,19 @@ func (c *Client) Complete(ctx context.Context, opt Options, onDelta func(Delta))
 		return "", "", fmt.Errorf("等待模型并发槽位超时: %w", err)
 	}
 	defer release()
+
+	// Stay within the provider account's requests-per-minute quota. The wait is
+	// bounded by the request timeout, so sustained overload surfaces as a
+	// clear timeout instead of an upstream 429.
+	if opt.RPMLimit > 0 {
+		rateKey := strings.TrimSpace(opt.RateKey)
+		if rateKey == "" {
+			rateKey = "base:" + strings.TrimSpace(opt.BaseURL)
+		}
+		if err := c.rpm.wait(reqCtx, rateKey, opt.RPMLimit); err != nil {
+			return "", "", fmt.Errorf("等待模型调用频率配额超时（%d RPM）: %w", opt.RPMLimit, err)
+		}
+	}
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {

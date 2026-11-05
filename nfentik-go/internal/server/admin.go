@@ -107,6 +107,23 @@ func (s *Server) adminQuestions(w http.ResponseWriter, r *http.Request, rest []s
 		return
 	}
 
+	if rest[0] == "dedupe" {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": s.store.DedupeStatus()})
+		case http.MethodPost:
+			status, err := s.store.StartDedupe()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": status})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
 	if rest[0] == "search" && r.Method == http.MethodGet {
 		keyword := r.URL.Query().Get("keyword")
 		items, err := s.store.Search(keyword)

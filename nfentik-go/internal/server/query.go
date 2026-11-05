@@ -1003,6 +1003,8 @@ func (s *Server) runModel(ctx context.Context, model ai.Model, platform *ai.Plat
 		Thinking:    model.EnableThinking,
 		Headers:     platform.CustomHeaders,
 		Timeout:     timeout,
+		RateKey:     platform.RateKey(),
+		RPMLimit:    platform.EffectiveRPMLimit(),
 	}, nil)
 	return content, err
 }

@@ -233,6 +233,7 @@
       state.total = data.total || 0;
       renderQuestions(data.items || []);
       qs("q-pageinfo").textContent = "第 " + state.page + " 页 · 共 " + state.total + " 条";
+      syncDedupeState();
     });
   }
 
@@ -338,6 +339,60 @@
     });
   });
 
+  // Question-bank dedupe: the server runs it in the background, so the button
+  // only starts the pass and then polls the status endpoint for the result.
+  var dedupeTimer = null;
+
+  function setDedupeBusy(busy) {
+    var btn = qs("q-dedupe-btn");
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.textContent = busy ? "去重中..." : "去重";
+  }
+
+  function scheduleDedupePoll(delay) {
+    if (dedupeTimer) clearTimeout(dedupeTimer);
+    dedupeTimer = setTimeout(pollDedupe, delay);
+  }
+
+  function applyDedupeStatus(status, notify) {
+    status = status || {};
+    setDedupeBusy(status.running);
+    if (status.running) { scheduleDedupePoll(1500); return; }
+    if (!notify) return;
+    if (status.error) toast(status.error, "error");
+    else toast(status.message || "去重完成", "success");
+    loadQuestions();
+  }
+
+  function pollDedupe() {
+    dedupeTimer = null;
+    api("/questions/dedupe").then(function (data) {
+      if (!data.success) { setDedupeBusy(false); toast(data.message || "去重状态查询失败", "error"); return; }
+      applyDedupeStatus(data.status, true);
+    }).catch(function () { setDedupeBusy(false); });
+  }
+
+  function syncDedupeState() {
+    api("/questions/dedupe").then(function (data) {
+      if (data.success) applyDedupeStatus(data.status, false);
+    });
+  }
+
+  qs("q-dedupe-btn").addEventListener("click", async function () {
+    if (!(await confirmDialog(
+      "将合并题目和选项完全相同的记录，保留非待修正、非 AI、最早的一行。确定开始去重吗？",
+      { okText: "开始去重" }
+    ))) return;
+    setDedupeBusy(true);
+    api("/questions/dedupe", { method: "POST" }).then(function (res) {
+      if (!res.success) { setDedupeBusy(false); toast(res.message || "去重启动失败", "error"); return; }
+      toast("去重任务已在后台开始", "info");
+      applyDedupeStatus(res.status, false);
+      scheduleDedupePoll(800);
+    }).catch(function () { setDedupeBusy(false); });
+  });
+
   // -------------------------------------------------------------------- pending
 
   function loadPending() {
@@ -389,6 +444,7 @@
     return {
       id: "", name: "", displayName: "", baseUrl: "", apiKey: "",
       enabled: true, models: [], customHeaders: {},
+      tier: "free", rpmLimit: 0,
     };
   }
 
@@ -400,6 +456,9 @@
     cfg.platforms.forEach(function (p) {
       p.models = p.models || [];
       p.customHeaders = p.customHeaders || {};
+      p.tier = String(p.tier || "free").toLowerCase();
+      var rpm = Number(p.rpmLimit);
+      p.rpmLimit = isNaN(rpm) ? 0 : rpm;
       p.models.forEach(function (m) { if (m.platformId == null) m.platformId = p.id; });
     });
     return cfg;
@@ -515,6 +574,13 @@
           field("显示名称", '<input data-p="' + pi + '" data-f="displayName" value="' + esc(p.displayName) + '">') +
           field("Base URL", '<input data-p="' + pi + '" data-f="baseUrl" value="' + esc(p.baseUrl) + '" placeholder="https://api.openai.com/v1">') +
         "</div>" +
+        '<div class="grid-3">' +
+          field("账户类型", '<select data-p="' + pi + '" data-f="tier">' +
+            '<option value="free"' + (p.tier === "free" ? " selected" : "") + ">免费（10 RPM）</option>" +
+            '<option value="enterprise"' + (p.tier === "enterprise" ? " selected" : "") + ">企业（20 RPM）</option>" +
+          "</select>", "对应服务商账户等级") +
+          field("RPM 上限", '<input type="number" min="-1" data-p="' + pi + '" data-f="rpmLimit" value="' + esc(p.rpmLimit) + '">', "0 表示按账户类型默认：免费 10 / 企业 20；-1 表示不限") +
+        "</div>" +
         field("API Key", '<input type="password" data-p="' + pi + '" data-f="apiKey" value="' + esc(p.apiKey) + '" placeholder="sk-...">') +
         renderHeaders(p, pi) +
         '<div class="section-title">模型列表</div>' + models +
@@ -575,7 +641,7 @@
     var host = qs("m-platforms");
 
     host.querySelectorAll("[data-p][data-f]").forEach(function (el) {
-      el.addEventListener("input", function () {
+      var handler = function () {
         var pi = Number(el.dataset.p);
         var f = el.dataset.f;
         modelConfig.platforms[pi][f] = readField(el);
@@ -584,7 +650,9 @@
           (modelConfig.platforms[pi].models || []).forEach(function (m) { m.platformId = el.value; });
         }
         if (f === "id" || f === "displayName") refreshLabels();
-      });
+      };
+      if (el.tagName === "SELECT") el.addEventListener("change", handler);
+      else el.addEventListener("input", handler);
     });
 
     host.querySelectorAll("[data-add-model]").forEach(function (btn) {

@@ -232,6 +232,8 @@ func (s *Server) aiOptions(model ai.Model, platform *ai.Platform, messages []ai.
 		Thinking:    model.EnableThinking,
 		Headers:     platform.CustomHeaders,
 		Timeout:     timeout,
+		RateKey:     platform.RateKey(),
+		RPMLimit:    platform.EffectiveRPMLimit(),
 	}
 }
 
